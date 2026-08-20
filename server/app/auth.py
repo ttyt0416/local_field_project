@@ -18,7 +18,7 @@ from .database import get_connection, record_auth_event
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_USERNAME_PATTERN = re.compile(r"^\S+$")
 _PASSWORD_SCRYPT_N = 2**14
 _PASSWORD_SCRYPT_R = 8
 _PASSWORD_SCRYPT_P = 1
@@ -27,18 +27,18 @@ _JWT_TTL = timedelta(days=7)
 
 
 class SignupRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
+    username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
+    username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
     id: uuid.UUID
-    email: str
+    username: str
 
 
 class AuthResponse(BaseModel):
@@ -49,58 +49,58 @@ class AuthResponse(BaseModel):
 
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def signup(payload: SignupRequest, request: Request) -> AuthResponse:
-    email = _normalize_email(payload.email)
+    username = _normalize_username(payload.username)
     try:
-        _validate_email(email)
+        _validate_username(username)
     except HTTPException:
-        _record_auth_event(request, "signup", email, False, "invalid_email")
+        _record_auth_event(request, "signup", username, False, "invalid_username")
         raise
     user_id = uuid.uuid4()
 
     try:
         with get_connection() as connection:
             connection.execute(
-                "INSERT INTO users (id, email, password_hash) VALUES (%s, %s, %s)",
-                (user_id, email, _hash_password(payload.password)),
+                "INSERT INTO users (id, username, password_hash) VALUES (%s, %s, %s)",
+                (user_id, username, _hash_password(payload.password)),
             )
     except UniqueViolation as exc:
-        _record_auth_event(request, "signup", email, False, "duplicate_email")
-        raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다.") from exc
+        _record_auth_event(request, "signup", username, False, "duplicate_username")
+        raise HTTPException(status_code=409, detail="이미 가입된 아이디입니다.") from exc
 
-    _record_auth_event(request, "signup", email, True, user_id=user_id)
+    _record_auth_event(request, "signup", username, True, user_id=user_id)
     request.state.user_id = user_id
-    return _auth_response(user_id, email)
+    return _auth_response(user_id, username)
 
 
 @router.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, request: Request) -> AuthResponse:
-    email = _normalize_email(payload.email)
+    username = _normalize_username(payload.username)
     try:
-        _validate_email(email)
+        _validate_username(username)
     except HTTPException:
-        _record_auth_event(request, "login", email, False, "invalid_email")
+        _record_auth_event(request, "login", username, False, "invalid_username")
         raise
 
     with get_connection() as connection:
         row = connection.execute(
-            "SELECT id, password_hash FROM users WHERE email = %s",
-            (email,),
+            "SELECT id, password_hash FROM users WHERE username = %s",
+            (username,),
         ).fetchone()
         if row is None or not _verify_password(payload.password, row[1]):
             _record_auth_event(
                 request,
                 "login",
-                email,
+                username,
                 False,
                 "invalid_credentials",
                 user_id=row[0] if row else None,
             )
-            raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
+            raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
 
     user_id = row[0]
-    _record_auth_event(request, "login", email, True, user_id=user_id)
+    _record_auth_event(request, "login", username, True, user_id=user_id)
     request.state.user_id = user_id
-    return _auth_response(user_id, email)
+    return _auth_response(user_id, username)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -111,10 +111,10 @@ def current_user(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise _unauthorized()
 
-    user_id, email = _decode_access_token(credentials.credentials)
+    user_id, username = _decode_access_token(credentials.credentials)
     with get_connection() as connection:
         row = connection.execute(
-            "SELECT id, email FROM users WHERE id = %s",
+            "SELECT id, username FROM users WHERE id = %s",
             (user_id,),
         ).fetchone()
 
@@ -122,28 +122,28 @@ def current_user(
         raise _unauthorized()
 
     request.state.user_id = row[0]
-    return UserResponse(id=row[0], email=row[1])
+    return UserResponse(id=row[0], username=row[1])
 
 
-def _auth_response(user_id: uuid.UUID, email: str) -> AuthResponse:
+def _auth_response(user_id: uuid.UUID, username: str) -> AuthResponse:
     return AuthResponse(
-        access_token=_create_access_token(user_id, email),
+        access_token=_create_access_token(user_id, username),
         token_type="bearer",
-        user=UserResponse(id=user_id, email=email),
+        user=UserResponse(id=user_id, username=username),
     )
 
 
 def _record_auth_event(
     request: Request,
     event_type: str,
-    email: str | None,
+    username: str | None,
     success: bool,
     failure_reason: str | None = None,
     user_id: uuid.UUID | None = None,
 ) -> None:
     record_auth_event(
         event_type=event_type,
-        email=email,
+        username=username,
         success=success,
         failure_reason=failure_reason,
         client_ip=_client_ip(request),
@@ -160,13 +160,13 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def _normalize_email(email: str) -> str:
-    return email.strip().lower()
+def _normalize_username(username: str) -> str:
+    return username.strip().lower()
 
 
-def _validate_email(email: str) -> None:
-    if not _EMAIL_PATTERN.fullmatch(email):
-        raise HTTPException(status_code=422, detail="올바른 이메일 주소를 입력해 주세요.")
+def _validate_username(username: str) -> None:
+    if not 3 <= len(username) <= 32 or not _USERNAME_PATTERN.fullmatch(username):
+        raise HTTPException(status_code=422, detail="올바른 아이디를 입력해 주세요.")
 
 
 def _hash_password(password: str) -> str:
@@ -198,11 +198,11 @@ def _verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
-def _create_access_token(user_id: uuid.UUID, email: str) -> str:
+def _create_access_token(user_id: uuid.UUID, username: str) -> str:
     issued_at = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
-        "email": email,
+        "username": username,
         "iat": int(issued_at.timestamp()),
         "exp": int((issued_at + _JWT_TTL).timestamp()),
     }
@@ -237,7 +237,7 @@ def _decode_access_token(token: str) -> tuple[uuid.UUID, str]:
         expires_at = int(payload["exp"])
         if datetime.now(timezone.utc).timestamp() >= expires_at:
             raise _unauthorized()
-        return uuid.UUID(str(payload["sub"])), str(payload["email"])
+        return uuid.UUID(str(payload["sub"])), str(payload["username"])
     except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
         raise _unauthorized()
 

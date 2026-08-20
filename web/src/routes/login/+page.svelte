@@ -19,7 +19,7 @@
 	] as const;
 
 	let mode = $state<Mode>('login');
-	let email = $state('');
+	let username = $state('');
 	let password = $state('');
 	let busy = $state(false);
 	let error = $state('');
@@ -44,9 +44,9 @@
 		error = '';
 		try {
 			if (mode === 'login') {
-				await authStore.login(email, password);
+				await authStore.login(username, password);
 			} else {
-				await authStore.signup(email, password);
+				await authStore.signup(username, password);
 			}
 			await goto('/vault');
 		} catch (reason) {
@@ -97,12 +97,12 @@
 
 			<form class="space-y-5" onsubmit={submit}>
 				<Input
-					id="auth-email"
-					label="이메일"
-					type="email"
-					autocomplete="email"
-					placeholder="you@example.com"
-					bind:value={email}
+					id="auth-username"
+					label="아이디"
+					type="text"
+					autocomplete="username"
+					placeholder="아이디를 입력해 주세요"
+					bind:value={username}
 					required
 				/>
 				<Input

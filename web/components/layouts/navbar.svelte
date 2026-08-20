@@ -31,7 +31,7 @@
 				{#if authStore.isAuthenticated}
 					<a href="/vault" class="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">
 						<Archive size={15} strokeWidth={1.8} />
-						<span class="hidden max-w-36 truncate sm:inline">{authStore.user?.email}</span>
+						<span class="hidden max-w-36 truncate sm:inline">{authStore.user?.username}</span>
 					</a>
 				{:else}
 					<a href="/login" class="inline-flex items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-xs font-medium text-foreground transition hover:border-primary/50 hover:bg-primary/10">

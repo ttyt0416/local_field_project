@@ -49,7 +49,7 @@
 					<Typography as="p" variant="eyebrow">Personal workspace</Typography>
 					<Typography as="h1" variant="display" class="mt-3">개인 보관함</Typography>
 					<Typography as="p" variant="muted" class="mt-3 max-w-2xl text-base">
-						{authStore.user?.email} 계정의 생성 결과와 작업 기록을 관리하는 공간입니다.
+						{authStore.user?.username} 계정의 생성 결과와 작업 기록을 관리하는 공간입니다.
 					</Typography>
 				</div>
 				<OutlinedButton onclick={logout}>

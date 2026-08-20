@@ -4,7 +4,7 @@ import { isJwtUsable } from '$lib/utils/jwt';
 
 export type AuthUser = {
 	id: string;
-	email: string;
+	username: string;
 };
 
 type AuthResponse = {
@@ -32,13 +32,13 @@ class AuthStore {
 		return this.initialization;
 	}
 
-	async login(email: string, password: string) {
-		const session = await this.authenticate('/auth/login', { email, password });
+	async login(username: string, password: string) {
+		const session = await this.authenticate('/auth/login', { username, password });
 		this.setSession(session);
 	}
 
-	async signup(email: string, password: string) {
-		const session = await this.authenticate('/auth/signup', { email, password });
+	async signup(username: string, password: string) {
+		const session = await this.authenticate('/auth/signup', { username, password });
 		this.setSession(session);
 	}
 
@@ -73,7 +73,7 @@ class AuthStore {
 		}
 	}
 
-	private async authenticate(path: string, credentials: { email: string; password: string }) {
+	private async authenticate(path: string, credentials: { username: string; password: string }) {
 		return apiJson<AuthResponse>(path, {
 			method: 'POST',
 			json: credentials

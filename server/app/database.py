@@ -6,11 +6,45 @@ import psycopg
 from .configs.constants import settings
 
 
+_MIGRATION_STATEMENTS: tuple[str, ...] = (
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'email'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'username'
+        ) THEN
+            ALTER TABLE users RENAME COLUMN email TO username;
+        END IF;
+    END
+    $$
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'auth_history' AND column_name = 'email'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'auth_history' AND column_name = 'username'
+        ) THEN
+            ALTER TABLE auth_history RENAME COLUMN email TO username;
+        END IF;
+    END
+    $$
+    """,
+)
+
+
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY,
-        email VARCHAR(254) UNIQUE NOT NULL,
+        username VARCHAR(32) UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -19,7 +53,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS auth_history (
         id BIGSERIAL PRIMARY KEY,
         event_type VARCHAR(32) NOT NULL,
-        email VARCHAR(254),
+        username VARCHAR(32),
         success BOOLEAN NOT NULL,
         failure_reason VARCHAR(128),
         occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -72,6 +106,8 @@ def get_connection() -> psycopg.Connection[Any]:
 
 def initialize_database() -> None:
     with get_connection() as connection:
+        for statement in _MIGRATION_STATEMENTS:
+            connection.execute(statement)
         for statement in _SCHEMA_STATEMENTS:
             connection.execute(statement)
 
@@ -79,7 +115,7 @@ def initialize_database() -> None:
 def record_auth_event(
     *,
     event_type: str,
-    email: str | None,
+    username: str | None,
     success: bool,
     failure_reason: str | None,
     client_ip: str | None,
@@ -89,10 +125,10 @@ def record_auth_event(
     _record(
         """
         INSERT INTO auth_history
-            (event_type, email, success, failure_reason, client_ip, user_agent, user_id)
+            (event_type, username, success, failure_reason, client_ip, user_agent, user_id)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
-        (event_type, email, success, failure_reason, client_ip, user_agent, user_id),
+        (event_type, username, success, failure_reason, client_ip, user_agent, user_id),
     )
 
 
