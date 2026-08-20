@@ -35,7 +35,7 @@
 		class: className = ''
 	}: Props = $props();
 
-	let query = $state(options.find((option) => option.value === value)?.label ?? '');
+	let query = $state('');
 	let open = $state(false);
 	let activeIndex = $state(-1);
 	let autocompleteContainer = $state<HTMLDivElement>();
@@ -43,7 +43,7 @@
 	let filteredOptions = $derived(
 		options.filter((option) => option.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
 	);
-	let listId = `${id}-options`;
+	let listId = $derived(`${id}-options`);
 
 	$effect(() => {
 		if (!open) {
