@@ -5,11 +5,16 @@
 	import Input from '../../../components/inputs/input.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
+	import Tab from '../../../components/tabs/tab.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import { APP_NAME } from '$lib/configs/constants';
 	import { authStore } from '$lib/stores/auth.svelte';
 
 	type Mode = 'login' | 'signup';
+	const authTabs = [
+		{ value: 'login', label: '로그인' },
+		{ value: 'signup', label: '회원가입' }
+	] as const;
 
 	let mode = $state<Mode>('login');
 	let email = $state('');
@@ -73,26 +78,7 @@
 				</Typography>
 			</div>
 
-			<div class="mb-6 grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label="인증 방식">
-				<button
-					type="button"
-					class={`rounded-lg px-3 py-2 text-sm font-medium transition ${mode === 'login' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-					aria-selected={mode === 'login'}
-					role="tab"
-					onclick={() => (mode = 'login')}
-				>
-					로그인
-				</button>
-				<button
-					type="button"
-					class={`rounded-lg px-3 py-2 text-sm font-medium transition ${mode === 'signup' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-					aria-selected={mode === 'signup'}
-					role="tab"
-					onclick={() => (mode = 'signup')}
-				>
-					회원가입
-				</button>
-			</div>
+			<Tab items={authTabs} bind:value={mode} ariaLabel="인증 방식" class="mb-6" />
 
 			<form class="space-y-5" onsubmit={submit}>
 				<Input

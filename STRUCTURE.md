@@ -23,7 +23,8 @@ local_field_project/
 │   │   │   ├── outlined-button.svelte
 │   │   │   └── icon-outlined-button.svelte
 │   │   ├── inputs/
-│   │   │   └── input.svelte
+│   │   │   ├── input.svelte
+│   │   │   └── select.svelte
 │   │   ├── layouts/
 │   │   │   ├── body.svelte
 │   │   │   ├── layout.svelte
@@ -34,6 +35,12 @@ local_field_project/
 │   │   │   └── loading-spinner.svelte
 │   │   ├── modals/
 │   │   │   └── modal.svelte
+│   │   ├── media/
+│   │   │   ├── image.svelte
+│   │   │   ├── model-viewer.svelte
+│   │   │   └── video.svelte
+│   │   ├── tabs/
+│   │   │   └── tab.svelte
 │   │   └── typography/
 │   │       └── typography.svelte
 │   ├── .env.development          # 웹 개발 환경변수
@@ -71,10 +78,15 @@ local_field_project/
 - `web/components/buttons/icon-outlined-button.svelte`: 아이콘 전용 외곽선 버튼
 - 세 버튼은 `active`, `deactive`, `loading` 상태를 제공합니다.
 - `web/components/inputs/input.svelte`: 라벨, 힌트, 오류, disabled를 지원하는 입력 컴포넌트
+- `web/components/inputs/select.svelte`: 기본 select와 prop으로 켜는 autocomplete select
+- `web/components/media/image.svelte`: 로컬·서버 이미지, 서버 로딩 shimmer, 확대 갤러리
+- `web/components/media/model-viewer.svelte`: 로컬·서버 GLB/GLTF 모델과 마우스 드래그 카메라 조작
+- `web/components/media/video.svelte`: 로컬·서버 영상, 서버 로딩 shimmer, 앞부분 preview
 - `web/components/loadings/loading-spinner.svelte`: 회전형 로딩 상태
 - `web/components/loadings/loading-shimmer.svelte`: 콘텐츠 로딩 placeholder
 - `web/components/modals/modal.svelte`: 제목, 설명, 본문, footer를 지원하는 반응형 모달
 - `web/components/typography/typography.svelte`: display, heading, body, muted, label, caption 텍스트 스타일
+- `web/components/tabs/tab.svelte`: 재사용 가능한 선택형 탭 목록
 - `web/components/layouts/sidebar.svelte`: 데스크톱 고정 사이드바와 모바일 하단 시트 메뉴
 - `web/components/layouts/navbar.svelte`: 데스크톱 상단 내비게이션
 - `web/components/layouts/body.svelte`: 반응형 max-width 콘텐츠 영역
