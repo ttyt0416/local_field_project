@@ -39,3 +39,62 @@ export async function apiJson<T>(path: string, options?: Options) {
 		throw error;
 	}
 }
+
+export type ServerSentEvent = {
+	event: string;
+	data: string;
+};
+
+type StreamSseOptions = {
+	signal?: AbortSignal;
+	onConnected?: () => void;
+};
+
+export async function streamSse(
+	path: string,
+	onEvent: (event: ServerSentEvent) => void,
+	options?: StreamSseOptions
+) {
+	try {
+		const response = await api(path, {
+			timeout: false,
+			signal: options?.signal,
+			headers: { Accept: 'text/event-stream' }
+		});
+		if (!response.body) throw new Error('SSE 응답 스트림을 사용할 수 없습니다.');
+		options?.onConnected?.();
+
+		const reader = response.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = '';
+
+		const dispatch = (block: string) => {
+			let event = 'message';
+			const data: string[] = [];
+			for (const rawLine of block.split('\n')) {
+				const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+				if (line.startsWith('event:')) event = line.slice(6).trim();
+				if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+			}
+			if (data.length) onEvent({ event, data: data.join('\n') });
+		};
+
+		while (true) {
+			const { done, value } = await reader.read();
+			buffer += decoder.decode(value, { stream: !done });
+			let separator = buffer.indexOf('\n\n');
+			while (separator >= 0) {
+				dispatch(buffer.slice(0, separator));
+				buffer = buffer.slice(separator + 2);
+				separator = buffer.indexOf('\n\n');
+			}
+			if (done) {
+				if (buffer.trim()) dispatch(buffer);
+				return;
+			}
+		}
+	} catch (error) {
+		if (error instanceof HTTPError) throw new Error(getErrorMessage(error));
+		throw error;
+	}
+}

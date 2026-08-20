@@ -11,7 +11,7 @@ local_field_project/
 │   │   │   ├── configs/
 │   │   │   │   └── constants.ts  # 웹 상수 및 공개 환경변수 설정
 │   │   │   ├── utils/
-│   │   │   │   ├── api.ts          # ky 기반 공통 API client
+│   │   │   │   ├── api.ts          # ky API client·인증 SSE stream·오류 변환
 │   │   │   │   └── jwt.ts          # JWT payload·만료·사용 가능 상태 확인
 │   │   │   └── stores/
 │   │   │       └── auth.svelte.ts # JWT 인증 상태 및 자동로그인 상태관리
@@ -105,10 +105,10 @@ local_field_project/
 
 - `server/app/auth.py`: `/auth/signup`, `/auth/login`, `/auth/me` JWT API
 - `server/app/database.py`: 사용자·인증 이력·API 감사·오류 로그 DB 처리
-- `server/app/comfyui.py`: ComfyUI Anima 체크포인트·LoRA 조회와 이미지 생성 상태·결과 프록시
-- `web/src/routes/generate/image/+page.svelte`: 프롬프트, 체크포인트, LoRA, CFG, steps 기반 이미지 생성 화면
+- `server/app/comfyui.py`: ComfyUI Anima 옵션·생성 요청·WebSocket 진행 이벤트의 인증 SSE 변환·결과 프록시
+- `web/src/routes/generate/image/+page.svelte`: 프롬프트, 체크포인트, LoRA, CFG, steps와 queued·progress·completed SSE 상태를 표시하는 이미지 생성 화면
 - `web/components/feedback/toast.svelte`: 비동기 생성 오류·완료 상태 알림
-- `web/src/lib/utils/api.ts`: ky 기반 API 호출, JWT header 주입, HTTP 오류 변환
+- `web/src/lib/utils/api.ts`: ky 기반 API·인증 SSE stream 호출, JWT header 주입, HTTP 오류 변환
 - `web/src/lib/utils/jwt.ts`: JWT payload decode와 만료·사용 가능 상태 확인
 - `web/src/lib/stores/auth.svelte.ts`: Svelte 5 rune 기반 JWT 상태관리와 `localStorage` 자동로그인 복원
 - 로그인·회원가입 성공 후 `/vault`로 이동합니다.

@@ -9,6 +9,7 @@
 		disabled?: boolean;
 		loading?: boolean;
 		class?: string;
+		pressed?: boolean;
 		onclick?: (event: MouseEvent) => void;
 	};
 
@@ -19,6 +20,7 @@
 		disabled = false,
 		loading = false,
 		class: className = '',
+		pressed,
 		onclick
 	}: Props = $props();
 </script>
@@ -28,6 +30,7 @@
 	class={`inline-flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-transparent text-muted-foreground transition hover:border-primary/50 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${className}`}
 	disabled={disabled || loading}
 	aria-label={ariaLabel}
+	aria-pressed={pressed}
 	aria-busy={loading}
 	{onclick}
 >

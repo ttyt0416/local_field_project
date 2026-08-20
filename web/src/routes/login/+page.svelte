@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Sparkles } from '@lucide/svelte';
+	import { Moon, Sparkles, Sun } from '@lucide/svelte';
+	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import Input from '../../../components/inputs/input.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
@@ -9,6 +10,7 @@
 	import Typography from '../../../components/typography/typography.svelte';
 	import { APP_NAME } from '$lib/configs/constants';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 
 	type Mode = 'login' | 'signup';
 	const authTabs = [
@@ -59,7 +61,20 @@
 	<title>{mode === 'login' ? '로그인' : '회원가입'} · {APP_NAME}</title>
 </svelte:head>
 
-<div class="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10 dark:bg-background">
+<div class="relative flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10 dark:bg-background">
+	<div class="absolute right-4 top-4">
+		<IconOutlinedButton
+			ariaLabel={themeStore.isDark ? '라이트모드로 전환' : '다크모드로 전환'}
+			pressed={themeStore.isDark}
+			onclick={() => themeStore.toggle()}
+		>
+			{#if themeStore.isDark}
+				<Sun size={17} strokeWidth={1.8} />
+			{:else}
+				<Moon size={17} strokeWidth={1.8} />
+			{/if}
+		</IconOutlinedButton>
+	</div>
 	<main class="w-full max-w-md">
 		<div class="mb-8 text-center">
 			<a href="/" class="inline-flex items-center gap-3 text-foreground">

@@ -10,7 +10,7 @@
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
 	import { SERVER_URL } from '$lib/configs/constants';
-	import { apiJson } from '$lib/utils/api';
+	import { apiJson, streamSse } from '$lib/utils/api';
 	import { authStore } from '$lib/stores/auth.svelte';
 
 	type ImageOptions = {
@@ -20,10 +20,13 @@
 		default_lora: string | null;
 	};
 
-	type ImageGenerationStatus = {
+	type ImageGenerationEvent = {
 		prompt_id: string;
-		status: 'queued' | 'processing' | 'completed' | 'failed';
-		images: { url: string }[];
+		status?: 'queued' | 'processing' | 'completed' | 'failed';
+		progress?: number;
+		queue_position?: number | null;
+		message?: string;
+		images?: { url: string }[];
 	};
 
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
@@ -38,8 +41,12 @@
 	let successMessage = $state('');
 	let generating = $state(false);
 	let generationStatus = $state('');
+	let progress = $state(0);
+	let queuePosition = $state<number | null>(null);
+	let streamConnected = $state(false);
 	let promptId = $state('');
 	let imageUrl = $state('');
+	let streamController: AbortController | null = null;
 	let options = $state<ImageOptions>({
 		checkpoints: [],
 		loras: [],
@@ -66,6 +73,7 @@
 		void initialize();
 		return () => {
 			active = false;
+			streamController?.abort();
 		};
 	});
 
@@ -91,6 +99,9 @@
 		generationError = '';
 		successMessage = '';
 		imageUrl = '';
+		progress = 0;
+		queuePosition = null;
+		streamConnected = false;
 		if (!prompt.trim()) {
 			generationError = '생성할 프롬프트를 입력해 주세요.';
 			return;
@@ -107,7 +118,7 @@
 		generating = true;
 		generationStatus = 'queued';
 		try {
-			const queued = await apiJson<{ prompt_id: string }>('generation/image', {
+			const queued = await apiJson<{ prompt_id: string; client_id: string }>('generation/image', {
 				method: 'POST',
 				json: {
 					prompt: prompt.trim(),
@@ -122,8 +133,9 @@
 				}
 			});
 			promptId = queued.prompt_id;
-			await waitForResult(queued.prompt_id);
+			await streamGeneration(queued.prompt_id, queued.client_id);
 		} catch (error) {
+			if (!active) return;
 			generationError = getErrorMessage(error);
 			generationStatus = 'failed';
 		} finally {
@@ -131,21 +143,62 @@
 		}
 	}
 
-	async function waitForResult(id: string) {
-		for (let attempt = 0; attempt < 240 && active; attempt += 1) {
-			const result = await apiJson<ImageGenerationStatus>(`generation/image/${id}`);
-			generationStatus = result.status;
-			if (result.status === 'failed') throw new Error('ComfyUI 이미지 생성에 실패했습니다.');
-			if (result.status === 'completed') {
-				const image = result.images[0];
-				if (!image) throw new Error('생성 결과 이미지를 찾을 수 없습니다.');
-				imageUrl = new URL(image.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
-				successMessage = '이미지 생성이 완료되었습니다.';
-				return;
+	async function streamGeneration(id: string, clientId: string) {
+		const controller = new AbortController();
+		streamController = controller;
+		let terminalStatus = '';
+		let lastError: unknown = new Error('SSE 진행 연결이 종료되었습니다.');
+		try {
+			for (let attempt = 0; attempt < 5 && active && !terminalStatus; attempt += 1) {
+				try {
+					await streamSse(
+						`generation/image/${id}/events?client_id=${encodeURIComponent(clientId)}`,
+						(event) => {
+							const payload = JSON.parse(event.data) as ImageGenerationEvent;
+							generationStatus = payload.status ?? event.event;
+							if (typeof payload.progress === 'number') progress = payload.progress;
+							if ('queue_position' in payload) queuePosition = payload.queue_position ?? null;
+							if (event.event === 'completed') {
+								terminalStatus = 'completed';
+								progress = 100;
+								const image = payload.images?.[0];
+								if (!image) {
+									terminalStatus = 'failed';
+									throw new Error('생성 결과 이미지를 찾을 수 없습니다.');
+								}
+								imageUrl = new URL(image.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
+								successMessage = '이미지 생성이 완료되었습니다.';
+							} else if (event.event === 'failed' || event.event === 'error') {
+								terminalStatus = 'failed';
+								throw new Error(payload.message ?? 'ComfyUI 이미지 생성에 실패했습니다.');
+							}
+						},
+						{ signal: controller.signal, onConnected: () => (streamConnected = true) }
+					);
+				} catch (error) {
+					if (terminalStatus === 'failed' || !active) throw error;
+					lastError = error;
+				}
+				if (terminalStatus || !active) break;
+				streamConnected = false;
+				if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
 			}
-			await new Promise((resolve) => setTimeout(resolve, 1500));
+		} finally {
+			streamConnected = false;
+			if (streamController === controller) streamController = null;
 		}
-		if (active) throw new Error('이미지 생성 시간이 초과되었습니다. ComfyUI 상태를 확인해 주세요.');
+		if (terminalStatus === 'failed') throw lastError;
+		if (terminalStatus !== 'completed' && active) throw lastError;
+	}
+
+	function statusLabel(status: string) {
+		return {
+			queued: '대기 중',
+			processing: '생성 중',
+			completed: '완료',
+			failed: '실패',
+			connecting: '연결 중'
+		}[status] ?? status;
 	}
 
 	function getErrorMessage(error: unknown) {
@@ -187,7 +240,14 @@
 						<div>
 							<div id="result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
 							<Typography as="p" variant="muted" class="mt-1">
-								{generationStatus ? `상태: ${generationStatus}` : '생성 결과가 여기에 표시됩니다.'}
+								{#if generationStatus}
+									상태: {statusLabel(generationStatus)}
+									{#if generationStatus === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}
+									{#if generationStatus === 'processing' || generationStatus === 'completed'} · {Math.round(progress)}%{/if}
+									{#if generating} · {streamConnected ? 'SSE 연결됨' : 'SSE 연결 중'}{/if}
+								{:else}
+									생성 결과가 여기에 표시됩니다.
+								{/if}
 							</Typography>
 						</div>
 						<ImagePlus size={22} class="text-primary" strokeWidth={1.8} />

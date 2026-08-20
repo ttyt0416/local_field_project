@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Activity, Archive, LogIn } from '@lucide/svelte';
+	import { Activity, Archive, LogIn, Moon, Sun } from '@lucide/svelte';
+	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 </script>
 
 <header class="sticky top-0 z-30 border-b border-border/80 bg-background/85 backdrop-blur-xl">
@@ -14,6 +16,17 @@
 				<Activity size={16} class="text-success" strokeWidth={1.8} />
 				<span class="text-xs font-medium text-muted-foreground">로컬 연결 정상</span>
 			</div>
+			<IconOutlinedButton
+				ariaLabel={themeStore.isDark ? '라이트모드로 전환' : '다크모드로 전환'}
+				pressed={themeStore.isDark}
+				onclick={() => themeStore.toggle()}
+			>
+				{#if themeStore.isDark}
+					<Sun size={17} strokeWidth={1.8} />
+				{:else}
+					<Moon size={17} strokeWidth={1.8} />
+				{/if}
+			</IconOutlinedButton>
 			{#if authStore.initialized}
 				{#if authStore.isAuthenticated}
 					<a href="/vault" class="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">

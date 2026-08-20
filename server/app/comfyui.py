@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import uuid
@@ -10,8 +11,10 @@ from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
+import websockets
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
 from .configs.constants import settings
@@ -20,6 +23,7 @@ from .configs.constants import settings
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
 _DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"
 _COMFYUI_TIMEOUT_SECONDS = 30
+_SSE_HEARTBEAT_SECONDS = 15
 
 
 class ImageGenerationRequest(BaseModel):
@@ -72,10 +76,11 @@ def create_image_generation(
         options = _image_options()
         _validate_model_choice(payload, options)
         prompt = _build_prompt(payload)
+        client_id = str(uuid.uuid4())
         response = _request_json(
             "POST",
             "/prompt",
-            {"prompt": prompt, "client_id": str(uuid.uuid4())},
+            {"prompt": prompt, "client_id": client_id},
         )
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
@@ -83,7 +88,24 @@ def create_image_generation(
     prompt_id = response.get("prompt_id")
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 생성 작업 ID를 반환하지 않았습니다.")
-    return {"prompt_id": prompt_id, "status": "queued"}
+    return {"prompt_id": prompt_id, "status": "queued", "client_id": client_id}
+
+
+@router.get("/{prompt_id}/events")
+async def image_generation_events(
+    prompt_id: str,
+    client_id: str = Query(min_length=1, max_length=128),
+    _: UserResponse = Depends(current_user),
+) -> StreamingResponse:
+    return StreamingResponse(
+        _stream_generation_events(prompt_id, client_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{prompt_id}", response_model=ImageGenerationStatus)
@@ -92,10 +114,112 @@ def image_generation_status(
     _: UserResponse = Depends(current_user),
 ) -> ImageGenerationStatus:
     try:
-        history = _request_json("GET", f"/history/{prompt_id}")
+        return _history_generation_status(prompt_id)
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
+
+async def _stream_generation_events(prompt_id: str, client_id: str):
+    yield _sse_message("queued", _queue_event(prompt_id))
+
+    try:
+        current = _history_generation_status(prompt_id)
+        if current.status == "completed":
+            yield _sse_message("completed", current.model_dump())
+            return
+        if current.status == "failed":
+            yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed"})
+            return
+    except _ComfyUIError:
+        pass
+
+    try:
+        async with websockets.connect(
+            _comfy_websocket_url(client_id),
+            open_timeout=10,
+            ping_interval=20,
+            close_timeout=2,
+        ) as socket:
+            while True:
+                try:
+                    raw_message = await asyncio.wait_for(socket.recv(), timeout=_SSE_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    queue_event = _queue_event(prompt_id)
+                    if queue_event["status"] == "queued":
+                        yield _sse_message("queued", queue_event)
+                    else:
+                        yield ": keep-alive\n\n"
+                    continue
+                except websockets.exceptions.ConnectionClosed:
+                    yield _sse_message("error", {"prompt_id": prompt_id, "message": "ComfyUI 진행 연결이 종료되었습니다."})
+                    return
+
+                if isinstance(raw_message, bytes):
+                    continue
+                try:
+                    message = json.loads(raw_message)
+                except json.JSONDecodeError:
+                    continue
+
+                event_name = message.get("type")
+                data = message.get("data") if isinstance(message.get("data"), dict) else {}
+                event_prompt_id = data.get("prompt_id")
+                if event_prompt_id is not None and event_prompt_id != prompt_id:
+                    continue
+
+                if event_name == "progress":
+                    value = _number(data.get("value"))
+                    maximum = _number(data.get("max"))
+                    progress = round(min(100, max(0, value / maximum * 100)) if maximum > 0 else 0, 2)
+                    yield _sse_message(
+                        "progress",
+                        {
+                            "prompt_id": prompt_id,
+                            "status": "processing",
+                            "progress": progress,
+                            "value": value,
+                            "total": maximum,
+                            "node": data.get("node"),
+                        },
+                    )
+                elif event_name == "executing":
+                    if data.get("node") is None:
+                        try:
+                            current = _history_generation_status(prompt_id)
+                        except _ComfyUIError:
+                            current = None
+                        if current and current.status == "completed":
+                            yield _sse_message("completed", current.model_dump())
+                            return
+                        if current and current.status == "failed":
+                            yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed"})
+                            return
+                    else:
+                        yield _sse_message(
+                            "processing",
+                            {"prompt_id": prompt_id, "status": "processing", "progress": 0, "node": data.get("node")},
+                        )
+                elif event_name == "execution_success":
+                    current = _history_generation_status(prompt_id)
+                    yield _sse_message("completed", current.model_dump())
+                    return
+                elif event_name in {"execution_error", "execution_interrupted"}:
+                    detail = data.get("exception_message") or data.get("message")
+                    yield _sse_message(
+                        "failed",
+                        {
+                            "prompt_id": prompt_id,
+                            "status": "failed",
+                            "message": str(detail)[:500] if detail else "ComfyUI에서 이미지 생성에 실패했습니다.",
+                        },
+                    )
+                    return
+    except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
+        yield _sse_message("error", {"prompt_id": prompt_id, "message": "ComfyUI 진행 연결에 실패했습니다."})
+
+
+def _history_generation_status(prompt_id: str) -> ImageGenerationStatus:
+    history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
     if not isinstance(entry, dict):
         return ImageGenerationStatus(prompt_id=prompt_id, status="queued")
@@ -112,6 +236,42 @@ def image_generation_status(
             images=_image_outputs(prompt_id, entry.get("outputs")),
         )
     return ImageGenerationStatus(prompt_id=prompt_id, status="processing")
+
+
+def _queue_event(prompt_id: str) -> dict[str, Any]:
+    try:
+        queue = _request_json("GET", "/queue")
+    except _ComfyUIError:
+        return {"prompt_id": prompt_id, "status": "queued", "progress": 0, "queue_position": None}
+
+    running = queue.get("queue_running", [])
+    if _queue_contains(running, prompt_id):
+        return {"prompt_id": prompt_id, "status": "processing", "progress": 0, "queue_position": 0}
+
+    pending = queue.get("queue_pending", [])
+    for index, item in enumerate(pending, start=1):
+        if _queue_item_prompt_id(item) == prompt_id:
+            return {"prompt_id": prompt_id, "status": "queued", "progress": 0, "queue_position": index}
+    return {"prompt_id": prompt_id, "status": "queued", "progress": 0, "queue_position": None}
+
+
+def _queue_contains(items: Any, prompt_id: str) -> bool:
+    return isinstance(items, list) and any(_queue_item_prompt_id(item) == prompt_id for item in items)
+
+
+def _queue_item_prompt_id(item: Any) -> str | None:
+    return item[1] if isinstance(item, list) and len(item) > 1 and isinstance(item[1], str) else None
+
+
+def _number(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sse_message(event_name: str, data: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @router.get("/{prompt_id}/view")
@@ -315,6 +475,14 @@ def _request_bytes(path: str) -> tuple[bytes, str | None]:
 
 def _comfy_url(path: str) -> str:
     return f"{settings.comfyui_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _comfy_websocket_url(client_id: str) -> str:
+    base_url = settings.comfyui_url.rstrip("/")
+    websocket_scheme = "wss" if base_url.startswith("https://") else "ws"
+    base_url = base_url.removeprefix("https://").removeprefix("http://")
+    query = urlencode({"clientId": client_id})
+    return f"{websocket_scheme}://{base_url}/ws?{query}"
 
 
 class _ComfyUIError(RuntimeError):
