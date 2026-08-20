@@ -1,52 +1,67 @@
-# 프로젝트 전체 구조
+# Local Field 프로젝트 구조
 
-이 프로젝트는 **웹(Web)**, **서버(Server)**, **모바일(Mobile)** 영역으로 나눠 관리합니다.
+Local Field는 로컬 AI 미디어 생성 시스템을 제어·관리하는 웹과 서버로 구성합니다.
 
 ```text
-ai_template_project/
+local_field_project/
 ├── web/
-│   ├── secrets/       # API 키 등 웹 전용 시크릿. Git에 커밋하지 않음
-│   ├── pages/         # 웹 페이지 및 라우트 단위 화면
-│   ├── components/    # 여러 페이지에서 재사용하는 UI 컴포넌트
-│   ├── utils/         # 웹에서 사용하는 유틸 함수
-│   └── WEB_INFO.md    # 웹 영역 설명 및 작업 메모
+│   ├── src/
+│   │   ├── lib/
+│   │   │   └── configs/
+│   │   │       └── constants.ts  # 웹 상수 및 공개 환경변수 설정
+│   │   └── routes/               # 웹 페이지 및 라우트
+│   ├── .env.development          # 웹 개발 환경변수
+│   ├── .env.production           # 웹 배포 환경변수
+│   └── Dockerfile
 │
 ├── server/
-│   ├── secrets/       # API 키 등 서버 전용 시크릿. Git에 커밋하지 않음
-│   ├── services/      # 서버 서비스
-│   ├── utils/         # 서버 유틸 함수
-│   └── SERVER_INFO.md # 서버 영역 설명 및 작업 메모
+│   ├── app/
+│   │   └── configs/
+│   │       └── constants.py      # 서버 상수 및 환경변수 설정
+│   ├── .env.development          # 서버 개발 환경변수
+│   ├── .env.production           # 서버 배포 환경변수
+│   └── Dockerfile
 │
-└── mobile/
-    ├── screens/       # 모바일 화면
-    ├── utils/         # 모바일 유틸 함수
-    ├── components/    # 재사용 컴포넌트
-    ├── widgets/       # 모바일 위젯
-    └── MOBILE_INFO.md # 모바일 영역 설명 및 작업 메모
+├── docker-compose.yml            # 개발 환경
+├── docker-compose.production.yml # 배포 환경
+└── STRUCTURE.md
 ```
 
-## Web
+## Web 프레임워크
 
-웹 영역은 다음 단위로 구성합니다.
+- 프레임워크: SvelteKit
+- UI 런타임: Svelte 5
+- 언어: TypeScript
+- 개발·빌드 도구: Vite
+- 배포 어댑터: `@sveltejs/adapter-node`
 
-- **secrets**: API 키, 토큰, 환경별 비밀 설정을 보관합니다. 민감한 값은 저장소에 커밋하지 않습니다.
-- **pages**: 사용자가 접근하는 페이지와 라우트별 화면을 관리합니다.
-- **components**: 버튼, 폼, 카드, 모달 등 여러 곳에서 재사용하는 UI를 관리합니다.
-- **utils**: 날짜·문자열 처리, API 응답 변환, 검증 등 공통 유틸 함수를 관리합니다.
+## configs/constants
 
-## Server
+웹과 서버는 각각 `configs/constants` 하나를 환경변수와 상수의 기준으로 사용합니다.
 
-서버 영역은 다음 단위로 구성합니다.
+- `web/src/lib/configs/constants.ts`: 공개 환경변수, API 서버 주소, API 문서 경로, 웹 상수
+- `server/app/configs/constants.py`: 서버·DB 포트, CORS, 데이터베이스 환경변수, 서버 상수
+- `config.*`와 `constants.*`를 별도 파일로 분리하지 않습니다.
+- 웹 페이지와 서버 모듈은 환경변수를 직접 읽지 않고 `configs/constants`를 사용합니다.
 
-- **secrets**: API 키, 토큰, 환경별 비밀 설정을 보관합니다. 민감한 값은 저장소에 커밋하지 않습니다.
-- **services**: API, 비즈니스 로직, 데이터 저장소 연동, 인증·권한 등 서버 서비스를 관리합니다.
-- **utils**: 서버 전반에서 사용하는 검증, 변환, 로깅 등 공통 유틸 함수를 관리합니다.
+## 환경변수
 
-## Mobile
+웹과 서버의 환경변수는 각 프로젝트에 개발용과 배포용으로 분리합니다.
 
-모바일 영역은 다음 단위로 구성합니다.
+```text
+web/.env.development
+web/.env.production
+server/.env.development
+server/.env.production
+```
 
-- **screens**: 로그인, 홈, 설정 등 사용자가 직접 보는 모바일 화면을 관리합니다.
-- **utils**: 날짜·문자열 처리, 검증, API 응답 변환 등 모바일 공통 유틸 함수를 관리합니다.
-- **components**: 여러 화면에서 재사용하는 버튼, 입력창, 카드 등 UI 컴포넌트를 관리합니다.
-- **widgets**: 특정 기능이나 정보를 독립적으로 표시하는 모바일 위젯을 관리합니다.
+- `web/.env.*`: Web 포트와 공개 API 서버 주소·포트 등 웹에서 사용하는 값
+- `server/.env.*`: API 서버 포트, DB 포트, PostgreSQL 연결 값 등 서버에서 사용하는 값
+- 루트 `.env`는 사용하지 않습니다.
+- 인증 정보와 비밀값은 Git에 커밋하지 않습니다.
+- 개발 Compose는 `docker-compose.yml`, 배포 Compose는 `docker-compose.production.yml`을 사용합니다.
+
+## 스타일 라이브러리
+
+- 라이브러리: Tailwind CSS + shadcn-svelte
+- 아이콘: Lucide (`lucide-svelte`)
