@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from psycopg.errors import UniqueViolation
 
 from .configs.constants import settings
-from .database import get_connection
+from .database import get_connection, record_auth_event
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -50,7 +50,11 @@ class AuthResponse(BaseModel):
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def signup(payload: SignupRequest, request: Request) -> AuthResponse:
     email = _normalize_email(payload.email)
-    _validate_email(email)
+    try:
+        _validate_email(email)
+    except HTTPException:
+        _record_auth_event(request, "signup", email, False, "invalid_email")
+        raise
     user_id = uuid.uuid4()
 
     try:
@@ -60,8 +64,10 @@ def signup(payload: SignupRequest, request: Request) -> AuthResponse:
                 (user_id, email, _hash_password(payload.password)),
             )
     except UniqueViolation as exc:
+        _record_auth_event(request, "signup", email, False, "duplicate_email")
         raise HTTPException(status_code=409, detail="이미 가입된 이메일입니다.") from exc
 
+    _record_auth_event(request, "signup", email, True, user_id=user_id)
     request.state.user_id = user_id
     return _auth_response(user_id, email)
 
@@ -69,7 +75,11 @@ def signup(payload: SignupRequest, request: Request) -> AuthResponse:
 @router.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, request: Request) -> AuthResponse:
     email = _normalize_email(payload.email)
-    _validate_email(email)
+    try:
+        _validate_email(email)
+    except HTTPException:
+        _record_auth_event(request, "login", email, False, "invalid_email")
+        raise
 
     with get_connection() as connection:
         row = connection.execute(
@@ -77,9 +87,18 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
             (email,),
         ).fetchone()
         if row is None or not _verify_password(payload.password, row[1]):
+            _record_auth_event(
+                request,
+                "login",
+                email,
+                False,
+                "invalid_credentials",
+                user_id=row[0] if row else None,
+            )
             raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
     user_id = row[0]
+    _record_auth_event(request, "login", email, True, user_id=user_id)
     request.state.user_id = user_id
     return _auth_response(user_id, email)
 
@@ -112,6 +131,33 @@ def _auth_response(user_id: uuid.UUID, email: str) -> AuthResponse:
         token_type="bearer",
         user=UserResponse(id=user_id, email=email),
     )
+
+
+def _record_auth_event(
+    request: Request,
+    event_type: str,
+    email: str | None,
+    success: bool,
+    failure_reason: str | None = None,
+    user_id: uuid.UUID | None = None,
+) -> None:
+    record_auth_event(
+        event_type=event_type,
+        email=email,
+        success=success,
+        failure_reason=failure_reason,
+        client_ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        user_id=user_id,
+    )
+
+
+def _client_ip(request: Request) -> str | None:
+    for header in ("cf-connecting-ip", "x-real-ip", "x-forwarded-for"):
+        value = request.headers.get(header)
+        if value:
+            return value.split(",", 1)[0].strip()
+    return request.client.host if request.client else None
 
 
 def _normalize_email(email: str) -> str:

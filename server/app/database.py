@@ -16,6 +16,22 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS auth_history (
+        id BIGSERIAL PRIMARY KEY,
+        event_type VARCHAR(32) NOT NULL,
+        email VARCHAR(254),
+        success BOOLEAN NOT NULL,
+        failure_reason VARCHAR(128),
+        occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        client_ip TEXT,
+        user_agent TEXT,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS auth_history_user_id_idx ON auth_history(user_id)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
         method VARCHAR(16) NOT NULL,
@@ -58,6 +74,26 @@ def initialize_database() -> None:
     with get_connection() as connection:
         for statement in _SCHEMA_STATEMENTS:
             connection.execute(statement)
+
+
+def record_auth_event(
+    *,
+    event_type: str,
+    email: str | None,
+    success: bool,
+    failure_reason: str | None,
+    client_ip: str | None,
+    user_agent: str | None,
+    user_id: Any = None,
+) -> None:
+    _record(
+        """
+        INSERT INTO auth_history
+            (event_type, email, success, failure_reason, client_ip, user_agent, user_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (event_type, email, success, failure_reason, client_ip, user_agent, user_id),
+    )
 
 
 def record_api_call(

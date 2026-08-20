@@ -10,11 +10,17 @@ local_field_project/
 │   │   ├── lib/
 │   │   │   ├── configs/
 │   │   │   │   └── constants.ts  # 웹 상수 및 공개 환경변수 설정
+│   │   │   ├── utils/
+│   │   │   │   ├── api.ts          # ky 기반 공통 API client
+│   │   │   │   └── jwt.ts          # JWT payload·만료·사용 가능 상태 확인
 │   │   │   └── stores/
 │   │   │       └── auth.svelte.ts # JWT 인증 상태 및 자동로그인 상태관리
 │   │   └── routes/
 │   │       ├── login/
 │   │       │   └── +page.svelte    # 로그인·회원가입 화면
+│   │       ├── generate/
+│   │       │   └── image/
+│   │       │       └── +page.svelte # ComfyUI Anima 이미지 생성 화면
 │   │       └── vault/
 │   │           └── +page.svelte    # 인증 사용자 개인 보관함
 │   ├── components/
@@ -39,6 +45,8 @@ local_field_project/
 │   │   │   ├── image.svelte
 │   │   │   ├── model-viewer.svelte
 │   │   │   └── video.svelte
+│   │   ├── feedback/
+│   │   │   └── toast.svelte
 │   │   ├── tabs/
 │   │   │   └── tab.svelte
 │   │   └── typography/
@@ -50,10 +58,11 @@ local_field_project/
 ├── server/
 │   ├── app/
 │   │   ├── auth.py               # JWT 회원가입·로그인·현재 사용자 API
-│   │   ├── database.py           # PostgreSQL 스키마 및 API 로그 기록
+│   │   ├── comfyui.py            # ComfyUI Anima 옵션·생성·결과 프록시 API
+│   │   ├── database.py           # PostgreSQL users·auth_history·API 로그 스키마 및 기록
 │   │   ├── main.py               # FastAPI 앱과 API 감사 미들웨어
 │   │   └── configs/
-│   │       └── constants.py      # 서버 상수·환경변수·JWT 서명 비밀값
+│   │       └── constants.py      # 서버 상수·환경변수·JWT·ComfyUI 주소
 │   ├── .env.development          # 서버 개발 환경변수
 │   ├── .env.production           # 서버 배포 환경변수
 │   └── Dockerfile
@@ -95,6 +104,12 @@ local_field_project/
 ## 인증
 
 - `server/app/auth.py`: `/auth/signup`, `/auth/login`, `/auth/me` JWT API
+- `server/app/database.py`: 사용자·인증 이력·API 감사·오류 로그 DB 처리
+- `server/app/comfyui.py`: ComfyUI Anima 체크포인트·LoRA 조회와 이미지 생성 상태·결과 프록시
+- `web/src/routes/generate/image/+page.svelte`: 프롬프트, 체크포인트, LoRA, CFG, steps 기반 이미지 생성 화면
+- `web/components/feedback/toast.svelte`: 비동기 생성 오류·완료 상태 알림
+- `web/src/lib/utils/api.ts`: ky 기반 API 호출, JWT header 주입, HTTP 오류 변환
+- `web/src/lib/utils/jwt.ts`: JWT payload decode와 만료·사용 가능 상태 확인
 - `web/src/lib/stores/auth.svelte.ts`: Svelte 5 rune 기반 JWT 상태관리와 `localStorage` 자동로그인 복원
 - 로그인·회원가입 성공 후 `/vault`로 이동합니다.
 - `/vault`는 `/auth/me`로 JWT를 검증한 인증 사용자만 접근합니다.
@@ -104,7 +119,7 @@ local_field_project/
 웹과 서버는 각각 `configs/constants` 하나를 환경변수와 상수의 기준으로 사용합니다.
 
 - `web/src/lib/configs/constants.ts`: 공개 환경변수, API 서버 주소, API 문서 경로, 웹 상수
-- `server/app/configs/constants.py`: 서버·DB 포트, CORS, 데이터베이스 환경변수, JWT 서명 비밀값, 서버 상수
+- `server/app/configs/constants.py`: 서버·DB 포트, CORS, 데이터베이스 환경변수, JWT 서명 비밀값, ComfyUI 주소, 서버 상수
 - `config.*`와 `constants.*`를 별도 파일로 분리하지 않습니다.
 - 웹 페이지와 서버 모듈은 환경변수를 직접 읽지 않고 `configs/constants`를 사용합니다.
 
@@ -120,7 +135,7 @@ server/.env.production
 ```
 
 - `web/.env.*`: Web 포트와 공개 API 서버 주소·포트 등 웹에서 사용하는 값
-- `server/.env.*`: API 서버 포트, DB 포트, PostgreSQL 연결 값, JWT 서명 비밀값 등 서버에서 사용하는 값
+- `server/.env.*`: API 서버 포트, DB 포트, PostgreSQL 연결 값, JWT 서명 비밀값, 선택적 `COMFYUI_URL` 등 서버에서 사용하는 값
 - 루트 `.env`는 사용하지 않습니다.
 - 인증 정보와 비밀값은 Git에 커밋하지 않습니다.
 - 개발 Compose는 `docker-compose.yml`, 배포 Compose는 `docker-compose.production.yml`을 사용합니다.

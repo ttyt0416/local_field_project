@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import router as auth_router
+from .comfyui import router as comfyui_router
 from .configs.constants import APP_TITLE, APP_VERSION, HEALTH_STATUS, settings
 from .database import initialize_database, record_api_call, record_api_error
 
@@ -80,3 +81,4 @@ async def health() -> dict[str, str]:
 
 
 app.include_router(auth_router)
+app.include_router(comfyui_router)

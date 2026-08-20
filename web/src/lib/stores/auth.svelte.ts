@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
-import { SERVER_URL } from '$lib/configs/constants';
+import { ACCESS_TOKEN_KEY, apiJson } from '$lib/utils/api';
+import { isJwtUsable } from '$lib/utils/jwt';
 
 export type AuthUser = {
 	id: string;
@@ -11,8 +12,6 @@ type AuthResponse = {
 	token_type: string;
 	user: AuthUser;
 };
-
-const ACCESS_TOKEN_KEY = 'local-field.access-token';
 
 class AuthStore {
 	token = $state<string | null>(null);
@@ -58,20 +57,15 @@ class AuthStore {
 		}
 
 		const storedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-		if (!storedToken) {
+		if (!isJwtUsable(storedToken)) {
+			this.clearSession();
 			this.initialized = true;
 			return;
 		}
 
 		this.token = storedToken;
 		try {
-			const response = await fetch(`${SERVER_URL}/auth/me`, {
-			headers: { Authorization: `Bearer ${storedToken}` }
-			});
-			if (!response.ok) {
-				throw new Error('인증 세션이 만료되었습니다.');
-			}
-			this.user = (await response.json()) as AuthUser;
+			this.user = await apiJson<AuthUser>('auth/me');
 		} catch {
 			this.clearSession();
 		} finally {
@@ -80,18 +74,10 @@ class AuthStore {
 	}
 
 	private async authenticate(path: string, credentials: { email: string; password: string }) {
-		const response = await fetch(`${SERVER_URL}${path}`, {
+		return apiJson<AuthResponse>(path, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(credentials)
+			json: credentials
 		});
-		const payload = (await response.json().catch(() => ({}))) as {
-			detail?: string;
-		};
-		if (!response.ok) {
-			throw new Error(payload.detail || '인증 요청에 실패했습니다.');
-		}
-		return payload as AuthResponse;
 	}
 
 	private setSession(session: AuthResponse) {

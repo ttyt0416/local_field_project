@@ -1,16 +1,14 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { ArrowUpRight, Boxes, Clock3, Plus, Settings2, Workflow } from '@lucide/svelte';
-	import Input from '../../components/inputs/input.svelte';
 	import Layout from '../../components/layouts/layout.svelte';
 	import LoadingShimmer from '../../components/loadings/loading-shimmer.svelte';
 	import LoadingSpinner from '../../components/loadings/loading-spinner.svelte';
-	import Modal from '../../components/modals/modal.svelte';
 	import OutlinedButton from '../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../components/buttons/primary-button.svelte';
 	import Typography from '../../components/typography/typography.svelte';
 	import { APP_NAME, SERVER_DOCS_URL } from '$lib/configs/constants';
 
-	let createModalOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -34,7 +32,7 @@
 				</Typography>
 			</div>
 			<div class="flex flex-col gap-2 sm:flex-row lg:flex-col">
-				<PrimaryButton onclick={() => (createModalOpen = true)}>
+				<PrimaryButton onclick={() => goto('/generate/image')}>
 					<Plus size={17} strokeWidth={2} />
 					<span>새 생성 작업</span>
 				</PrimaryButton>
@@ -159,26 +157,3 @@
 		</section>
 	</div>
 </Layout>
-
-<Modal
-	bind:open={createModalOpen}
-	title="새 생성 작업"
-	description="연결된 시스템에서 실행할 작업의 기본 정보를 입력합니다."
->
-	<div class="space-y-4">
-		<Input id="job-name" label="작업 이름" placeholder="예: 제품 소개 이미지" />
-		<label class="block space-y-2">
-			<span class="text-sm font-medium">생성 시스템</span>
-			<select class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20">
-				<option>ComfyUI</option>
-				<option>AnimateDiff</option>
-				<option>Audio Lab</option>
-			</select>
-		</label>
-	</div>
-
-	{#snippet footer()}
-		<OutlinedButton onclick={() => (createModalOpen = false)}>취소</OutlinedButton>
-		<PrimaryButton onclick={() => (createModalOpen = false)}>작업 만들기</PrimaryButton>
-	{/snippet}
-</Modal>

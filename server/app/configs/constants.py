@@ -8,6 +8,7 @@ DEFAULT_SERVER_PORT = 8080
 DEFAULT_DB_HOST = "db"
 DEFAULT_DB_PORT = 5432
 DEFAULT_AUTH_SECRET = ""
+DEFAULT_COMFYUI_URL = "http://host.docker.internal:8188"
 HEALTH_STATUS = "ok"
 
 
@@ -26,6 +27,7 @@ class Settings:
     postgres_user: str
     postgres_password: str
     auth_secret: str
+    comfyui_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -39,6 +41,7 @@ class Settings:
             postgres_user=os.getenv("POSTGRES_USER", ""),
             postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
             auth_secret=os.getenv("AUTH_SECRET", DEFAULT_AUTH_SECRET),
+            comfyui_url=os.getenv("COMFYUI_URL", DEFAULT_COMFYUI_URL),
         )
 
 

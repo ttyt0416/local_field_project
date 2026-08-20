@@ -3,6 +3,7 @@
 		Activity,
 		Archive,
 		Boxes,
+		ImagePlus,
 		LayoutDashboard,
 		Menu,
 		Settings2,
@@ -100,6 +101,14 @@
 		>
 			<Workflow size={18} strokeWidth={1.8} />
 			<span>생성 작업</span>
+		</a>
+		<a
+			href="/generate/image"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<ImagePlus size={18} strokeWidth={1.8} />
+			<span>이미지 생성</span>
 		</a>
 		<a
 			href="#settings"
