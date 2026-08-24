@@ -2,7 +2,6 @@
 	import {
 		Archive,
 		ImagePlus,
-		LayoutDashboard,
 		Settings2,
 		Sparkles,
 		X
@@ -43,7 +42,7 @@
 	aria-label="주요 메뉴"
 >
 	<div class="flex h-16 items-center justify-between border-b border-border px-5">
-		<a href="#dashboard" class="flex items-center gap-3" onclick={close}>
+		<a href="/vault" class="flex items-center gap-3" onclick={close}>
 			<span class="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
 				<Sparkles size={18} strokeWidth={2} />
 			</span>
@@ -55,15 +54,6 @@
 	</div>
 
 	<nav class="flex-1 space-y-1 overflow-y-auto px-3 py-5" aria-label="애플리케이션 메뉴">
-		<a
-			href="#dashboard"
-			class="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary"
-			aria-current="page"
-			onclick={close}
-		>
-			<LayoutDashboard size={18} strokeWidth={1.8} />
-			<span>대시보드</span>
-		</a>
 		<a
 			href="/vault"
 			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
