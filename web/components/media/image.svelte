@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { ChevronLeft, ChevronRight, X } from '@lucide/svelte';
 	import LoadingShimmer from '../loadings/loading-shimmer.svelte';
+	import { apiBlob } from '$lib/utils/api';
 
 	type MediaSource = string | Blob;
 	type GalleryItem = {
@@ -40,11 +41,29 @@
 	$effect(() => {
 		loaded = false;
 		failed = false;
-		if (typeof source === 'string') {
+		if (typeof source === 'string' && !isServerSource) {
 			sourceUrl = source;
 			return;
 		}
-		if (!browser) {
+		if (typeof source === 'string' && isServerSource) {
+			let cancelled = false;
+			let objectUrl = '';
+			sourceUrl = '';
+			void apiBlob(source)
+				.then((blob) => {
+					if (cancelled) return;
+					objectUrl = URL.createObjectURL(blob);
+					sourceUrl = objectUrl;
+				})
+				.catch(() => {
+					if (!cancelled) failed = true;
+				});
+			return () => {
+				cancelled = true;
+				if (objectUrl) URL.revokeObjectURL(objectUrl);
+			};
+		}
+		if (!browser || typeof source === 'string') {
 			sourceUrl = '';
 			return;
 		}

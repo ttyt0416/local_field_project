@@ -4,7 +4,6 @@
 	import { Moon, Sparkles, Sun } from '@lucide/svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import Input from '../../../components/inputs/input.svelte';
-	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
 	import Tab from '../../../components/tabs/tab.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
@@ -89,7 +88,7 @@
 			<div class="mb-6">
 				<Typography as="h1" variant="h2">{mode === 'login' ? '다시 오신 것을 환영합니다' : 'Local Field 시작하기'}</Typography>
 				<Typography as="p" variant="muted" class="mt-2">
-					{mode === 'login' ? '개인 보관함에 접속하려면 로그인해 주세요.' : '개인 보관함을 만들고 생성 결과를 관리하세요.'}
+					{mode === 'login' ? '보관함에 접속하려면 로그인해 주세요.' : '보관함을 만들고 생성 결과를 관리하세요.'}
 				</Typography>
 			</div>
 
@@ -123,13 +122,6 @@
 					{mode === 'login' ? '로그인' : '회원가입'}
 				</PrimaryButton>
 			</form>
-
-			{#if busy}
-				<div class="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground" role="status">
-					<LoadingSpinner size="sm" label="인증 처리 중" />
-					<span>인증 처리 중입니다.</span>
-				</div>
-			{/if}
 		</section>
 	</main>
 </div>

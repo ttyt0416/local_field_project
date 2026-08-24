@@ -125,6 +125,24 @@ def current_user(
     return UserResponse(id=row[0], username=row[1])
 
 
+def optional_user_id(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> uuid.UUID | None:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return None
+    try:
+        user_id, _ = _decode_access_token(credentials.credentials)
+    except HTTPException:
+        return None
+    with get_connection() as connection:
+        row = connection.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone()
+    if row is None:
+        return None
+    request.state.user_id = row[0]
+    return row[0]
+
+
 def _auth_response(user_id: uuid.UUID, username: str) -> AuthResponse:
     return AuthResponse(
         access_token=_create_access_token(user_id, username),

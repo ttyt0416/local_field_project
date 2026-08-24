@@ -20,6 +20,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      web_log_db:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -42,5 +44,18 @@ services:
       timeout: 5s
       retries: 10
 
+  web_log_db:
+    image: postgres:16-alpine
+    env_file:
+      - ./server/.env.web-logs.production
+    volumes:
+      - web_log_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data:
+  web_log_postgres_data:

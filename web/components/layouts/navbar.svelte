@@ -1,8 +1,14 @@
 <script lang="ts">
-	import { Activity, Archive, LogIn, Moon, Sun } from '@lucide/svelte';
+	import { Activity, Archive, LogIn, Menu, Moon, Sun } from '@lucide/svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
+
+	type Props = {
+		onMenuClick: () => void;
+	};
+
+	let { onMenuClick }: Props = $props();
 </script>
 
 <header class="sticky top-0 z-30 border-b border-border/80 bg-background/85 backdrop-blur-xl">
@@ -40,6 +46,9 @@
 					</a>
 				{/if}
 			{/if}
+			<IconOutlinedButton ariaLabel="메뉴 열기" class="lg:hidden" onclick={onMenuClick}>
+				<Menu size={19} />
+			</IconOutlinedButton>
 		</div>
 	</div>
 </header>

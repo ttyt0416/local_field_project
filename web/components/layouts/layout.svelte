@@ -15,7 +15,7 @@
 <Sidebar bind:open={sidebarOpen} />
 
 <div class="min-h-screen bg-muted/30 text-foreground dark:bg-background lg:pl-72">
-	<Navbar />
+	<Navbar onMenuClick={() => (sidebarOpen = true)} />
 	<Body>
 		{@render children()}
 	</Body>

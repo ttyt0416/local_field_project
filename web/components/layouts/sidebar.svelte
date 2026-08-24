@@ -2,13 +2,10 @@
 	import {
 		Activity,
 		Archive,
-		Boxes,
 		ImagePlus,
 		LayoutDashboard,
-		Menu,
 		Settings2,
 		Sparkles,
-		Workflow,
 		X
 	} from '@lucide/svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
@@ -32,16 +29,6 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
-
-{#if !open}
-	<IconOutlinedButton
-		ariaLabel="메뉴 열기"
-		class="fixed bottom-4 left-4 z-40 bg-card shadow-lg lg:hidden"
-		onclick={() => (open = true)}
-	>
-		<Menu size={19} />
-	</IconOutlinedButton>
-{/if}
 
 {#if open}
 	<button
@@ -84,23 +71,7 @@
 			onclick={close}
 		>
 			<Archive size={18} strokeWidth={1.8} />
-			<span>개인 보관함</span>
-		</a>
-		<a
-			href="#systems"
-			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-			onclick={close}
-		>
-			<Boxes size={18} strokeWidth={1.8} />
-			<span>시스템</span>
-		</a>
-		<a
-			href="#jobs"
-			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-			onclick={close}
-		>
-			<Workflow size={18} strokeWidth={1.8} />
-			<span>생성 작업</span>
+			<span>보관함</span>
 		</a>
 		<a
 			href="/generate/image"

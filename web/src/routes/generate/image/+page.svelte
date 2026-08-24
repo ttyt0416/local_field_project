@@ -46,6 +46,7 @@
 	let streamConnected = $state(false);
 	let promptId = $state('');
 	let imageUrl = $state('');
+	let generationId = $state('');
 	let streamController: AbortController | null = null;
 	let options = $state<ImageOptions>({
 		checkpoints: [],
@@ -99,6 +100,7 @@
 		generationError = '';
 		successMessage = '';
 		imageUrl = '';
+		generationId = '';
 		progress = 0;
 		queuePosition = null;
 		streamConnected = false;
@@ -118,7 +120,7 @@
 		generating = true;
 		generationStatus = 'queued';
 		try {
-			const queued = await apiJson<{ prompt_id: string; client_id: string }>('generation/image', {
+			const queued = await apiJson<{ prompt_id: string; client_id: string; generation_id: string }>('generation/image', {
 				method: 'POST',
 				json: {
 					prompt: prompt.trim(),
@@ -133,6 +135,7 @@
 				}
 			});
 			promptId = queued.prompt_id;
+			generationId = queued.generation_id;
 			await streamGeneration(queued.prompt_id, queued.client_id);
 		} catch (error) {
 			if (!active) return;
@@ -271,6 +274,11 @@
 							</div>
 						{/if}
 					</div>
+					{#if imageUrl && generationId}
+						<a href={`/vault/images/${generationId}`} class="mt-4 inline-flex text-sm font-semibold text-primary hover:underline">
+							생성 상세 보기
+						</a>
+					{/if}
 				</section>
 
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="settings-title">

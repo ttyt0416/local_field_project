@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from typing import Any
+import uuid
 
 import psycopg
 
@@ -66,6 +67,34 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS auth_history_user_id_idx ON auth_history(user_id)
     """,
     """
+    CREATE TABLE IF NOT EXISTS image_generations (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        prompt_id VARCHAR(128) UNIQUE NOT NULL,
+        client_id VARCHAR(128) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'queued',
+        prompt TEXT NOT NULL,
+        negative_prompt TEXT NOT NULL,
+        checkpoint VARCHAR(255) NOT NULL,
+        lora VARCHAR(255),
+        lora_strength DOUBLE PRECISION NOT NULL,
+        cfg DOUBLE PRECISION NOT NULL,
+        steps INTEGER NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        seed BIGINT NOT NULL,
+        file_path TEXT,
+        filename VARCHAR(255),
+        subfolder VARCHAR(255) NOT NULL DEFAULT '',
+        image_type VARCHAR(32) NOT NULL DEFAULT 'output',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS image_generations_user_id_idx ON image_generations(user_id)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
         method VARCHAR(16) NOT NULL,
@@ -94,6 +123,32 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
 )
 
 
+_WEB_LOG_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS web_event_logs (
+        id BIGSERIAL PRIMARY KEY,
+        event_type VARCHAR(32) NOT NULL,
+        page_path TEXT NOT NULL,
+        from_path TEXT,
+        target_type VARCHAR(32) NOT NULL,
+        target_id TEXT,
+        target_label TEXT,
+        target_href TEXT,
+        occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        client_ip TEXT,
+        user_agent TEXT,
+        user_id UUID
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS web_event_logs_page_path_idx ON web_event_logs(page_path)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS web_event_logs_user_id_idx ON web_event_logs(user_id)
+    """,
+)
+
+
 def get_connection() -> psycopg.Connection[Any]:
     return psycopg.connect(
         host=settings.db_host,
@@ -104,12 +159,147 @@ def get_connection() -> psycopg.Connection[Any]:
     )
 
 
+def get_web_log_connection() -> psycopg.Connection[Any]:
+    return psycopg.connect(
+        host=settings.web_log_db_host,
+        port=settings.web_log_db_port,
+        dbname=settings.web_log_postgres_db,
+        user=settings.web_log_postgres_user,
+        password=settings.web_log_postgres_password,
+    )
+
+
 def initialize_database() -> None:
     with get_connection() as connection:
         for statement in _MIGRATION_STATEMENTS:
             connection.execute(statement)
         for statement in _SCHEMA_STATEMENTS:
             connection.execute(statement)
+    with get_web_log_connection() as connection:
+        for statement in _WEB_LOG_SCHEMA_STATEMENTS:
+            connection.execute(statement)
+
+
+_IMAGE_GENERATION_FIELDS = (
+    "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
+    "lora, lora_strength, cfg, steps, width, height, seed, file_path, filename, "
+    "subfolder, image_type, created_at, completed_at"
+)
+
+
+def create_image_generation(
+    *,
+    user_id: uuid.UUID,
+    prompt_id: str,
+    client_id: str,
+    prompt: str,
+    negative_prompt: str,
+    checkpoint: str,
+    lora: str | None,
+    lora_strength: float,
+    cfg: float,
+    steps: int,
+    width: int,
+    height: int,
+    seed: int,
+) -> uuid.UUID:
+    generation_id = uuid.uuid4()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO image_generations
+                (id, user_id, prompt_id, client_id, prompt, negative_prompt, checkpoint,
+                 lora, lora_strength, cfg, steps, width, height, seed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                generation_id,
+                user_id,
+                prompt_id,
+                client_id,
+                prompt,
+                negative_prompt,
+                checkpoint,
+                lora,
+                lora_strength,
+                cfg,
+                steps,
+                width,
+                height,
+                seed,
+            ),
+        )
+    return generation_id
+
+
+def get_image_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE prompt_id = %s AND user_id = %s",
+            (prompt_id, user_id),
+        ).fetchone()
+    return _image_generation_row(row)
+
+
+def get_image_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE id = %s AND user_id = %s",
+            (generation_id, user_id),
+        ).fetchone()
+    return _image_generation_row(row)
+
+
+def list_image_generations(user_id: uuid.UUID) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE user_id = %s ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
+
+
+def update_image_generation_status(
+    *,
+    prompt_id: str,
+    user_id: uuid.UUID,
+    status: str,
+    file_path: str | None = None,
+    filename: str | None = None,
+    subfolder: str = "",
+    image_type: str = "output",
+) -> None:
+    with get_connection() as connection:
+        if file_path is None:
+            connection.execute(
+                """
+                UPDATE image_generations
+                SET status = %s,
+                    completed_at = CASE WHEN %s IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END
+                WHERE prompt_id = %s AND user_id = %s
+                """,
+                (status, status, prompt_id, user_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE image_generations
+                SET status = %s,
+                    file_path = %s,
+                    filename = %s,
+                    subfolder = %s,
+                    image_type = %s,
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE prompt_id = %s AND user_id = %s
+                """,
+                (status, file_path, filename, subfolder, image_type, prompt_id, user_id),
+            )
+
+
+def _image_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_IMAGE_GENERATION_FIELDS.split(", "), row, strict=True))
 
 
 def record_auth_event(
@@ -179,6 +369,46 @@ def record_api_error(
             user_id,
         ),
     )
+
+
+def record_web_event(
+    *,
+    event_type: str,
+    page_path: str,
+    from_path: str | None,
+    target_type: str,
+    target_id: str | None,
+    target_label: str | None,
+    target_href: str | None,
+    client_ip: str | None,
+    user_agent: str | None,
+    user_id: Any = None,
+) -> None:
+    try:
+        with get_web_log_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO web_event_logs
+                    (event_type, page_path, from_path, target_type, target_id, target_label,
+                     target_href, client_ip, user_agent, user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    event_type,
+                    page_path,
+                    from_path,
+                    target_type,
+                    target_id,
+                    target_label,
+                    target_href,
+                    client_ip,
+                    user_agent,
+                    user_id,
+                ),
+            )
+    except Exception:
+        # Logging must not replace the original API response or exception.
+        return
 
 
 def _record(statement: str, parameters: Iterable[Any]) -> None:

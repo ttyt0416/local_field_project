@@ -4,6 +4,16 @@ import { SERVER_URL } from '$lib/configs/constants';
 
 export const ACCESS_TOKEN_KEY = 'local-field.access-token';
 
+export type WebEvent = {
+	event_type: 'click' | 'route';
+	page_path: string;
+	from_path?: string | null;
+	target_type: string;
+	target_id?: string | null;
+	target_label?: string | null;
+	target_href?: string | null;
+};
+
 const api = ky.create({
 	baseUrl: `${SERVER_URL.replace(/\/+$/, '')}/`,
 	retry: 0,
@@ -37,6 +47,25 @@ export async function apiJson<T>(path: string, options?: Options) {
 			throw new Error(getErrorMessage(error));
 		}
 		throw error;
+	}
+}
+
+export async function apiBlob(path: string, options?: Options) {
+	try {
+		return await api(path, options).blob();
+	} catch (error) {
+		if (error instanceof HTTPError) {
+			throw new Error(getErrorMessage(error));
+		}
+		throw error;
+	}
+}
+
+export async function trackWebEvent(event: WebEvent) {
+	try {
+		await api('web/events', { method: 'POST', json: event, timeout: 5_000, keepalive: true });
+	} catch {
+		// Telemetry must not block the interaction it records.
 	}
 }
 

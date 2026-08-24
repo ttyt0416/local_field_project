@@ -18,6 +18,11 @@ from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
 from .configs.constants import settings
+from .database import (
+    create_image_generation as create_image_generation_record,
+    get_image_generation,
+    update_image_generation_status,
+)
 
 
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
@@ -70,12 +75,12 @@ def image_options(_: UserResponse = Depends(current_user)) -> ImageGenerationOpt
 @router.post("", response_model=dict[str, str], status_code=status.HTTP_202_ACCEPTED)
 def create_image_generation(
     payload: ImageGenerationRequest,
-    _: UserResponse = Depends(current_user),
+    user: UserResponse = Depends(current_user),
 ) -> dict[str, str]:
     try:
         options = _image_options()
         _validate_model_choice(payload, options)
-        prompt = _build_prompt(payload)
+        prompt, seed = _build_prompt(payload)
         client_id = str(uuid.uuid4())
         response = _request_json(
             "POST",
@@ -88,17 +93,38 @@ def create_image_generation(
     prompt_id = response.get("prompt_id")
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 생성 작업 ID를 반환하지 않았습니다.")
-    return {"prompt_id": prompt_id, "status": "queued", "client_id": client_id}
+    generation_id = create_image_generation_record(
+        user_id=user.id,
+        prompt_id=prompt_id,
+        client_id=client_id,
+        prompt=payload.prompt,
+        negative_prompt=payload.negative_prompt,
+        checkpoint=payload.checkpoint,
+        lora=payload.lora,
+        lora_strength=payload.lora_strength,
+        cfg=payload.cfg,
+        steps=payload.steps,
+        width=payload.width,
+        height=payload.height,
+        seed=seed,
+    )
+    return {
+        "prompt_id": prompt_id,
+        "status": "queued",
+        "client_id": client_id,
+        "generation_id": str(generation_id),
+    }
 
 
 @router.get("/{prompt_id}/events")
 async def image_generation_events(
     prompt_id: str,
     client_id: str = Query(min_length=1, max_length=128),
-    _: UserResponse = Depends(current_user),
+    user: UserResponse = Depends(current_user),
 ) -> StreamingResponse:
+    _require_owned_generation(prompt_id, user.id)
     return StreamingResponse(
-        _stream_generation_events(prompt_id, client_id),
+        _stream_generation_events(prompt_id, client_id, user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -111,19 +137,20 @@ async def image_generation_events(
 @router.get("/{prompt_id}", response_model=ImageGenerationStatus)
 def image_generation_status(
     prompt_id: str,
-    _: UserResponse = Depends(current_user),
+    user: UserResponse = Depends(current_user),
 ) -> ImageGenerationStatus:
+    _require_owned_generation(prompt_id, user.id)
     try:
-        return _history_generation_status(prompt_id)
+        return _history_generation_status(prompt_id, user.id)
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
-async def _stream_generation_events(prompt_id: str, client_id: str):
+async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uuid.UUID):
     yield _sse_message("queued", _queue_event(prompt_id))
 
     try:
-        current = _history_generation_status(prompt_id)
+        current = _history_generation_status(prompt_id, user_id)
         if current.status == "completed":
             yield _sse_message("completed", current.model_dump())
             return
@@ -185,7 +212,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str):
                 elif event_name == "executing":
                     if data.get("node") is None:
                         try:
-                            current = _history_generation_status(prompt_id)
+                            current = _history_generation_status(prompt_id, user_id)
                         except _ComfyUIError:
                             current = None
                         if current and current.status == "completed":
@@ -200,11 +227,12 @@ async def _stream_generation_events(prompt_id: str, client_id: str):
                             {"prompt_id": prompt_id, "status": "processing", "progress": 0, "node": data.get("node")},
                         )
                 elif event_name == "execution_success":
-                    current = _history_generation_status(prompt_id)
+                    current = _history_generation_status(prompt_id, user_id)
                     yield _sse_message("completed", current.model_dump())
                     return
                 elif event_name in {"execution_error", "execution_interrupted"}:
                     detail = data.get("exception_message") or data.get("message")
+                    update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
                     yield _sse_message(
                         "failed",
                         {
@@ -218,7 +246,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str):
         yield _sse_message("error", {"prompt_id": prompt_id, "message": "ComfyUI 진행 연결에 실패했습니다."})
 
 
-def _history_generation_status(prompt_id: str) -> ImageGenerationStatus:
+def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGenerationStatus:
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
     if not isinstance(entry, dict):
@@ -228,13 +256,17 @@ def _history_generation_status(prompt_id: str) -> ImageGenerationStatus:
     comfy_status: dict[str, Any] = raw_status if isinstance(raw_status, dict) else {}
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
+        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
         return ImageGenerationStatus(prompt_id=prompt_id, status="failed")
     if comfy_status.get("completed") is True:
+        raw_images = _raw_image_outputs(entry.get("outputs"))
+        _sync_generation_output(prompt_id, user_id, raw_images)
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status="completed",
             images=_image_outputs(prompt_id, entry.get("outputs")),
         )
+    update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
     return ImageGenerationStatus(prompt_id=prompt_id, status="processing")
 
 
@@ -274,14 +306,55 @@ def _sse_message(event_name: str, data: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _require_owned_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
+    generation = get_image_generation(prompt_id, user_id)
+    if generation is None:
+        raise HTTPException(status_code=404, detail="생성 결과를 찾을 수 없습니다.")
+    return generation
+
+
+def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dict[str, Any]]) -> None:
+    image = images[0] if images else None
+    if not isinstance(image, dict):
+        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
+        return
+    filename = image.get("filename")
+    if not isinstance(filename, str) or not filename:
+        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
+        return
+    subfolder = image.get("subfolder", "")
+    image_type = image.get("type", "output")
+    if not isinstance(subfolder, str) or not isinstance(image_type, str):
+        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
+        return
+    path_parts = [image_type, subfolder, filename]
+    file_path = "/".join(part for part in path_parts if part)
+    update_image_generation_status(
+        prompt_id=prompt_id,
+        user_id=user_id,
+        status="completed",
+        file_path=file_path,
+        filename=filename,
+        subfolder=subfolder,
+        image_type=image_type,
+    )
+
+
 @router.get("/{prompt_id}/view")
 def view_generated_image(
     prompt_id: str,
     filename: str = Query(min_length=1, max_length=255),
     subfolder: str = Query(default="", max_length=255),
     image_type: str = Query(default="output", alias="type", max_length=32),
-    _: UserResponse = Depends(current_user),
+    user: UserResponse = Depends(current_user),
 ) -> Response:
+    generation = _require_owned_generation(prompt_id, user.id)
+    if (
+        generation["filename"] != filename
+        or generation["subfolder"] != subfolder
+        or generation["image_type"] != image_type
+    ):
+        raise HTTPException(status_code=404, detail="생성 결과 이미지를 찾을 수 없습니다.")
     try:
         history = _request_json("GET", f"/history/{prompt_id}")
     except _ComfyUIError as exc:
@@ -342,7 +415,7 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
         raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
 
 
-def _build_prompt(payload: ImageGenerationRequest) -> dict[str, dict[str, Any]]:
+def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, Any]], int]:
     seed = payload.seed if payload.seed is not None else secrets.randbelow(18_446_744_073_709_551_616)
     model: list[Any] = ["1", 0]
     prompt: dict[str, dict[str, Any]] = {
@@ -409,7 +482,7 @@ def _build_prompt(payload: ImageGenerationRequest) -> dict[str, dict[str, Any]]:
         }
         model = ["2", 0]
         prompt["8"]["inputs"]["model"] = model
-    return prompt
+    return prompt, seed
 
 
 def _image_outputs(prompt_id: str, outputs: Any) -> list[ImageOutput]:
