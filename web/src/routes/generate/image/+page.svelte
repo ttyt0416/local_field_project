@@ -35,7 +35,6 @@
 
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
-	const rangeInputClass = 'w-full accent-primary';
 
 	let active = true;
 	let ready = $state(false);
@@ -324,11 +323,11 @@
 												<button type="button" aria-label={`LoRA ${index + 1} 제거`} onclick={() => removeLora(index)} class="mt-7 inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
 													<X size={16} strokeWidth={1.8} />
 												</button>
-											</div>
-											<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
-												<span class="flex items-center justify-between text-sm font-medium"><span>Strength</span><output>{lora.strength}</output></span>
-												<input id={`lora-strength-${index}`} type="range" min="-2" max="2" step="0.05" bind:value={lora.strength} class={rangeInputClass} />
-											</label>
+												</div>
+												<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
+												<span class="text-sm font-medium">Strength</span>
+												<input id={`lora-strength-${index}`} type="number" min="-2" max="2" step="0.05" bind:value={lora.strength} class={numberInputClass} />
+												</label>
 										</div>
 									{/each}
 								</div>
