@@ -2,7 +2,6 @@
 	import {
 		Archive,
 		ImagePlus,
-		Settings2,
 		Sparkles,
 		X
 	} from '@lucide/svelte';
@@ -69,14 +68,6 @@
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
 			<span>이미지 생성</span>
-		</a>
-		<a
-			href="#settings"
-			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-			onclick={close}
-		>
-			<Settings2 size={18} strokeWidth={1.8} />
-			<span>설정</span>
 		</a>
 	</nav>
 

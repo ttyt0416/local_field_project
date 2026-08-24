@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ImagePlus, Sparkles } from '@lucide/svelte';
+	import { ImagePlus, Plus, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -17,7 +17,6 @@
 		checkpoints: string[];
 		loras: string[];
 		default_checkpoint: string;
-		default_lora: string | null;
 	};
 
 	type ImageGenerationEvent = {
@@ -27,6 +26,11 @@
 		queue_position?: number | null;
 		message?: string;
 		images?: { url: string }[];
+	};
+
+	type LoraSelection = {
+		name: string;
+		strength: number;
 	};
 
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
@@ -51,24 +55,33 @@
 	let options = $state<ImageOptions>({
 		checkpoints: [],
 		loras: [],
-		default_checkpoint: '',
-		default_lora: null
+		default_checkpoint: ''
 	});
 	let prompt = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
-	let lora = $state('');
-	let loraStrength = $state(0.7);
+	let loras = $state<LoraSelection[]>([]);
 	let cfg = $state(4);
 	let steps = $state(30);
 	let width = $state(1024);
 	let height = $state(1024);
 
 	let checkpointOptions = $derived(options.checkpoints.map((value) => ({ value, label: value })));
-	let loraOptions = $derived([
-		{ value: '', label: 'LoRA 사용 안 함' },
-		...options.loras.map((value) => ({ value, label: value }))
-	]);
+	let loraOptions = $derived(options.loras.map((value) => ({ value, label: value })));
+
+	function availableLoraOptions(index: number) {
+		const selected = new Set(loras.filter((_, currentIndex) => currentIndex !== index).map((lora) => lora.name));
+		return loraOptions.filter((option) => option.value === loras[index]?.name || !selected.has(option.value));
+	}
+
+	function addLora() {
+		const next = loraOptions.find((option) => !loras.some((lora) => lora.name === option.value));
+		if (next) loras = [...loras, { name: next.value, strength: 0.7 }];
+	}
+
+	function removeLora(index: number) {
+		loras = loras.filter((_, currentIndex) => currentIndex !== index);
+	}
 
 	onMount(() => {
 		void initialize();
@@ -88,7 +101,6 @@
 		try {
 			options = await apiJson<ImageOptions>('generation/image/options');
 			checkpoint = options.default_checkpoint;
-			lora = options.default_lora ?? '';
 		} catch (error) {
 			optionsError = getErrorMessage(error);
 		} finally {
@@ -126,8 +138,7 @@
 					prompt: prompt.trim(),
 					negative_prompt: negativePrompt.trim(),
 					checkpoint,
-					lora: lora || null,
-					lora_strength: loraStrength,
+					loras: loras.map(({ name, strength }) => ({ name, strength })),
 					cfg,
 					steps,
 					width,
@@ -173,7 +184,7 @@
 								successMessage = '이미지 생성이 완료되었습니다.';
 							} else if (event.event === 'failed' || event.event === 'error') {
 								terminalStatus = 'failed';
-								throw new Error(payload.message ?? 'ComfyUI 이미지 생성에 실패했습니다.');
+								throw new Error(payload.message ?? '이미지 생성에 실패했습니다.');
 							}
 						},
 						{ signal: controller.signal, onConnected: () => (streamConnected = true) }
@@ -211,7 +222,7 @@
 
 <svelte:head>
 	<title>이미지 생성 · Local Field</title>
-	<meta name="description" content="ComfyUI Anima 체크포인트와 LoRA를 사용한 이미지 생성" />
+	<meta name="description" content="프롬프트와 파라미터를 사용한 이미지 생성" />
 </svelte:head>
 
 {#if !ready}
@@ -221,21 +232,7 @@
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<section class="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8">
-				<div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-					<div>
-						<Typography as="p" variant="eyebrow">ComfyUI / Anima</Typography>
-						<Typography as="h1" variant="display" class="mt-3">이미지 생성</Typography>
-						<Typography as="p" variant="muted" class="mt-3 max-w-2xl text-base">
-							로컬 ComfyUI의 Anima 체크포인트와 LoRA를 선택해 이미지를 생성합니다.
-						</Typography>
-					</div>
-					<div class="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-2 text-xs font-medium text-success">
-						<span class="size-2 rounded-full bg-success"></span>
-						<span>ComfyUI 연결</span>
-					</div>
-				</div>
-			</section>
+			<Typography as="h1" variant="display">이미지 생성</Typography>
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="result-title">
@@ -258,11 +255,11 @@
 
 					<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
 						{#if imageUrl}
-							<ImageMedia source={imageUrl} sourceType="server" alt="Anima 생성 결과" class="min-h-[24rem] sm:min-h-[34rem]" />
+							<ImageMedia source={imageUrl} sourceType="server" alt="생성 결과" class="min-h-[24rem] sm:min-h-[34rem]" />
 						{:else if generating}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]">
 								<LoadingSpinner size="lg" label="이미지 생성 중" />
-								<p class="text-sm text-muted-foreground">ComfyUI에서 이미지를 생성하고 있습니다.</p>
+								<p class="text-sm text-muted-foreground">이미지를 생성하고 있습니다.</p>
 							</div>
 						{:else}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-3 px-6 text-center sm:min-h-[34rem]">
@@ -284,25 +281,54 @@
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="settings-title">
 					<div class="flex items-center justify-between gap-4">
 						<div>
-							<div id="settings-title"><Typography as="h2" variant="h2">생성 설정</Typography></div>
-							<Typography as="p" variant="muted" class="mt-1">Anima 모델 파라미터</Typography>
+							<div id="settings-title"><Typography as="h2" variant="h2">파라미터 설정</Typography></div>
 						</div>
 						{#if optionsLoading}<LoadingSpinner size="sm" label="모델 목록 불러오는 중" />{/if}
 					</div>
 
 					<form class="mt-6 space-y-5" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<label class="block space-y-2" for="prompt">
-							<span class="text-sm font-medium">프롬프트</span>
-							<textarea id="prompt" bind:value={prompt} rows="5" required placeholder="예: a beautiful anime girl standing in a flower field" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+							<span class="text-sm font-medium">긍정 프롬프트</span>
+							<textarea id="prompt" bind:value={prompt} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 						</label>
 
 						<label class="block space-y-2" for="negative-prompt">
-							<span class="text-sm font-medium">네거티브 프롬프트</span>
+							<span class="text-sm font-medium">부정 프롬프트</span>
 							<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 						</label>
 
 						<Select id="checkpoint" label="체크포인트" options={checkpointOptions} bind:value={checkpoint} autocomplete disabled={optionsLoading || checkpointOptions.length === 0} required />
-						<Select id="lora" label="LoRA" options={loraOptions} bind:value={lora} autocomplete disabled={optionsLoading} />
+						<div class="space-y-3">
+							<div class="flex items-center justify-between gap-3">
+								<span class="text-sm font-medium">LoRA</span>
+								<button type="button" onclick={addLora} disabled={optionsLoading || loraOptions.length === 0 || loras.length >= loraOptions.length} class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
+									<Plus size={14} strokeWidth={2} />
+									<span>LoRA 추가</span>
+								</button>
+							</div>
+							{#if loras.length === 0}
+								<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>
+							{:else}
+								<div class="space-y-3">
+									{#each loras as lora, index (lora.name)}
+										<div class="rounded-lg border border-border p-3">
+											<div class="flex items-start gap-2">
+												<div class="min-w-0 flex-1">
+													<Select id={`lora-${index}`} label={`LoRA ${index + 1}`} options={availableLoraOptions(index)} bind:value={lora.name} autocomplete disabled={optionsLoading} />
+												</div>
+												<button type="button" aria-label={`LoRA ${index + 1} 제거`} onclick={() => removeLora(index)} class="mt-7 inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+													<X size={16} strokeWidth={1.8} />
+												</button>
+											</div>
+											<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
+												<span class="flex items-center justify-between text-sm font-medium"><span>Strength</span><output>{lora.strength}</output></span>
+												<input id={`lora-strength-${index}`} type="range" min="-2" max="2" step="0.05" bind:value={lora.strength} class={rangeInputClass} />
+											</label>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
 
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="width">
@@ -316,16 +342,12 @@
 						</div>
 
 						<label class="block space-y-2" for="cfg">
-							<span class="flex items-center justify-between text-sm font-medium"><span>CFG</span><output>{cfg}</output></span>
-							<input id="cfg" type="range" min="0" max="20" step="0.1" bind:value={cfg} class={rangeInputClass} />
+							<span class="text-sm font-medium">CFG</span>
+							<input id="cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} />
 						</label>
 						<label class="block space-y-2" for="steps">
-							<span class="flex items-center justify-between text-sm font-medium"><span>Steps</span><output>{steps}</output></span>
-							<input id="steps" type="range" min="1" max="100" step="1" bind:value={steps} class={rangeInputClass} />
-						</label>
-						<label class="block space-y-2" for="lora-strength">
-							<span class="flex items-center justify-between text-sm font-medium"><span>LoRA strength</span><output>{loraStrength}</output></span>
-							<input id="lora-strength" type="range" min="-2" max="2" step="0.05" bind:value={loraStrength} disabled={!lora} class={rangeInputClass} />
+							<span class="text-sm font-medium">Steps</span>
+							<input id="steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} />
 						</label>
 
 						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || !checkpoint} class="w-full">
@@ -340,7 +362,7 @@
 
 	{#if optionsError}
 		<div class="fixed right-4 top-4 z-50">
-			<Toast state="negative" title="ComfyUI 연결 실패" message={optionsError} onclose={() => (optionsError = '')} />
+			<Toast state="negative" title="모델 목록 불러오기 실패" message={optionsError} onclose={() => (optionsError = '')} />
 		</div>
 	{:else if generationError}
 		<div class="fixed right-4 top-4 z-50">

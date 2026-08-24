@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+import json
 from typing import Any
 import uuid
 
@@ -34,6 +35,35 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
             WHERE table_schema = current_schema() AND table_name = 'auth_history' AND column_name = 'username'
         ) THEN
             ALTER TABLE auth_history RENAME COLUMN email TO username;
+        END IF;
+    END
+    $$
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'image_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'loras'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN loras JSONB NOT NULL DEFAULT '[]'::jsonb;
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'lora'
+            ) THEN
+                ALTER TABLE image_generations DROP COLUMN lora;
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'lora_strength'
+            ) THEN
+                ALTER TABLE image_generations DROP COLUMN lora_strength;
+            END IF;
         END IF;
     END
     $$
@@ -76,8 +106,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         prompt TEXT NOT NULL,
         negative_prompt TEXT NOT NULL,
         checkpoint VARCHAR(255) NOT NULL,
-        lora VARCHAR(255),
-        lora_strength DOUBLE PRECISION NOT NULL,
+        loras JSONB NOT NULL DEFAULT '[]'::jsonb,
         cfg DOUBLE PRECISION NOT NULL,
         steps INTEGER NOT NULL,
         width INTEGER NOT NULL,
@@ -182,7 +211,7 @@ def initialize_database() -> None:
 
 _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
-    "lora, lora_strength, cfg, steps, width, height, seed, file_path, filename, "
+    "loras, cfg, steps, width, height, seed, file_path, filename, "
     "subfolder, image_type, created_at, completed_at"
 )
 
@@ -195,8 +224,7 @@ def create_image_generation(
     prompt: str,
     negative_prompt: str,
     checkpoint: str,
-    lora: str | None,
-    lora_strength: float,
+    loras: list[dict[str, Any]],
     cfg: float,
     steps: int,
     width: int,
@@ -209,8 +237,8 @@ def create_image_generation(
             """
             INSERT INTO image_generations
                 (id, user_id, prompt_id, client_id, prompt, negative_prompt, checkpoint,
-                 lora, lora_strength, cfg, steps, width, height, seed)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 loras, cfg, steps, width, height, seed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
             """,
             (
                 generation_id,
@@ -220,8 +248,7 @@ def create_image_generation(
                 prompt,
                 negative_prompt,
                 checkpoint,
-                lora,
-                lora_strength,
+                json.dumps(loras, ensure_ascii=False),
                 cfg,
                 steps,
                 width,

@@ -19,8 +19,7 @@
 		prompt: string;
 		negative_prompt: string;
 		checkpoint: string;
-		lora: string | null;
-		lora_strength: number;
+		loras: { name: string; strength: number }[];
 		cfg: number;
 		steps: number;
 		width: number;
@@ -118,8 +117,18 @@
 					<dl class="mt-5 space-y-4 text-sm">
 						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.media_type}</dd></div>
 						<div><dt class="text-muted-foreground">체크포인트</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint}</dd></div>
-						<div><dt class="text-muted-foreground">LoRA</dt><dd class="mt-1 break-all font-medium">{generation.lora ?? '사용 안 함'}</dd></div>
-						<div><dt class="text-muted-foreground">LoRA strength</dt><dd class="mt-1 font-medium">{generation.lora_strength}</dd></div>
+						<div>
+							<dt class="text-muted-foreground">LoRA</dt>
+							{#if generation.loras.length > 0}
+								<dd class="mt-1 space-y-1 font-medium">
+									{#each generation.loras as lora (lora.name)}
+										<div class="break-all">{lora.name} · Strength {lora.strength}</div>
+									{/each}
+								</dd>
+							{:else}
+								<dd class="mt-1 font-medium">사용 안 함</dd>
+							{/if}
+						</div>
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
@@ -130,11 +139,11 @@
 
 			<section class="grid gap-6 lg:grid-cols-2">
 				<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-					<Typography as="h2" variant="h2">사용된 프롬프트</Typography>
+					<Typography as="h2" variant="h2">사용된 긍정 프롬프트</Typography>
 					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p>
 				</div>
 				<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-					<Typography as="h2" variant="h2">네거티브 프롬프트</Typography>
+					<Typography as="h2" variant="h2">부정 프롬프트</Typography>
 					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.negative_prompt}</p>
 				</div>
 			</section>

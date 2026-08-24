@@ -31,12 +31,16 @@ _COMFYUI_TIMEOUT_SECONDS = 30
 _SSE_HEARTBEAT_SECONDS = 15
 
 
+class LoraSelection(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    strength: float = Field(default=0.7, ge=-2, le=2)
+
+
 class ImageGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
     negative_prompt: str = Field(default=_DEFAULT_NEGATIVE_PROMPT, max_length=5000)
     checkpoint: str = Field(min_length=1, max_length=255)
-    lora: str | None = Field(default=None, max_length=255)
-    lora_strength: float = Field(default=0.7, ge=-2, le=2)
+    loras: list[LoraSelection] = Field(default_factory=list, max_length=8)
     cfg: float = Field(default=4, ge=0, le=20)
     steps: int = Field(default=30, ge=1, le=100)
     width: int = Field(default=1024, ge=64, le=2048)
@@ -48,7 +52,6 @@ class ImageGenerationOptions(BaseModel):
     checkpoints: list[str]
     loras: list[str]
     default_checkpoint: str
-    default_lora: str | None = None
 
 
 class ImageOutput(BaseModel):
@@ -100,8 +103,7 @@ def create_image_generation(
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
         checkpoint=payload.checkpoint,
-        lora=payload.lora,
-        lora_strength=payload.lora_strength,
+        loras=[lora.model_dump() for lora in payload.loras],
         cfg=payload.cfg,
         steps=payload.steps,
         width=payload.width,
@@ -409,7 +411,10 @@ def _anima_choices(data: dict[str, Any], node_name: str, input_name: str) -> lis
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
     if payload.checkpoint not in options.checkpoints:
         raise HTTPException(status_code=422, detail="선택한 Anima 체크포인트를 찾을 수 없습니다.")
-    if payload.lora and payload.lora not in options.loras:
+    lora_names = [lora.name for lora in payload.loras]
+    if len(lora_names) != len(set(lora_names)):
+        raise HTTPException(status_code=422, detail="같은 LoRA를 중복 선택할 수 없습니다.")
+    if any(name not in options.loras for name in lora_names):
         raise HTTPException(status_code=422, detail="선택한 Anima LoRA를 찾을 수 없습니다.")
     if payload.width % 8 or payload.height % 8:
         raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
@@ -471,17 +476,17 @@ def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, 
             "inputs": {"filename_prefix": "LocalField_Anima", "images": ["9", 0]},
         },
     }
-    if payload.lora:
-        prompt["2"] = {
+    for index, lora in enumerate(payload.loras, start=11):
+        prompt[str(index)] = {
             "class_type": "LoraLoaderModelOnly",
             "inputs": {
-                "model": ["1", 0],
-                "lora_name": payload.lora,
-                "strength_model": payload.lora_strength,
+                "model": model,
+                "lora_name": lora.name,
+                "strength_model": lora.strength,
             },
         }
-        model = ["2", 0]
-        prompt["8"]["inputs"]["model"] = model
+        model = [str(index), 0]
+    prompt["8"]["inputs"]["model"] = model
     return prompt, seed
 
 

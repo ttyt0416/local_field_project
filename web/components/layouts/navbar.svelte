@@ -22,10 +22,6 @@
 
 <header class="sticky top-0 z-30 border-b border-border/80 bg-background/85 backdrop-blur-xl">
 	<div class="flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-		<div class="min-w-0">
-			<p class="truncate text-xs text-muted-foreground">워크스페이스 / 개요</p>
-			<p class="truncate text-sm font-semibold">미디어 생성 관리</p>
-		</div>
 		<div class="flex items-center gap-3">
 			{#if authStore.initialized}
 				{#if authStore.isAuthenticated}

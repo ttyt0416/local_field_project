@@ -23,11 +23,15 @@ class VaultImageSummary(BaseModel):
     completed_at: datetime | None
 
 
+class VaultLora(BaseModel):
+    name: str
+    strength: float
+
+
 class VaultImageDetail(VaultImageSummary):
     prompt_id: str
     negative_prompt: str
-    lora: str | None
-    lora_strength: float
+    loras: list[VaultLora]
     cfg: float
     steps: int
     width: int
@@ -73,8 +77,7 @@ def _detail(generation: dict) -> VaultImageDetail:
         **_summary(generation).model_dump(),
         prompt_id=generation["prompt_id"],
         negative_prompt=generation["negative_prompt"],
-        lora=generation["lora"],
-        lora_strength=generation["lora_strength"],
+        loras=_loras(generation),
         cfg=generation["cfg"],
         steps=generation["steps"],
         width=generation["width"],
@@ -85,6 +88,13 @@ def _detail(generation: dict) -> VaultImageDetail:
         subfolder=generation["subfolder"],
         image_type=generation["image_type"],
     )
+
+
+def _loras(generation: dict) -> list[VaultLora]:
+    stored = generation.get("loras")
+    if isinstance(stored, list):
+        return [VaultLora.model_validate(lora) for lora in stored]
+    return []
 
 
 def _image_url(generation: dict) -> str | None:
