@@ -33,8 +33,27 @@
 		strength: number;
 	};
 
+	type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
+	type ImageSize = { width: number; height: number };
+
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
+	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
+		{ value: 'custom', label: '커스텀' },
+		{ value: '2:3', label: '2:3' },
+		{ value: '3:2', label: '3:2' },
+		{ value: '1:1', label: '1:1' },
+		{ value: '16:9', label: '16:9' },
+		{ value: '9:16', label: '9:16' }
+	];
+	const aspectRatioPresets: Record<AspectRatio, ImageSize | null> = {
+		custom: null,
+		'2:3': { width: 768, height: 1152 },
+		'3:2': { width: 1152, height: 768 },
+		'1:1': { width: 1024, height: 1024 },
+		'16:9': { width: 1152, height: 648 },
+		'9:16': { width: 648, height: 1152 }
+	};
 
 	let active = true;
 	let ready = $state(false);
@@ -62,11 +81,19 @@
 	let loras = $state<LoraSelection[]>([]);
 	let cfg = $state(4);
 	let steps = $state(30);
+	let aspectRatio = $state<AspectRatio>('custom');
 	let width = $state(1024);
 	let height = $state(1024);
 
 	let checkpointOptions = $derived(options.checkpoints.map((value) => ({ value, label: value })));
 	let loraOptions = $derived(options.loras.map((value) => ({ value, label: value })));
+
+	$effect(() => {
+		const preset = aspectRatioPresets[aspectRatio];
+		if (!preset) return;
+		width = preset.width;
+		height = preset.height;
+	});
 
 	function availableLoraOptions(index: number) {
 		const selected = new Set(loras.filter((_, currentIndex) => currentIndex !== index).map((lora) => lora.name));
@@ -334,14 +361,16 @@
 							{/if}
 						</div>
 
+						<Select id="aspect-ratio" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} />
+
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="width">
 								<span class="text-sm font-medium">가로</span>
-								<input id="width" type="number" min="64" max="2048" step="8" bind:value={width} class={numberInputClass} />
+								<input id="width" type="number" min="64" max="2048" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 							<label class="block space-y-2" for="height">
 								<span class="text-sm font-medium">세로</span>
-								<input id="height" type="number" min="64" max="2048" step="8" bind:value={height} class={numberInputClass} />
+								<input id="height" type="number" min="64" max="2048" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 						</div>
 
