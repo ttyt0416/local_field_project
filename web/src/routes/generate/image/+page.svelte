@@ -75,8 +75,8 @@
 	}
 
 	function addLora() {
-		const next = loraOptions.find((option) => !loras.some((lora) => lora.name === option.value));
-		if (next) loras = [...loras, { name: next.value, strength: 0.7 }];
+		if (loras.some((lora) => !lora.name) || loras.length >= loraOptions.length) return;
+		loras = [...loras, { name: '', strength: 0.7 }];
 	}
 
 	function removeLora(index: number) {
@@ -101,6 +101,7 @@
 		try {
 			options = await apiJson<ImageOptions>('generation/image/options');
 			checkpoint = options.default_checkpoint;
+			loras = options.loras.length > 0 ? [{ name: '', strength: 0.7 }] : [];
 		} catch (error) {
 			optionsError = getErrorMessage(error);
 		} finally {
@@ -124,6 +125,10 @@
 			generationError = '체크포인트를 선택해 주세요.';
 			return;
 		}
+		if (loras.some((lora) => !lora.name)) {
+			generationError = '추가한 LoRA를 선택해 주세요.';
+			return;
+		}
 		if (width % 8 !== 0 || height % 8 !== 0) {
 			generationError = '이미지 가로·세로 크기는 8의 배수여야 합니다.';
 			return;
@@ -138,7 +143,7 @@
 					prompt: prompt.trim(),
 					negative_prompt: negativePrompt.trim(),
 					checkpoint,
-					loras: loras.map(({ name, strength }) => ({ name, strength })),
+					loras: loras.filter(({ name }) => name).map(({ name, strength }) => ({ name, strength })),
 					cfg,
 					steps,
 					width,
@@ -301,7 +306,7 @@
 						<div class="space-y-3">
 							<div class="flex items-center justify-between gap-3">
 								<span class="text-sm font-medium">LoRA</span>
-								<button type="button" onclick={addLora} disabled={optionsLoading || loraOptions.length === 0 || loras.length >= loraOptions.length} class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
+								<button type="button" onclick={addLora} disabled={optionsLoading || loraOptions.length === 0 || loras.length >= loraOptions.length || loras.some((lora) => !lora.name)} class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
 									<Plus size={14} strokeWidth={2} />
 									<span>LoRA 추가</span>
 								</button>
@@ -341,14 +346,16 @@
 							</label>
 						</div>
 
-						<label class="block space-y-2" for="cfg">
-							<span class="text-sm font-medium">CFG</span>
-							<input id="cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} />
-						</label>
-						<label class="block space-y-2" for="steps">
-							<span class="text-sm font-medium">Steps</span>
-							<input id="steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} />
-						</label>
+						<div class="grid gap-4 sm:grid-cols-2">
+							<label class="block space-y-2" for="cfg">
+								<span class="text-sm font-medium">CFG</span>
+								<input id="cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} />
+							</label>
+							<label class="block space-y-2" for="steps">
+								<span class="text-sm font-medium">Steps</span>
+								<input id="steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} />
+							</label>
+						</div>
 
 						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || !checkpoint} class="w-full">
 							<Sparkles size={17} strokeWidth={1.9} />

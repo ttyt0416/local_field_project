@@ -74,6 +74,12 @@
 		activeIndex = -1;
 	}
 
+	function handleFocus() {
+		open = true;
+		query = '';
+		activeIndex = -1;
+	}
+
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
@@ -128,7 +134,7 @@
 				disabled={disabled}
 				required={required}
 				oninput={handleInput}
-				onfocus={() => (open = true)}
+				onfocus={handleFocus}
 				onkeydown={handleKeydown}
 				class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
 			/>
