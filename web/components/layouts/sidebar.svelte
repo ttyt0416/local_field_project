@@ -1,6 +1,5 @@
 <script lang="ts">
 	import {
-		Activity,
 		Archive,
 		ImagePlus,
 		LayoutDashboard,
@@ -40,7 +39,7 @@
 {/if}
 
 <aside
-	class={`fixed bottom-0 left-0 z-50 flex h-[min(78vh,34rem)] w-full flex-col rounded-t-3xl border border-border bg-card shadow-2xl transition-transform duration-300 lg:inset-y-0 lg:bottom-auto lg:h-auto lg:w-72 lg:rounded-none lg:border-y-0 lg:border-l-0 lg:border-r ${open ? 'translate-y-0' : 'translate-y-full'} lg:translate-y-0`}
+	class={`fixed bottom-0 left-0 z-50 flex h-[min(78vh,34rem)] w-full flex-col rounded-t-3xl border border-border bg-card shadow-2xl transition-transform duration-300 lg:inset-y-0 lg:h-auto lg:w-72 lg:rounded-none lg:border-y-0 lg:border-l-0 lg:border-r ${open ? 'translate-y-0' : 'translate-y-full'} lg:translate-y-0`}
 	aria-label="주요 메뉴"
 >
 	<div class="flex h-16 items-center justify-between border-b border-border px-5">
@@ -91,16 +90,4 @@
 		</a>
 	</nav>
 
-	<div class="border-t border-border p-4">
-		<div class="flex items-center gap-3 rounded-xl bg-muted/60 px-3 py-3">
-			<span class="relative flex size-8 items-center justify-center rounded-lg bg-tertiary/15 text-tertiary">
-				<Activity size={17} strokeWidth={1.8} />
-				<span class="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-success ring-2 ring-card"></span>
-			</span>
-			<div class="min-w-0">
-				<p class="truncate text-xs font-semibold">로컬 런타임</p>
-				<p class="text-xs text-muted-foreground">연결됨</p>
-			</div>
-		</div>
-	</div>
 </aside>

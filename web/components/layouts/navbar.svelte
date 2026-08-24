@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Activity, Archive, LogIn, Menu, Moon, Sun } from '@lucide/svelte';
+	import { goto } from '$app/navigation';
+	import { Activity, Archive, ChevronDown, LogIn, LogOut, Menu, Moon, Sun, UserRoundX } from '@lucide/svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
@@ -9,6 +10,14 @@
 	};
 
 	let { onMenuClick }: Props = $props();
+	let accountMenuOpen = $state(false);
+
+	function logout() {
+		accountMenuOpen = false;
+		authStore.clearSession();
+		void goto('/login');
+	}
+
 </script>
 
 <header class="sticky top-0 z-30 border-b border-border/80 bg-background/85 backdrop-blur-xl">
@@ -20,7 +29,7 @@
 		<div class="flex items-center gap-3">
 			<div class="hidden items-center gap-2 sm:flex">
 				<Activity size={16} class="text-success" strokeWidth={1.8} />
-				<span class="text-xs font-medium text-muted-foreground">로컬 연결 정상</span>
+				<span class="text-xs font-medium text-muted-foreground">서버 연결 정상</span>
 			</div>
 			<IconOutlinedButton
 				ariaLabel={themeStore.isDark ? '라이트모드로 전환' : '다크모드로 전환'}
@@ -35,10 +44,27 @@
 			</IconOutlinedButton>
 			{#if authStore.initialized}
 				{#if authStore.isAuthenticated}
-					<a href="/vault" class="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">
-						<Archive size={15} strokeWidth={1.8} />
-						<span class="hidden max-w-36 truncate sm:inline">{authStore.user?.username}</span>
-					</a>
+					<details bind:open={accountMenuOpen} class="group relative">
+						<summary class="flex cursor-pointer list-none items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+							<Archive size={15} strokeWidth={1.8} />
+							<span class="hidden max-w-36 truncate sm:inline">{authStore.user?.username}</span>
+							<ChevronDown size={14} strokeWidth={1.8} class="transition-transform group-open:rotate-180" />
+						</summary>
+						<div class="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-border bg-card p-1.5 text-card-foreground shadow-xl">
+							<a href="/vault" class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground">
+								<Archive size={15} strokeWidth={1.8} />
+								<span>보관함</span>
+							</a>
+							<button type="button" class="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" onclick={logout}>
+								<LogOut size={15} strokeWidth={1.8} />
+								<span>로그아웃</span>
+							</button>
+							<button type="button" class="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-destructive transition hover:bg-destructive/10">
+								<UserRoundX size={15} strokeWidth={1.8} />
+								<span>회원탈퇴</span>
+							</button>
+						</div>
+					</details>
 				{:else}
 					<a href="/login" class="inline-flex items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-xs font-medium text-foreground transition hover:border-primary/50 hover:bg-primary/10">
 						<LogIn size={15} strokeWidth={1.8} />
