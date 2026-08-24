@@ -53,14 +53,13 @@
 				{/if}
 			{/if}
 			<div class="group relative flex items-center">
-				<span
-					class="inline-flex size-9 items-center justify-center rounded-lg text-success transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					role="status"
-					tabindex="0"
+				<button
+					type="button"
+					class="inline-flex size-9 items-center justify-center rounded-lg border-0 bg-transparent p-0 text-success transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					aria-label="서버 연결 정상"
 				>
 					<Activity size={16} strokeWidth={1.8} />
-				</span>
+				</button>
 				<span class="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden whitespace-nowrap rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-card-foreground shadow-xl group-hover:block group-focus-within:block">
 					서버 연결 정상
 				</span>
