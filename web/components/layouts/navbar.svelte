@@ -51,10 +51,6 @@
 							<ChevronDown size={14} strokeWidth={1.8} class="transition-transform group-open:rotate-180" />
 						</summary>
 						<div class="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-border bg-card p-1.5 text-card-foreground shadow-xl">
-							<a href="/vault" class="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground">
-								<Archive size={15} strokeWidth={1.8} />
-								<span>보관함</span>
-							</a>
 							<button type="button" class="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" onclick={logout}>
 								<LogOut size={15} strokeWidth={1.8} />
 								<span>로그아웃</span>
