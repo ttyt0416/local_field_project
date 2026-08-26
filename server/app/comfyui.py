@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import secrets
 import uuid
 from typing import Any
@@ -18,10 +19,17 @@ from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
 from .configs.constants import settings
+from .danbooru import DanbooruError, search_danbooru_tags, validate_danbooru_tags
 from .database import (
     create_image_generation as create_image_generation_record,
     get_image_generation,
     update_image_generation_status,
+)
+from .prompts import (
+    IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+    IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
+    IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT,
+    IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT,
 )
 
 
@@ -38,6 +46,9 @@ class LoraSelection(BaseModel):
 
 class ImageGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
+    prompt_enhancement_enabled: bool = False
+    enhanced_natural_language_prompt: str | None = Field(default=None, max_length=5000)
+    enhanced_danbooru_prompt: str | None = Field(default=None, max_length=5000)
     negative_prompt: str = Field(default=_DEFAULT_NEGATIVE_PROMPT, max_length=5000)
     checkpoint: str = Field(min_length=1, max_length=255)
     loras: list[LoraSelection] = Field(default_factory=list, max_length=8)
@@ -67,11 +78,35 @@ class ImageGenerationStatus(BaseModel):
     images: list[ImageOutput] = Field(default_factory=list)
 
 
+class PromptEnhancementRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=5000)
+
+
+class PromptEnhancementContent(BaseModel):
+    contents: str = Field(min_length=1, max_length=5000)
+
+
+class PromptEnhancementResponse(BaseModel):
+    natural_language: PromptEnhancementContent
+    danbooru_tags: PromptEnhancementContent
+
+
 @router.get("/options", response_model=ImageGenerationOptions)
 def image_options(_: UserResponse = Depends(current_user)) -> ImageGenerationOptions:
     try:
         return _image_options()
     except _ComfyUIError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@router.post("/enhance-prompt", response_model=PromptEnhancementResponse)
+def enhance_prompt(
+    payload: PromptEnhancementRequest,
+    _: UserResponse = Depends(current_user),
+) -> PromptEnhancementResponse:
+    try:
+        return _enhance_prompt(payload.prompt)
+    except (DanbooruError, _VLLMError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
@@ -100,7 +135,7 @@ def create_image_generation(
         user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
-        prompt=payload.prompt,
+        prompt=_effective_positive_prompt(payload),
         negative_prompt=payload.negative_prompt,
         checkpoint=payload.checkpoint,
         loras=[lora.model_dump() for lora in payload.loras],
@@ -420,8 +455,23 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
         raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
 
 
+def _effective_positive_prompt(payload: ImageGenerationRequest) -> str:
+    base_prompt = payload.prompt.strip()
+    if not payload.prompt_enhancement_enabled:
+        return base_prompt
+    natural_language = (payload.enhanced_natural_language_prompt or "").strip()
+    danbooru_tags = (payload.enhanced_danbooru_prompt or "").strip()
+    if not natural_language or not danbooru_tags:
+        raise HTTPException(status_code=422, detail="강화된 자연어 프롬프트와 Danbooru 태그를 먼저 생성해 주세요.")
+    combined = ", ".join((base_prompt, danbooru_tags, natural_language))
+    if len(combined) > 5000:
+        raise HTTPException(status_code=422, detail="강화된 최종 프롬프트가 너무 깁니다.")
+    return combined
+
+
 def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, Any]], int]:
     seed = payload.seed if payload.seed is not None else secrets.randbelow(18_446_744_073_709_551_616)
+    positive_prompt = _effective_positive_prompt(payload)
     model: list[Any] = ["1", 0]
     prompt: dict[str, dict[str, Any]] = {
         "1": {
@@ -442,7 +492,7 @@ def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, 
         },
         "5": {
             "class_type": "CLIPTextEncode",
-            "inputs": {"text": payload.prompt, "clip": ["3", 0]},
+            "inputs": {"text": positive_prompt, "clip": ["3", 0]},
         },
         "6": {
             "class_type": "CLIPTextEncode",
@@ -551,6 +601,110 @@ def _request_bytes(path: str) -> tuple[bytes, str | None]:
         raise _ComfyUIError("ComfyUI 이미지에 연결할 수 없습니다.") from exc
 
 
+def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
+    prompt = prompt.strip()
+    candidate_tags = search_danbooru_tags(prompt, limit=96)
+    natural_language = _request_structured_content(
+        system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+        user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
+        max_tokens=768,
+        temperature=0.4,
+    )
+    raw_tags = _request_structured_content(
+        system_prompt=IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
+        user_prompt=IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT.format(
+            prompt=prompt,
+            candidate_tags=", ".join(candidate_tags),
+        ),
+        max_tokens=256,
+        temperature=0.2,
+    )
+    valid_tags = validate_danbooru_tags(raw_tags)
+    if not valid_tags:
+        valid_tags = candidate_tags[:24]
+    if not valid_tags:
+        raise DanbooruError("사용할 Danbooru 태그를 찾지 못했습니다.")
+    return PromptEnhancementResponse(
+        natural_language=PromptEnhancementContent(contents=natural_language),
+        danbooru_tags=PromptEnhancementContent(contents=", ".join(valid_tags)),
+    )
+
+
+def _request_structured_content(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    response = _request_vllm_json(
+        {
+            "model": settings.vllm_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "prompt_contents",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "contents": {"type": "string", "minLength": 1, "maxLength": 5000}
+                        },
+                        "required": ["contents"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                },
+            },
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    )
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise _VLLMError("vLLM이 구조화된 프롬프트 결과를 반환하지 않았습니다.")
+    choice = choices[0]
+    if choice.get("finish_reason") == "length":
+        raise _VLLMError("vLLM 프롬프트 결과가 길이 제한으로 중단되었습니다.")
+    message = choice.get("message")
+    raw_content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(raw_content, str):
+        raise _VLLMError("vLLM 구조화 응답 형식이 올바르지 않습니다.")
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content.strip(), flags=re.IGNORECASE)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise _VLLMError("vLLM 구조화 응답을 JSON으로 읽을 수 없습니다.") from exc
+    contents = parsed.get("contents") if isinstance(parsed, dict) else None
+    if not isinstance(contents, str) or not contents.strip():
+        raise _VLLMError("vLLM 구조화 응답의 contents가 비어 있습니다.")
+    return contents.strip()[:5000]
+
+
+def _request_vllm_json(payload: dict[str, Any]) -> dict[str, Any]:
+    request = UrlRequest(
+        _vllm_url("/v1/chat/completions"),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            decoded = json.loads(response.read())
+    except UrlHTTPError as exc:
+        raise _VLLMError(f"vLLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise _VLLMError("vLLM에 연결할 수 없습니다.") from exc
+    if not isinstance(decoded, dict):
+        raise _VLLMError("vLLM 응답 형식이 올바르지 않습니다.")
+    return decoded
+
+
 def _comfy_url(path: str) -> str:
     return f"{settings.comfyui_url.rstrip('/')}/{path.lstrip('/')}"
 
@@ -563,5 +717,13 @@ def _comfy_websocket_url(client_id: str) -> str:
     return f"{websocket_scheme}://{base_url}/ws?{query}"
 
 
+def _vllm_url(path: str) -> str:
+    return f"{settings.vllm_url.rstrip('/')}/{path.lstrip('/')}"
+
+
 class _ComfyUIError(RuntimeError):
+    pass
+
+
+class _VLLMError(RuntimeError):
     pass

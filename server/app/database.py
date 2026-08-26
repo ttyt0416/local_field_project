@@ -5,7 +5,7 @@ import uuid
 
 import psycopg
 
-from .configs.constants import settings
+from .configs.constants import DEFAULT_EMBEDDING_DIMENSIONS, settings
 
 
 _MIGRATION_STATEMENTS: tuple[str, ...] = (
@@ -72,6 +72,25 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
 
 
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
+    "CREATE EXTENSION IF NOT EXISTS vector",
+    f"""
+    CREATE TABLE IF NOT EXISTS danbooru_tags (
+        id BIGSERIAL PRIMARY KEY,
+        tag TEXT UNIQUE NOT NULL,
+        normalized_tag TEXT NOT NULL,
+        category SMALLINT NOT NULL,
+        post_count INTEGER NOT NULL DEFAULT 0,
+        aliases TEXT[] NOT NULL DEFAULT '{{}}',
+        embedding vector({DEFAULT_EMBEDDING_DIMENSIONS}),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS danbooru_tags_normalized_idx ON danbooru_tags(normalized_tag)",
+    "CREATE INDEX IF NOT EXISTS danbooru_tags_aliases_gin_idx ON danbooru_tags USING gin (aliases)",
+    """
+    CREATE INDEX IF NOT EXISTS danbooru_tags_embedding_hnsw_idx
+    ON danbooru_tags USING hnsw (embedding vector_cosine_ops)
+    """,
     """
     CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY,

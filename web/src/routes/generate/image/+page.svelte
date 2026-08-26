@@ -5,6 +5,7 @@
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
+	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import Select from '../../../../components/inputs/select.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
@@ -60,8 +61,10 @@
 	let optionsLoading = $state(true);
 	let optionsError = $state('');
 	let generationError = $state('');
+	let promptEnhancementError = $state('');
 	let successMessage = $state('');
 	let generating = $state(false);
+	let enhancingPrompt = $state(false);
 	let generationStatus = $state('');
 	let progress = $state(0);
 	let queuePosition = $state<number | null>(null);
@@ -76,6 +79,10 @@
 		default_checkpoint: ''
 	});
 	let prompt = $state('');
+	let promptEnhancementEnabled = $state(false);
+	let enhancedNaturalLanguagePrompt = $state('');
+	let enhancedDanbooruPrompt = $state('');
+	let enhancedSourcePrompt = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
@@ -147,6 +154,14 @@
 			generationError = '생성할 프롬프트를 입력해 주세요.';
 			return;
 		}
+		if (promptEnhancementEnabled && (!enhancedNaturalLanguagePrompt.trim() || !enhancedDanbooruPrompt.trim())) {
+			generationError = '강화된 자연어 프롬프트와 Danbooru 태그를 먼저 생성해 주세요.';
+			return;
+		}
+		if (promptEnhancementEnabled && enhancedSourcePrompt !== prompt.trim()) {
+			generationError = '긍정 프롬프트가 변경되었습니다. 강화를 다시 실행해 주세요.';
+			return;
+		}
 		if (!checkpoint) {
 			generationError = '체크포인트를 선택해 주세요.';
 			return;
@@ -167,6 +182,9 @@
 				method: 'POST',
 				json: {
 					prompt: prompt.trim(),
+					prompt_enhancement_enabled: promptEnhancementEnabled,
+					enhanced_natural_language_prompt: promptEnhancementEnabled ? enhancedNaturalLanguagePrompt.trim() : null,
+					enhanced_danbooru_prompt: promptEnhancementEnabled ? enhancedDanbooruPrompt.trim() : null,
 					negative_prompt: negativePrompt.trim(),
 					checkpoint,
 					loras: loras.filter(({ name }) => name).map(({ name, strength }) => ({ name, strength })),
@@ -185,6 +203,35 @@
 			generationStatus = 'failed';
 		} finally {
 			generating = false;
+		}
+	}
+
+	async function enhancePrompt() {
+		promptEnhancementError = '';
+		if (!prompt.trim()) {
+			promptEnhancementError = '강화할 프롬프트를 입력해 주세요.';
+			return;
+		}
+		enhancingPrompt = true;
+		try {
+			const result = await apiJson<{
+				natural_language: { contents: string };
+				danbooru_tags: { contents: string };
+			}>('generation/image/enhance-prompt', {
+				method: 'POST',
+				timeout: 120_000,
+				json: { prompt: prompt.trim() }
+			});
+			const naturalLanguage = result.natural_language.contents.trim();
+			const danbooruTags = result.danbooru_tags.contents.trim();
+			if (!naturalLanguage || !danbooruTags) throw new Error('강화된 프롬프트가 비어 있습니다.');
+			enhancedNaturalLanguagePrompt = naturalLanguage;
+			enhancedDanbooruPrompt = danbooruTags;
+			enhancedSourcePrompt = prompt.trim();
+		} catch (error) {
+			promptEnhancementError = getErrorMessage(error);
+		} finally {
+			enhancingPrompt = false;
 		}
 	}
 
@@ -318,10 +365,44 @@
 					</div>
 
 					<form class="mt-6 space-y-5" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
-						<label class="block space-y-2" for="prompt">
-							<span class="text-sm font-medium">긍정 프롬프트</span>
+						<div class="space-y-3">
+							<div class="flex items-center justify-between gap-3">
+								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
+								<div class="flex items-center gap-2">
+									<label for="prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
+										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} class="peer sr-only" />
+										<span>AI 강화</span>
+										<span class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground peer-checked:bg-primary/10 peer-checked:text-primary">{promptEnhancementEnabled ? 'ON' : 'OFF'}</span>
+									</label>
+									<OutlinedButton
+										type="button"
+										loading={enhancingPrompt}
+										disabled={generating || !prompt.trim() || !promptEnhancementEnabled}
+										class="min-h-9 px-3 text-xs"
+										onclick={() => void enhancePrompt()}
+									>
+										<Sparkles size={14} strokeWidth={1.9} />
+										<span>{enhancingPrompt ? '강화 중' : enhancedSourcePrompt ? '다시 강화' : 'AI로 강화'}</span>
+									</OutlinedButton>
+								</div>
+							</div>
 							<textarea id="prompt" bind:value={prompt} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
-						</label>
+							{#if promptEnhancementEnabled}
+								<div class="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+									<label class="block space-y-2" for="enhanced-natural-language-prompt">
+										<span class="text-sm font-medium">강화된 자연어 프롬프트</span>
+										<textarea id="enhanced-natural-language-prompt" bind:value={enhancedNaturalLanguagePrompt} rows="4" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+									</label>
+									<label class="block space-y-2" for="enhanced-danbooru-prompt">
+										<span class="text-sm font-medium">강화된 Danbooru 태그</span>
+										<textarea id="enhanced-danbooru-prompt" bind:value={enhancedDanbooruPrompt} rows="3" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+									</label>
+									{#if enhancedSourcePrompt && enhancedSourcePrompt !== prompt.trim()}
+										<p class="text-xs text-amber-600">긍정 프롬프트가 변경되었습니다. 강화를 다시 실행해 주세요.</p>
+									{/if}
+								</div>
+							{/if}
+						</div>
 
 						<label class="block space-y-2" for="negative-prompt">
 							<span class="text-sm font-medium">부정 프롬프트</span>
@@ -385,7 +466,7 @@
 							</label>
 						</div>
 
-						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || !checkpoint} class="w-full">
+						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="w-full">
 							<Sparkles size={17} strokeWidth={1.9} />
 							<span>{generating ? '생성 중' : '이미지 생성'}</span>
 						</PrimaryButton>
@@ -398,6 +479,10 @@
 	{#if optionsError}
 		<div class="fixed right-4 top-4 z-50">
 			<Toast state="negative" title="모델 목록 불러오기 실패" message={optionsError} onclose={() => (optionsError = '')} />
+		</div>
+	{:else if promptEnhancementError}
+		<div class="fixed right-4 top-4 z-50">
+			<Toast state="negative" title="프롬프트 강화 실패" message={promptEnhancementError} onclose={() => (promptEnhancementError = '')} />
 		</div>
 	{:else if generationError}
 		<div class="fixed right-4 top-4 z-50">

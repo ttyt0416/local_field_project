@@ -14,6 +14,12 @@ DEFAULT_WEB_LOG_POSTGRES_USER = "local_field_web_logs"
 DEFAULT_WEB_LOG_POSTGRES_PASSWORD = ""
 DEFAULT_AUTH_SECRET = ""
 DEFAULT_COMFYUI_URL = "http://host.docker.internal:8188"
+DEFAULT_VLLM_URL = "http://host.docker.internal:30004"
+DEFAULT_VLLM_MODEL = "Qwen3.8-27B-heretic-ara-NVFP4"
+DEFAULT_EMBEDDING_URL = "http://host.docker.internal:30005"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+DEFAULT_EMBEDDING_DIMENSIONS = 1024
+DEFAULT_DANBOORU_TAGS_PATH = "/app/data/danbooru_tags.csv"
 HEALTH_STATUS = "ok"
 
 
@@ -38,6 +44,12 @@ class Settings:
     web_log_postgres_password: str
     auth_secret: str
     comfyui_url: str
+    vllm_url: str
+    vllm_model: str
+    embedding_url: str
+    embedding_model: str
+    embedding_dimensions: int
+    danbooru_tags_path: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,6 +71,12 @@ class Settings:
             ),
             auth_secret=os.getenv("AUTH_SECRET", DEFAULT_AUTH_SECRET),
             comfyui_url=os.getenv("COMFYUI_URL", DEFAULT_COMFYUI_URL),
+            vllm_url=os.getenv("VLLM_URL", DEFAULT_VLLM_URL),
+            vllm_model=os.getenv("VLLM_MODEL", DEFAULT_VLLM_MODEL),
+            embedding_url=os.getenv("EMBEDDING_URL", DEFAULT_EMBEDDING_URL),
+            embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+            embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", str(DEFAULT_EMBEDDING_DIMENSIONS))),
+            danbooru_tags_path=os.getenv("DANBOORU_TAGS_PATH", DEFAULT_DANBOORU_TAGS_PATH),
         )
 
 

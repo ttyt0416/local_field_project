@@ -9,10 +9,42 @@ services:
       server:
         condition: service_healthy
 
+  embedding:
+    image: vllm/vllm-openai:v0.25.1
+    command:
+      - /models/bge-m3
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30005"
+      - --served-model-name
+      - BAAI/bge-m3
+      - --runner
+      - pooling
+      - --gpu-memory-utilization
+      - "0.10"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "8"
+    volumes:
+      - /home/yoon/dev/models/BAAI-bge-m3:/models/bge-m3:ro
+    ports:
+      - "30005:30005"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   server:
     build: ./server
     env_file:
       - ./server/.env.development
+    environment:
+      EMBEDDING_URL: http://embedding:30005
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -33,7 +65,7 @@ services:
       retries: 10
 
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     env_file:
       - ./server/.env.development
     volumes:
