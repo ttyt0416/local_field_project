@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import ky, { HTTPError, type Options } from 'ky';
+import ky, { HTTPError, isTimeoutError, type Options } from 'ky';
 import { SERVER_URL } from '$lib/configs/constants';
 
 export const ACCESS_TOKEN_KEY = 'local-field.access-token';
@@ -31,22 +31,43 @@ const api = ky.create({
 	}
 });
 
-function getErrorMessage(error: HTTPError) {
-	if (typeof error.data === 'object' && error.data !== null && 'detail' in error.data) {
-		const detail = error.data.detail;
-		if (typeof detail === 'string') return detail;
+function getErrorMessage(error: unknown) {
+	if (error instanceof HTTPError) {
+		switch (error.response.status) {
+			case 400:
+				return '요청 내용을 확인해 주세요.';
+			case 401:
+				return '인증 정보가 올바르지 않거나 로그인이 만료되었습니다.';
+			case 403:
+				return '이 작업을 수행할 권한이 없습니다.';
+			case 404:
+				return '요청한 정보를 찾을 수 없습니다.';
+			case 409:
+				return '이미 존재하는 정보와 충돌했습니다.';
+			case 413:
+				return '전송할 파일의 크기가 너무 큽니다.';
+			case 415:
+				return '지원하지 않는 형식입니다.';
+			case 422:
+				return '입력값을 확인해 주세요.';
+			case 429:
+				return '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+			default:
+				return error.response.status >= 500
+					? '서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.'
+					: '요청을 처리하지 못했습니다.';
+		}
 	}
-	return `API 요청에 실패했습니다. (${error.response.status})`;
+	if (isTimeoutError(error)) return '요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.';
+	if (error instanceof Error && error.name === 'AbortError') return '요청이 취소되었습니다.';
+	return '서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.';
 }
 
 export async function apiJson<T>(path: string, options?: Options) {
 	try {
 		return await api(path, options).json<T>();
 	} catch (error) {
-		if (error instanceof HTTPError) {
-			throw new Error(getErrorMessage(error));
-		}
-		throw error;
+		throw new Error(getErrorMessage(error));
 	}
 }
 
@@ -54,10 +75,7 @@ export async function apiBlob(path: string, options?: Options) {
 	try {
 		return await api(path, options).blob();
 	} catch (error) {
-		if (error instanceof HTTPError) {
-			throw new Error(getErrorMessage(error));
-		}
-		throw error;
+		throw new Error(getErrorMessage(error));
 	}
 }
 
@@ -123,7 +141,6 @@ export async function streamSse(
 			}
 		}
 	} catch (error) {
-		if (error instanceof HTTPError) throw new Error(getErrorMessage(error));
-		throw error;
+		throw new Error(getErrorMessage(error));
 	}
 }
