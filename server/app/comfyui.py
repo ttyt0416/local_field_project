@@ -618,7 +618,7 @@ def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
         valid_tags = candidate_tags[:24]
     if not valid_tags:
         raise DanbooruError("사용할 Danbooru 태그를 찾지 못했습니다.")
-    improved_prompt = ", ".join((prompt, ", ".join(valid_tags), natural_language))
+    improved_prompt = ", ".join((", ".join(valid_tags), natural_language))
     return PromptEnhancementResponse(
         improved_prompt=PromptEnhancementContent(contents=improved_prompt[:5000]),
     )

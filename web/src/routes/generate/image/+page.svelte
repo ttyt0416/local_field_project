@@ -133,7 +133,7 @@
 		try {
 			options = await apiJson<ImageOptions>('generation/image/options');
 			checkpoint = options.default_checkpoint;
-			loras = options.loras.length > 0 ? [{ name: '', strength: 0.7 }] : [];
+			loras = [];
 		} catch (error) {
 			optionsError = getErrorMessage(error);
 		} finally {
@@ -158,15 +158,11 @@
 			return;
 		}
 		if (promptEnhancementEnabled && improvedSourcePrompt !== prompt.trim()) {
-			generationError = '긍정 프롬프트가 변경되었습니다. 강화를 다시 실행해 주세요.';
+			generationError = '긍정 프롬프트가 변경되었습니다. 개선을 다시 실행해 주세요.';
 			return;
 		}
 		if (!checkpoint) {
 			generationError = '체크포인트를 선택해 주세요.';
-			return;
-		}
-		if (loras.some((lora) => !lora.name)) {
-			generationError = '추가한 LoRA를 선택해 주세요.';
 			return;
 		}
 		if (width % 8 !== 0 || height % 8 !== 0) {
@@ -207,7 +203,7 @@
 	async function enhancePrompt() {
 		promptEnhancementError = '';
 		if (!prompt.trim()) {
-			promptEnhancementError = '강화할 프롬프트를 입력해 주세요.';
+			promptEnhancementError = '개선할 프롬프트를 입력해 주세요.';
 			return;
 		}
 		enhancingPrompt = true;
@@ -389,7 +385,7 @@
 										<textarea id="improved-prompt" bind:value={improvedPrompt} rows="5" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 									</label>
 									{#if improvedSourcePrompt && improvedSourcePrompt !== prompt.trim()}
-										<p class="text-xs text-amber-600">긍정 프롬프트가 변경되었습니다. 강화를 다시 실행해 주세요.</p>
+										<p class="text-xs text-amber-600">긍정 프롬프트가 변경되었습니다. 개선을 다시 실행해 주세요.</p>
 									{/if}
 								</div>
 							{/if}
@@ -475,7 +471,7 @@
 		</div>
 	{:else if promptEnhancementError}
 		<div class="fixed right-4 top-4 z-50">
-			<Toast state="negative" title="프롬프트 강화 실패" message={promptEnhancementError} onclose={() => (promptEnhancementError = '')} />
+			<Toast state="negative" title="프롬프트 개선 실패" message={promptEnhancementError} onclose={() => (promptEnhancementError = '')} />
 		</div>
 	{:else if generationError}
 		<div class="fixed right-4 top-4 z-50">
