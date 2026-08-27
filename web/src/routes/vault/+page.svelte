@@ -11,7 +11,6 @@
 	import Modal from '../../../components/modals/modal.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
-	import { SERVER_URL } from '$lib/configs/constants';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 
@@ -83,7 +82,7 @@
 	}
 
 	function imageSource(image: VaultImage) {
-		return image.image_url ? new URL(image.image_url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString() : '';
+		return image.image_url ?? '';
 	}
 
 	function imageSourceType(url: string): 'server' | 'external' {
