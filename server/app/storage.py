@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+from urllib.error import HTTPError as UrlHTTPError
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.parse import quote
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
+
+from .configs.constants import settings
+
+_STORAGE_TIMEOUT_SECONDS = 30
+
+
+class StorageError(RuntimeError):
+    pass
+
+
+def enabled() -> bool:
+    return bool(settings.storage_url and settings.storage_api_token)
+
+
+def upload_file(*, content: bytes, media_type: str, owner_id: str) -> str:
+    if not enabled():
+        raise StorageError("스토리지 설정이 없습니다.")
+    response = _request_json(
+        "POST",
+        "/files",
+        data=content,
+        headers={
+            "Authorization": f"Bearer {settings.storage_api_token}",
+            "Content-Type": media_type or "application/octet-stream",
+            "X-Owner-ID": owner_id,
+        },
+    )
+    file_id = response.get("id")
+    if not isinstance(file_id, str) or not file_id:
+        raise StorageError("스토리지가 파일 ID를 반환하지 않았습니다.")
+    return file_id
+
+
+def read_url(*, file_id: str, owner_id: str, expires_in: int = 900) -> str:
+    if not enabled():
+        raise StorageError("스토리지 설정이 없습니다.")
+    path = f"/files/{quote(file_id, safe='')}/url?{urlencode({'expires_in': expires_in})}"
+    response = _request_json(
+        "POST",
+        path,
+        headers={
+            "Authorization": f"Bearer {settings.storage_api_token}",
+            "X-Owner-ID": owner_id,
+        },
+    )
+    url = response.get("url")
+    if not isinstance(url, str) or not url:
+        raise StorageError("스토리지가 파일 읽기 URL을 반환하지 않았습니다.")
+    return url
+
+
+def _request_json(
+    method: str,
+    path: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str],
+) -> dict:
+    request = UrlRequest(
+        f"{settings.storage_url.rstrip('/')}{path}",
+        data=data,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+            decoded = json.loads(response.read())
+    except UrlHTTPError as exc:
+        raise StorageError(f"스토리지 요청이 실패했습니다. (HTTP {exc.code})") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise StorageError("스토리지에 연결할 수 없습니다.") from exc
+    if not isinstance(decoded, dict):
+        raise StorageError("스토리지 응답 형식이 올바르지 않습니다.")
+    return decoded

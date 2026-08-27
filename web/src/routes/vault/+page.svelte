@@ -55,6 +55,10 @@
 		return image.image_url ? new URL(image.image_url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString() : '';
 	}
 
+	function imageSourceType(url: string): 'server' | 'external' {
+		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
+	}
+
 	function statusLabel(status: string) {
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패' }[status] ?? status;
 	}
@@ -112,7 +116,7 @@
 					{#each images as image (image.id)}
 						<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
 							{#if image.image_url}
-								<ImageMedia source={imageSource(image)} sourceType="server" alt="생성 이미지" class="aspect-square" />
+								<ImageMedia source={imageSource(image)} sourceType={imageSourceType(imageSource(image))} alt="생성 이미지" class="aspect-square" />
 							{:else}
 								<div class="flex aspect-square items-center justify-center bg-muted text-sm text-muted-foreground">이미지 준비 중</div>
 							{/if}

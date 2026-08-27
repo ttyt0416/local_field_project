@@ -67,6 +67,10 @@
 		return image.image_url ? new URL(image.image_url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString() : '';
 	}
 
+	function imageSourceType(url: string): 'server' | 'external' {
+		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
+	}
+
 	function statusLabel(status: string) {
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패' }[status] ?? status;
 	}
@@ -102,7 +106,7 @@
 			<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					{#if generation.image_url}
-						<ImageMedia source={imageSource(generation)} sourceType="server" alt="생성 이미지" class="min-h-[24rem] sm:min-h-[36rem]" />
+						<ImageMedia source={imageSource(generation)} sourceType={imageSourceType(imageSource(generation))} alt="생성 이미지" class="min-h-[24rem] sm:min-h-[36rem]" />
 					{:else}
 						<div class="flex min-h-[24rem] items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">이미지 결과가 아직 없습니다.</div>
 					{/if}

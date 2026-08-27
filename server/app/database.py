@@ -68,6 +68,21 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'image_generations'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'storage_file_id'
+        ) THEN
+            ALTER TABLE image_generations ADD COLUMN storage_file_id TEXT;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -132,6 +147,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         height INTEGER NOT NULL,
         seed BIGINT NOT NULL,
         file_path TEXT,
+        storage_file_id TEXT,
         filename VARCHAR(255),
         subfolder VARCHAR(255) NOT NULL DEFAULT '',
         image_type VARCHAR(32) NOT NULL DEFAULT 'output',
@@ -230,7 +246,7 @@ def initialize_database() -> None:
 
 _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
-    "loras, cfg, steps, width, height, seed, file_path, filename, "
+    "loras, cfg, steps, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, created_at, completed_at"
 )
 
@@ -311,6 +327,7 @@ def update_image_generation_status(
     user_id: uuid.UUID,
     status: str,
     file_path: str | None = None,
+    storage_file_id: str | None = None,
     filename: str | None = None,
     subfolder: str = "",
     image_type: str = "output",
@@ -332,13 +349,14 @@ def update_image_generation_status(
                 UPDATE image_generations
                 SET status = %s,
                     file_path = %s,
+                    storage_file_id = COALESCE(%s, storage_file_id),
                     filename = %s,
                     subfolder = %s,
                     image_type = %s,
                     completed_at = CURRENT_TIMESTAMP
                 WHERE prompt_id = %s AND user_id = %s
                 """,
-                (status, file_path, filename, subfolder, image_type, prompt_id, user_id),
+                (status, file_path, storage_file_id, filename, subfolder, image_type, prompt_id, user_id),
             )
 
 

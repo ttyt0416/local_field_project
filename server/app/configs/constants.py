@@ -14,6 +14,8 @@ DEFAULT_WEB_LOG_POSTGRES_USER = "local_field_web_logs"
 DEFAULT_WEB_LOG_POSTGRES_PASSWORD = ""
 DEFAULT_AUTH_SECRET = ""
 DEFAULT_COMFYUI_URL = "http://host.docker.internal:8188"
+DEFAULT_STORAGE_URL = ""
+DEFAULT_STORAGE_API_TOKEN = ""
 DEFAULT_VLLM_URL = "http://host.docker.internal:30004"
 DEFAULT_VLLM_MODEL = "Qwen3.8-27B-heretic-ara-NVFP4"
 DEFAULT_EMBEDDING_URL = "http://host.docker.internal:30005"
@@ -44,6 +46,8 @@ class Settings:
     web_log_postgres_password: str
     auth_secret: str
     comfyui_url: str
+    storage_url: str
+    storage_api_token: str
     vllm_url: str
     vllm_model: str
     embedding_url: str
@@ -71,6 +75,8 @@ class Settings:
             ),
             auth_secret=os.getenv("AUTH_SECRET", DEFAULT_AUTH_SECRET),
             comfyui_url=os.getenv("COMFYUI_URL", DEFAULT_COMFYUI_URL),
+            storage_url=os.getenv("STORAGE_URL", DEFAULT_STORAGE_URL),
+            storage_api_token=os.getenv("STORAGE_API_TOKEN", DEFAULT_STORAGE_API_TOKEN),
             vllm_url=os.getenv("VLLM_URL", DEFAULT_VLLM_URL),
             vllm_model=os.getenv("VLLM_MODEL", DEFAULT_VLLM_MODEL),
             embedding_url=os.getenv("EMBEDDING_URL", DEFAULT_EMBEDDING_URL),

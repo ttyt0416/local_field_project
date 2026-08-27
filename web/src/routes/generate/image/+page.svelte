@@ -274,6 +274,10 @@
 		if (terminalStatus !== 'completed' && active) throw lastError;
 	}
 
+	function imageSourceType(url: string): 'server' | 'external' {
+		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
+	}
+
 	function statusLabel(status: string) {
 		return {
 			queued: '대기 중',
@@ -324,7 +328,7 @@
 
 					<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
 						{#if imageUrl}
-							<ImageMedia source={imageUrl} sourceType="server" alt="생성 결과" class="min-h-[24rem] sm:min-h-[34rem]" />
+							<ImageMedia source={imageUrl} sourceType={imageSourceType(imageUrl)} alt="생성 결과" class="min-h-[24rem] sm:min-h-[34rem]" />
 						{:else if generating}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]">
 								<LoadingSpinner size="lg" label="이미지 생성 중" />

@@ -8,12 +8,12 @@
 	type GalleryItem = {
 		source: string;
 		alt?: string;
-		sourceType?: 'local' | 'server';
+		sourceType?: 'local' | 'server' | 'external';
 	};
 	type Props = {
 		source: MediaSource;
 		alt: string;
-		sourceType?: 'local' | 'server';
+		sourceType?: 'local' | 'server' | 'external';
 		gallery?: readonly GalleryItem[];
 		class?: string;
 	};
@@ -33,10 +33,14 @@
 	let activeIndex = $state(0);
 	let activeLoaded = $state(false);
 	let closeButton = $state<HTMLButtonElement>();
-	let isServerSource = $derived(sourceType === 'server' || (typeof source === 'string' && /^(https?:)?\/\//.test(source)));
+	let isExternalSource = $derived(sourceType === 'external');
+	let isServerSource = $derived(sourceType === 'server' || (!isExternalSource && typeof source === 'string' && /^(https?:)?\/\//.test(source)));
+	let isRemoteSource = $derived(isServerSource || isExternalSource);
 	let galleryItems = $derived(gallery.length > 0 ? gallery : sourceUrl ? [{ source: sourceUrl, alt, sourceType }] : []);
 	let activeItem = $derived(galleryItems[activeIndex] ?? galleryItems[0]);
-	let activeIsServer = $derived(activeItem?.sourceType === 'server' || Boolean(activeItem?.source && /^(https?:)?\/\//.test(activeItem.source)));
+	let activeIsExternal = $derived(activeItem?.sourceType === 'external');
+	let activeIsServer = $derived(activeItem?.sourceType === 'server' || (!activeIsExternal && Boolean(activeItem?.source && /^(https?:)?\/\//.test(activeItem.source))));
+	let activeIsRemote = $derived(activeIsServer || activeIsExternal);
 
 	$effect(() => {
 		loaded = false;
@@ -111,7 +115,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class={`relative overflow-hidden rounded-xl ${className}`}>
-	{#if isServerSource && !loaded && !failed}
+	{#if isRemoteSource && !loaded && !failed}
 		<LoadingShimmer class="absolute inset-0 z-10 h-full w-full rounded-none" label="이미지 불러오는 중" />
 	{/if}
 
@@ -130,10 +134,10 @@
 			<img
 				src={sourceUrl}
 				{alt}
-				loading={isServerSource ? 'lazy' : 'eager'}
+				loading={isRemoteSource ? 'lazy' : 'eager'}
 				onload={() => (loaded = true)}
 				onerror={() => (failed = true)}
-				class={`block h-full min-h-48 w-full object-cover transition-opacity ${isServerSource && !loaded ? 'opacity-0' : 'opacity-100'}`}
+				class={`block h-full min-h-48 w-full object-cover transition-opacity ${isRemoteSource && !loaded ? 'opacity-0' : 'opacity-100'}`}
 			/>
 		</button>
 	{/if}
@@ -177,14 +181,14 @@
 				</button>
 			{/if}
 
-			{#if activeIsServer && !activeLoaded}
+			{#if activeIsRemote && !activeLoaded}
 				<LoadingShimmer class="h-[70vh] w-[min(90vw,72rem)] rounded-xl" label="이미지 불러오는 중" />
 			{/if}
 			<img
 				 src={activeItem.source}
 				alt={activeItem.alt ?? alt}
 				onload={() => (activeLoaded = true)}
-				class={`max-h-[90vh] max-w-[90vw] rounded-xl object-contain ${activeIsServer && !activeLoaded ? 'absolute opacity-0' : 'opacity-100'}`}
+				class={`max-h-[90vh] max-w-[90vw] rounded-xl object-contain ${activeIsRemote && !activeLoaded ? 'absolute opacity-0' : 'opacity-100'}`}
 			/>
 		</div>
 	</dialog>

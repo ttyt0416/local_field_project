@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
 from .database import get_image_generation_by_id, list_image_generations
+from .storage import StorageError, enabled as storage_enabled, read_url as storage_read_url
 
 
 router = APIRouter(prefix="/vault", tags=["vault"])
@@ -45,7 +46,7 @@ class VaultImageDetail(VaultImageSummary):
 
 @router.get("/images", response_model=list[VaultImageSummary])
 def vault_images(user: UserResponse = Depends(current_user)) -> list[VaultImageSummary]:
-    return [_summary(row) for row in list_image_generations(user.id)]
+    return [_summary(row, user.id) for row in list_image_generations(user.id)]
 
 
 @router.get("/images/{generation_id}", response_model=VaultImageDetail)
@@ -56,25 +57,25 @@ def vault_image_detail(
     generation = get_image_generation_by_id(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
-    return _detail(generation)
+    return _detail(generation, user.id)
 
 
-def _summary(generation: dict) -> VaultImageSummary:
+def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:
     return VaultImageSummary(
         id=generation["id"],
         media_type="image",
         status=generation["status"],
         prompt=generation["prompt"],
         checkpoint=generation["checkpoint"],
-        image_url=_image_url(generation),
+        image_url=_image_url(generation, user_id),
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
     )
 
 
-def _detail(generation: dict) -> VaultImageDetail:
+def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
     return VaultImageDetail(
-        **_summary(generation).model_dump(),
+        **_summary(generation, user_id).model_dump(),
         prompt_id=generation["prompt_id"],
         negative_prompt=generation["negative_prompt"],
         loras=_loras(generation),
@@ -97,7 +98,13 @@ def _loras(generation: dict) -> list[VaultLora]:
     return []
 
 
-def _image_url(generation: dict) -> str | None:
+def _image_url(generation: dict, user_id: UUID) -> str | None:
+    storage_file_id = generation.get("storage_file_id")
+    if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
+        try:
+            return storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+        except StorageError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     if not generation["filename"]:
         return None
     query = urlencode(

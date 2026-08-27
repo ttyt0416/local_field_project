@@ -15,7 +15,7 @@ from urllib.request import urlopen
 import websockets
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from starlette.responses import StreamingResponse
+from starlette.responses import RedirectResponse, StreamingResponse
 
 from .auth import UserResponse, current_user
 from .configs.constants import settings
@@ -31,6 +31,7 @@ from .prompts import (
     IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT,
 )
+from .storage import StorageError, enabled as storage_enabled, read_url as storage_read_url, upload_file as storage_upload_file
 
 
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
@@ -262,7 +263,11 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                             {"prompt_id": prompt_id, "status": "processing", "progress": 0, "node": data.get("node")},
                         )
                 elif event_name == "execution_success":
-                    current = _history_generation_status(prompt_id, user_id)
+                    try:
+                        current = _history_generation_status(prompt_id, user_id)
+                    except _ComfyUIError as exc:
+                        yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
+                        return
                     yield _sse_message("completed", current.model_dump())
                     return
                 elif event_name in {"execution_error", "execution_interrupted"}:
@@ -299,7 +304,7 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status="completed",
-            images=_image_outputs(prompt_id, entry.get("outputs")),
+            images=_image_outputs(prompt_id, user_id, entry.get("outputs")),
         )
     update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
     return ImageGenerationStatus(prompt_id=prompt_id, status="processing")
@@ -362,6 +367,22 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
     if not isinstance(subfolder, str) or not isinstance(image_type, str):
         update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
         return
+
+    generation = get_image_generation(prompt_id, user_id)
+    storage_file_id = generation.get("storage_file_id") if generation else None
+    if storage_enabled() and not storage_file_id:
+        query = urlencode({"filename": filename, "subfolder": subfolder, "type": image_type})
+        content, media_type = _request_bytes(f"/view?{query}")
+        try:
+            storage_file_id = storage_upload_file(
+                content=content,
+                media_type=media_type or "image/png",
+                owner_id=str(user_id),
+            )
+        except StorageError as exc:
+            update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
+            raise _ComfyUIError(str(exc)) from exc
+
     path_parts = [image_type, subfolder, filename]
     file_path = "/".join(part for part in path_parts if part)
     update_image_generation_status(
@@ -369,6 +390,7 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
         user_id=user_id,
         status="completed",
         file_path=file_path,
+        storage_file_id=storage_file_id if isinstance(storage_file_id, str) else None,
         filename=filename,
         subfolder=subfolder,
         image_type=image_type,
@@ -390,6 +412,16 @@ def view_generated_image(
         or generation["image_type"] != image_type
     ):
         raise HTTPException(status_code=404, detail="생성 결과 이미지를 찾을 수 없습니다.")
+    storage_file_id = generation.get("storage_file_id")
+    if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
+        try:
+            return RedirectResponse(
+                storage_read_url(file_id=storage_file_id, owner_id=str(user.id)),
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
+        except StorageError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
     try:
         history = _request_json("GET", f"/history/{prompt_id}")
     except _ComfyUIError as exc:
@@ -534,24 +566,37 @@ def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, 
     return prompt, seed
 
 
-def _image_outputs(prompt_id: str, outputs: Any) -> list[ImageOutput]:
+def _image_outputs(prompt_id: str, user_id: uuid.UUID, outputs: Any) -> list[ImageOutput]:
     result = []
-    for image in _raw_image_outputs(outputs):
+    generation = get_image_generation(prompt_id, user_id)
+    storage_file_id = generation.get("storage_file_id") if generation else None
+    storage_url = None
+    if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
+        try:
+            storage_url = storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+        except StorageError as exc:
+            raise _ComfyUIError(str(exc)) from exc
+
+    for index, image in enumerate(_raw_image_outputs(outputs)):
         filename = image.get("filename")
         subfolder = image.get("subfolder", "")
         image_type = image.get("type", "output")
         if not isinstance(filename, str):
             continue
-        query = urlencode({"filename": filename, "subfolder": subfolder, "type": image_type})
         result.append(
             ImageOutput(
-                url=f"/generation/image/{prompt_id}/view?{query}",
+                url=storage_url if index == 0 and storage_url else _legacy_image_url(prompt_id, filename, subfolder, image_type),
                 filename=filename,
                 subfolder=subfolder,
                 type=image_type,
             )
         )
     return result
+
+
+def _legacy_image_url(prompt_id: str, filename: str, subfolder: str, image_type: str) -> str:
+    query = urlencode({"filename": filename, "subfolder": subfolder, "type": image_type})
+    return f"/generation/image/{prompt_id}/view?{query}"
 
 
 def _raw_image_outputs(outputs: Any) -> list[dict[str, Any]]:
