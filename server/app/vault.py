@@ -2,12 +2,12 @@ from datetime import datetime
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
-from .database import get_image_generation_by_id, list_image_generations
-from .storage import StorageError, enabled as storage_enabled, read_url as storage_read_url
+from .database import delete_image_generation, get_image_generation_by_id, list_image_generations
+from .storage import StorageError, delete_file as storage_delete_file, enabled as storage_enabled, read_url as storage_read_url
 
 
 router = APIRouter(prefix="/vault", tags=["vault"])
@@ -58,6 +58,29 @@ def vault_image_detail(
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
     return _detail(generation, user.id)
+
+
+@router.delete("/images/{generation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_vault_image(
+    generation_id: UUID,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    generation = get_image_generation_by_id(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
+
+    storage_file_id = generation.get("storage_file_id")
+    if storage_file_id:
+        if not storage_enabled():
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+        try:
+            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+        except StorageError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    if not delete_image_generation(generation_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:

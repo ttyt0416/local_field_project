@@ -14,7 +14,9 @@ _STORAGE_TIMEOUT_SECONDS = 30
 
 
 class StorageError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def enabled() -> bool:
@@ -58,12 +60,32 @@ def read_url(*, file_id: str, owner_id: str, expires_in: int = 900) -> str:
     return url
 
 
+def delete_file(*, file_id: str, owner_id: str) -> None:
+    if not enabled():
+        raise StorageError("스토리지 설정이 없습니다.")
+    try:
+        _request_json(
+            "DELETE",
+            f"/files/{quote(file_id, safe='')}",
+            headers={
+                "Authorization": f"Bearer {settings.storage_api_token}",
+                "X-Owner-ID": owner_id,
+            },
+            allow_empty=True,
+        )
+    except StorageError as exc:
+        if exc.status_code == 404:
+            return
+        raise
+
+
 def _request_json(
     method: str,
     path: str,
     *,
     data: bytes | None = None,
     headers: dict[str, str],
+    allow_empty: bool = False,
 ) -> dict:
     request = UrlRequest(
         f"{settings.storage_url.rstrip('/')}{path}",
@@ -73,9 +95,12 @@ def _request_json(
     )
     try:
         with urlopen(request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
-            decoded = json.loads(response.read())
+            body = response.read()
+            if not body and allow_empty:
+                return {}
+            decoded = json.loads(body)
     except UrlHTTPError as exc:
-        raise StorageError(f"스토리지 요청이 실패했습니다. (HTTP {exc.code})") from exc
+        raise StorageError(f"스토리지 요청이 실패했습니다. (HTTP {exc.code})", status_code=exc.code) from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise StorageError("스토리지에 연결할 수 없습니다.") from exc
     if not isinstance(decoded, dict):

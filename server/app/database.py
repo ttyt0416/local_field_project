@@ -321,6 +321,15 @@ def list_image_generations(user_id: uuid.UUID) -> list[dict[str, Any]]:
     return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
 
 
+def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "DELETE FROM image_generations WHERE id = %s AND user_id = %s RETURNING id",
+            (generation_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
 def update_image_generation_status(
     *,
     prompt_id: str,

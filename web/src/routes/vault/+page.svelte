@@ -1,22 +1,24 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Archive, ArrowRight, LogOut } from '@lucide/svelte';
+	import { Archive, LogOut, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
+	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
+	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
+	import Modal from '../../../components/modals/modal.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import { SERVER_URL } from '$lib/configs/constants';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { apiJson } from '$lib/utils/api';
+	import { apiDelete, apiJson } from '$lib/utils/api';
 
 	type VaultImage = {
 		id: string;
 		media_type: string;
 		status: string;
-		prompt: string;
 		checkpoint: string;
 		image_url: string | null;
 		created_at: string;
@@ -26,6 +28,9 @@
 	let ready = $state(false);
 	let images = $state<VaultImage[]>([]);
 	let error = $state('');
+	let deleteTarget = $state<VaultImage | null>(null);
+	let deleteModalOpen = $state(false);
+	let deletingId = $state('');
 
 	onMount(() => {
 		void loadVault();
@@ -49,6 +54,32 @@
 	async function logout() {
 		authStore.clearSession();
 		await goto('/login');
+	}
+
+	function requestDelete(image: VaultImage) {
+		deleteTarget = image;
+		deleteModalOpen = true;
+	}
+
+	function cancelDelete() {
+		deleteModalOpen = false;
+		deleteTarget = null;
+	}
+
+	async function deleteImage() {
+		const target = deleteTarget;
+		if (!target || deletingId) return;
+		deletingId = target.id;
+		try {
+			await apiDelete(`vault/images/${target.id}`);
+			images = images.filter((image) => image.id !== target.id);
+			deleteModalOpen = false;
+			deleteTarget = null;
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '이미지를 삭제하지 못했습니다.';
+		} finally {
+			deletingId = '';
+		}
 	}
 
 	function imageSource(image: VaultImage) {
@@ -114,29 +145,63 @@
 			{:else}
 				<section class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
 					{#each images as image (image.id)}
-						<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-							{#if image.image_url}
-								<ImageMedia source={imageSource(image)} sourceType={imageSourceType(imageSource(image))} alt="생성 이미지" class="aspect-square" />
-							{:else}
-								<div class="flex aspect-square items-center justify-center bg-muted text-sm text-muted-foreground">이미지 준비 중</div>
-							{/if}
+						<article class="relative overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
+							<a
+								href={`/vault/images/${image.id}`}
+								aria-label={`${image.checkpoint} 이미지 상세 보기`}
+								class="absolute inset-0 z-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							></a>
+							<div class="pointer-events-none relative z-10">
+							<div class="relative">
+								{#if image.image_url}
+									<ImageMedia source={imageSource(image)} sourceType={imageSourceType(imageSource(image))} alt="생성 이미지" class="aspect-square" />
+								{:else}
+									<div class="flex aspect-square items-center justify-center bg-muted text-sm text-muted-foreground">이미지 준비 중</div>
+								{/if}
+								<IconOutlinedButton
+									ariaLabel="이미지 삭제"
+									loading={deletingId === image.id}
+									class="pointer-events-auto absolute bottom-3 right-3 z-10 border-destructive bg-destructive text-destructive-foreground shadow-lg hover:border-destructive hover:bg-destructive/90 hover:text-destructive-foreground"
+									onclick={() => requestDelete(image)}
+								>
+									<Trash2 size={17} strokeWidth={2} />
+								</IconOutlinedButton>
+							</div>
 							<div class="space-y-3 p-4">
 								<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
 									<span>{image.media_type} · {statusLabel(image.status)}</span>
 									<span>{new Date(image.created_at).toLocaleDateString('ko-KR')}</span>
 								</div>
-								<p class="line-clamp-2 text-sm font-medium">{image.prompt}</p>
 								<p class="truncate text-xs text-muted-foreground">{image.checkpoint}</p>
-								<a href={`/vault/images/${image.id}`} class="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
-									상세 보기 <ArrowRight size={15} strokeWidth={1.8} />
-								</a>
 							</div>
+						</div>
 						</article>
 					{/each}
 				</section>
 			{/if}
 		</div>
 	</Layout>
+
+	<Modal
+		bind:open={deleteModalOpen}
+		title="이미지를 삭제하시겠습니까?"
+		description="삭제한 이미지는 복구할 수 없습니다."
+		closeOnBackdrop={!deletingId}
+		onclose={cancelDelete}
+	>
+		<p class="text-sm leading-6 text-muted-foreground">선택한 이미지를 보관함과 파일 스토리지에서 삭제합니다.</p>
+		{#snippet footer()}
+			<OutlinedButton disabled={Boolean(deletingId)} onclick={cancelDelete}>취소</OutlinedButton>
+			<PrimaryButton
+				loading={Boolean(deletingId)}
+				class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+				onclick={() => void deleteImage()}
+			>
+				<Trash2 size={16} strokeWidth={2} />
+				<span>삭제</span>
+			</PrimaryButton>
+		{/snippet}
+	</Modal>
 
 	{#if error}
 		<div class="fixed right-4 top-4 z-50">

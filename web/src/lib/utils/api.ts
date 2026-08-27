@@ -79,6 +79,14 @@ export async function apiBlob(path: string, options?: Options) {
 	}
 }
 
+export async function apiDelete(path: string) {
+	try {
+		await api(path, { method: 'DELETE' });
+	} catch (error) {
+		throw new Error(getErrorMessage(error));
+	}
+}
+
 export async function trackWebEvent(event: WebEvent) {
 	try {
 		await api('web/events', { method: 'POST', json: event, timeout: 5_000, keepalive: true });

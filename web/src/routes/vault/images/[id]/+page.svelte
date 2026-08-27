@@ -2,14 +2,17 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, FileImage, SlidersHorizontal } from '@lucide/svelte';
+	import { ArrowLeft, FileImage, SlidersHorizontal, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
+	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
+	import PrimaryButton from '../../../../../components/buttons/primary-button.svelte';
 	import Toast from '../../../../../components/feedback/toast.svelte';
+	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
 	import { SERVER_URL } from '$lib/configs/constants';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { apiJson } from '$lib/utils/api';
+	import { apiDelete, apiJson } from '$lib/utils/api';
 
 	type VaultImageDetail = {
 		id: string;
@@ -25,7 +28,6 @@
 		width: number;
 		height: number;
 		seed: number;
-		file_path: string | null;
 		filename: string | null;
 		subfolder: string;
 		image_type: string;
@@ -37,6 +39,8 @@
 	let ready = $state(false);
 	let generation = $state<VaultImageDetail | null>(null);
 	let error = $state('');
+	let deleteModalOpen = $state(false);
+	let deleting = $state(false);
 
 	onMount(() => {
 		void loadDetail();
@@ -60,6 +64,29 @@
 			error = reason instanceof Error ? reason.message : '생성 상세 정보를 불러오지 못했습니다.';
 		} finally {
 			ready = true;
+		}
+	}
+
+	function requestDelete() {
+		deleteModalOpen = true;
+	}
+
+	function cancelDelete() {
+		deleteModalOpen = false;
+	}
+
+	async function deleteImage() {
+		const generationId = page.params.id;
+		if (!generationId || deleting) return;
+		deleting = true;
+		try {
+			await apiDelete(`vault/images/${generationId}`);
+			deleteModalOpen = false;
+			await goto('/vault');
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '이미지를 삭제하지 못했습니다.';
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -136,7 +163,6 @@
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
-						<div><dt class="text-muted-foreground">파일 경로</dt><dd class="mt-1 break-all font-mono text-xs">{generation.file_path ?? '아직 저장되지 않음'}</dd></div>
 					</dl>
 				</section>
 			</div>
@@ -151,6 +177,18 @@
 					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.negative_prompt}</p>
 				</div>
 			</section>
+
+			<section class="flex justify-end">
+				<PrimaryButton
+					loading={deleting}
+					disabled={deleting}
+					class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+					onclick={requestDelete}
+				>
+					<Trash2 size={16} strokeWidth={2} />
+					<span>이미지 삭제</span>
+				</PrimaryButton>
+			</section>
 		</main>
 	</div>
 {:else}
@@ -161,6 +199,27 @@
 		</div>
 	</div>
 {/if}
+
+<Modal
+	bind:open={deleteModalOpen}
+	title="이미지를 삭제하시겠습니까?"
+	description="삭제한 이미지는 복구할 수 없습니다."
+	closeOnBackdrop={!deleting}
+	onclose={cancelDelete}
+>
+	<p class="text-sm leading-6 text-muted-foreground">이 이미지와 파일 스토리지의 원본을 삭제합니다.</p>
+	{#snippet footer()}
+		<OutlinedButton disabled={deleting} onclick={cancelDelete}>취소</OutlinedButton>
+		<PrimaryButton
+			loading={deleting}
+			class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+			onclick={() => void deleteImage()}
+		>
+			<Trash2 size={16} strokeWidth={2} />
+			<span>삭제</span>
+		</PrimaryButton>
+	{/snippet}
+</Modal>
 
 {#if error}
 	<div class="fixed right-4 top-4 z-50">
