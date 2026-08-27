@@ -182,7 +182,7 @@
 				<PrimaryButton
 					loading={deleting}
 					disabled={deleting}
-					class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+					variant="destructive"
 					onclick={requestDelete}
 				>
 					<Trash2 size={16} strokeWidth={2} />
@@ -212,7 +212,7 @@
 		<OutlinedButton disabled={deleting} onclick={cancelDelete}>취소</OutlinedButton>
 		<PrimaryButton
 			loading={deleting}
-			class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+			variant="destructive"
 			onclick={() => void deleteImage()}
 		>
 			<Trash2 size={16} strokeWidth={2} />

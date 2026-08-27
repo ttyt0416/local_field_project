@@ -161,7 +161,8 @@
 								<IconOutlinedButton
 									ariaLabel="이미지 삭제"
 									loading={deletingId === image.id}
-									class="pointer-events-auto absolute bottom-3 right-3 z-10 border-destructive bg-destructive text-destructive-foreground shadow-lg hover:border-destructive hover:bg-destructive/90 hover:text-destructive-foreground"
+									variant="destructive"
+									class="pointer-events-auto absolute bottom-3 right-3 z-10 shadow-lg"
 									onclick={() => requestDelete(image)}
 								>
 									<Trash2 size={17} strokeWidth={2} />
@@ -194,7 +195,7 @@
 			<OutlinedButton disabled={Boolean(deletingId)} onclick={cancelDelete}>취소</OutlinedButton>
 			<PrimaryButton
 				loading={Boolean(deletingId)}
-				class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+				variant="destructive"
 				onclick={() => void deleteImage()}
 			>
 				<Trash2 size={16} strokeWidth={2} />

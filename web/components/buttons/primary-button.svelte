@@ -8,6 +8,7 @@
 		loading?: boolean;
 		active?: boolean;
 		deactive?: boolean;
+		variant?: 'primary' | 'destructive';
 		class?: string;
 		onclick?: (event: MouseEvent) => void;
 	};
@@ -19,6 +20,7 @@
 		loading = false,
 		active = true,
 		deactive = false,
+		variant = 'primary',
 		class: className = '',
 		onclick
 	}: Props = $props();
@@ -29,7 +31,9 @@
 	class={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${
 		deactive
 			? 'bg-muted text-muted-foreground'
-			: active
+			: variant === 'destructive'
+				? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+				: active
 				? 'bg-primary text-primary-foreground hover:bg-primary/90'
 				: 'bg-primary/70 text-primary-foreground hover:bg-primary/80'
 	} ${className}`}

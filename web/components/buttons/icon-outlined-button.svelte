@@ -8,6 +8,7 @@
 		type?: 'button' | 'submit' | 'reset';
 		disabled?: boolean;
 		loading?: boolean;
+		variant?: 'default' | 'destructive';
 		class?: string;
 		pressed?: boolean;
 		onclick?: (event: MouseEvent) => void;
@@ -19,6 +20,7 @@
 		type = 'button',
 		disabled = false,
 		loading = false,
+		variant = 'default',
 		class: className = '',
 		pressed,
 		onclick
@@ -27,7 +29,11 @@
 
 <button
 	{type}
-	class={`inline-flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-transparent text-muted-foreground transition hover:border-primary/50 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${className}`}
+	class={`inline-flex size-10 shrink-0 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${
+		variant === 'destructive'
+			? 'border border-destructive bg-destructive text-destructive-foreground hover:border-destructive hover:bg-destructive/90 hover:text-destructive-foreground'
+			: 'border border-border bg-transparent text-muted-foreground hover:border-primary/50 hover:bg-primary/10 hover:text-primary'
+	} ${className}`}
 	disabled={disabled || loading}
 	aria-label={ariaLabel}
 	aria-pressed={pressed}
