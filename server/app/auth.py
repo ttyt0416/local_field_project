@@ -65,7 +65,7 @@ def signup(payload: SignupRequest, request: Request) -> AuthResponse:
             )
     except UniqueViolation as exc:
         _record_auth_event(request, "signup", username, False, "duplicate_username")
-        raise HTTPException(status_code=409, detail="이미 가입된 아이디입니다.") from exc
+        raise HTTPException(status_code=409, detail="이미 가입된 정보입니다.") from exc
 
     _record_auth_event(request, "signup", username, True, user_id=user_id)
     request.state.user_id = user_id

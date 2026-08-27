@@ -43,7 +43,7 @@ function getErrorMessage(error: unknown) {
 			case 404:
 				return '요청한 정보를 찾을 수 없습니다.';
 			case 409:
-				return '이미 존재하는 정보와 충돌했습니다.';
+				return '이미 가입된 정보입니다.';
 			case 413:
 				return '전송할 파일의 크기가 너무 큽니다.';
 			case 415:
