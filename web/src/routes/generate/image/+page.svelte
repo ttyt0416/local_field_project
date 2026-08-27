@@ -80,9 +80,8 @@
 	});
 	let prompt = $state('');
 	let promptEnhancementEnabled = $state(false);
-	let enhancedNaturalLanguagePrompt = $state('');
-	let enhancedDanbooruPrompt = $state('');
-	let enhancedSourcePrompt = $state('');
+	let improvedPrompt = $state('');
+	let improvedSourcePrompt = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
@@ -154,11 +153,11 @@
 			generationError = '생성할 프롬프트를 입력해 주세요.';
 			return;
 		}
-		if (promptEnhancementEnabled && (!enhancedNaturalLanguagePrompt.trim() || !enhancedDanbooruPrompt.trim())) {
-			generationError = '강화된 자연어 프롬프트와 Danbooru 태그를 먼저 생성해 주세요.';
+		if (promptEnhancementEnabled && !improvedPrompt.trim()) {
+			generationError = '개선된 프롬프트를 먼저 생성해 주세요.';
 			return;
 		}
-		if (promptEnhancementEnabled && enhancedSourcePrompt !== prompt.trim()) {
+		if (promptEnhancementEnabled && improvedSourcePrompt !== prompt.trim()) {
 			generationError = '긍정 프롬프트가 변경되었습니다. 강화를 다시 실행해 주세요.';
 			return;
 		}
@@ -183,8 +182,7 @@
 				json: {
 					prompt: prompt.trim(),
 					prompt_enhancement_enabled: promptEnhancementEnabled,
-					enhanced_natural_language_prompt: promptEnhancementEnabled ? enhancedNaturalLanguagePrompt.trim() : null,
-					enhanced_danbooru_prompt: promptEnhancementEnabled ? enhancedDanbooruPrompt.trim() : null,
+					improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
 					negative_prompt: negativePrompt.trim(),
 					checkpoint,
 					loras: loras.filter(({ name }) => name).map(({ name, strength }) => ({ name, strength })),
@@ -215,19 +213,16 @@
 		enhancingPrompt = true;
 		try {
 			const result = await apiJson<{
-				natural_language: { contents: string };
-				danbooru_tags: { contents: string };
+				improved_prompt: { contents: string };
 			}>('generation/image/enhance-prompt', {
 				method: 'POST',
 				timeout: 120_000,
 				json: { prompt: prompt.trim() }
 			});
-			const naturalLanguage = result.natural_language.contents.trim();
-			const danbooruTags = result.danbooru_tags.contents.trim();
-			if (!naturalLanguage || !danbooruTags) throw new Error('강화된 프롬프트가 비어 있습니다.');
-			enhancedNaturalLanguagePrompt = naturalLanguage;
-			enhancedDanbooruPrompt = danbooruTags;
-			enhancedSourcePrompt = prompt.trim();
+			const resultPrompt = result.improved_prompt.contents.trim();
+			if (!resultPrompt) throw new Error('개선된 프롬프트가 비어 있습니다.');
+			improvedPrompt = resultPrompt;
+			improvedSourcePrompt = prompt.trim();
 		} catch (error) {
 			promptEnhancementError = getErrorMessage(error);
 		} finally {
@@ -371,7 +366,7 @@
 								<div class="flex items-center gap-2">
 									<label for="prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} class="peer sr-only" />
-										<span>AI 강화</span>
+										<span>프롬프트 개선</span>
 										<span class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground peer-checked:bg-primary/10 peer-checked:text-primary">{promptEnhancementEnabled ? 'ON' : 'OFF'}</span>
 									</label>
 									<OutlinedButton
@@ -382,22 +377,18 @@
 										onclick={() => void enhancePrompt()}
 									>
 										<Sparkles size={14} strokeWidth={1.9} />
-										<span>{enhancingPrompt ? '강화 중' : enhancedSourcePrompt ? '다시 강화' : 'AI로 강화'}</span>
+										<span>{enhancingPrompt ? '개선 중' : improvedSourcePrompt ? '다시 개선' : '프롬프트 개선'}</span>
 									</OutlinedButton>
 								</div>
 							</div>
 							<textarea id="prompt" bind:value={prompt} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 							{#if promptEnhancementEnabled}
 								<div class="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
-									<label class="block space-y-2" for="enhanced-natural-language-prompt">
-										<span class="text-sm font-medium">강화된 자연어 프롬프트</span>
-										<textarea id="enhanced-natural-language-prompt" bind:value={enhancedNaturalLanguagePrompt} rows="4" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+									<label class="block space-y-2" for="improved-prompt">
+										<span class="text-sm font-medium">개선된 프롬프트</span>
+										<textarea id="improved-prompt" bind:value={improvedPrompt} rows="5" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 									</label>
-									<label class="block space-y-2" for="enhanced-danbooru-prompt">
-										<span class="text-sm font-medium">강화된 Danbooru 태그</span>
-										<textarea id="enhanced-danbooru-prompt" bind:value={enhancedDanbooruPrompt} rows="3" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
-									</label>
-									{#if enhancedSourcePrompt && enhancedSourcePrompt !== prompt.trim()}
+									{#if improvedSourcePrompt && improvedSourcePrompt !== prompt.trim()}
 										<p class="text-xs text-amber-600">긍정 프롬프트가 변경되었습니다. 강화를 다시 실행해 주세요.</p>
 									{/if}
 								</div>
@@ -432,10 +423,12 @@
 													<X size={16} strokeWidth={1.8} />
 												</button>
 												</div>
-												<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
-												<span class="text-sm font-medium">Strength</span>
-												<input id={`lora-strength-${index}`} type="number" min="-2" max="2" step="0.05" bind:value={lora.strength} class={numberInputClass} />
-												</label>
+												{#if lora.name}
+													<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
+														<span class="text-sm font-medium">Strength</span>
+														<input id={`lora-strength-${index}`} type="number" min="-2" max="2" step="0.05" bind:value={lora.strength} class={numberInputClass} />
+													</label>
+												{/if}
 										</div>
 									{/each}
 								</div>

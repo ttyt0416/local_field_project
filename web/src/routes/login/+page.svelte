@@ -100,7 +100,7 @@
 					label="아이디"
 					type="text"
 					autocomplete="username"
-					placeholder="아이디를 입력해 주세요"
+					placeholder="3자 이상 입력해 주세요"
 					bind:value={username}
 					required
 				/>

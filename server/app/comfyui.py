@@ -47,8 +47,7 @@ class LoraSelection(BaseModel):
 class ImageGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
     prompt_enhancement_enabled: bool = False
-    enhanced_natural_language_prompt: str | None = Field(default=None, max_length=5000)
-    enhanced_danbooru_prompt: str | None = Field(default=None, max_length=5000)
+    improved_prompt: str | None = Field(default=None, max_length=5000)
     negative_prompt: str = Field(default=_DEFAULT_NEGATIVE_PROMPT, max_length=5000)
     checkpoint: str = Field(min_length=1, max_length=255)
     loras: list[LoraSelection] = Field(default_factory=list, max_length=8)
@@ -87,8 +86,7 @@ class PromptEnhancementContent(BaseModel):
 
 
 class PromptEnhancementResponse(BaseModel):
-    natural_language: PromptEnhancementContent
-    danbooru_tags: PromptEnhancementContent
+    improved_prompt: PromptEnhancementContent
 
 
 @router.get("/options", response_model=ImageGenerationOptions)
@@ -459,14 +457,10 @@ def _effective_positive_prompt(payload: ImageGenerationRequest) -> str:
     base_prompt = payload.prompt.strip()
     if not payload.prompt_enhancement_enabled:
         return base_prompt
-    natural_language = (payload.enhanced_natural_language_prompt or "").strip()
-    danbooru_tags = (payload.enhanced_danbooru_prompt or "").strip()
-    if not natural_language or not danbooru_tags:
-        raise HTTPException(status_code=422, detail="강화된 자연어 프롬프트와 Danbooru 태그를 먼저 생성해 주세요.")
-    combined = ", ".join((base_prompt, danbooru_tags, natural_language))
-    if len(combined) > 5000:
-        raise HTTPException(status_code=422, detail="강화된 최종 프롬프트가 너무 깁니다.")
-    return combined
+    improved_prompt = (payload.improved_prompt or "").strip()
+    if not improved_prompt:
+        raise HTTPException(status_code=422, detail="개선된 프롬프트를 먼저 생성해 주세요.")
+    return improved_prompt
 
 
 def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, Any]], int]:
@@ -624,9 +618,9 @@ def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
         valid_tags = candidate_tags[:24]
     if not valid_tags:
         raise DanbooruError("사용할 Danbooru 태그를 찾지 못했습니다.")
+    improved_prompt = ", ".join((prompt, ", ".join(valid_tags), natural_language))
     return PromptEnhancementResponse(
-        natural_language=PromptEnhancementContent(contents=natural_language),
-        danbooru_tags=PromptEnhancementContent(contents=", ".join(valid_tags)),
+        improved_prompt=PromptEnhancementContent(contents=improved_prompt[:5000]),
     )
 
 
