@@ -28,6 +28,7 @@ from .database import (
     get_video_generation,
     update_video_generation_status,
 )
+from .generation_events import generation_event_broker, generation_key
 from .storage import (
     StorageError,
     download_file as storage_download_file,
@@ -178,39 +179,39 @@ async def video_generation_events(
 
 
 async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
-    last_status: str | None = None
-    heartbeat_ticks = 0
-    while True:
+    key = generation_key("video", user_id, prompt_id)
+    async with generation_event_broker.subscribe(key) as events:
         generation = await asyncio.to_thread(get_video_generation, prompt_id, user_id)
         if generation is None or generation["mode"] != mode:
             yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed", "message": "영상 생성 결과를 찾을 수 없습니다."})
             return
 
         current_status = str(generation["status"])
-        if current_status != last_status:
-            if current_status == "completed":
-                try:
-                    video = await asyncio.to_thread(_video_output, generation, user_id)
-                except StorageError as exc:
-                    yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
-                    return
-                yield _sse_message(
-                    "completed",
-                    VideoGenerationStatus(prompt_id=prompt_id, mode=mode, status="completed", video=video).model_dump(),
-                )
+        if current_status == "completed":
+            try:
+                video = await asyncio.to_thread(_video_output, generation, user_id)
+            except StorageError as exc:
+                yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
                 return
-            if current_status == "failed":
-                yield _sse_message("failed", {"prompt_id": prompt_id, "mode": mode, "status": "failed"})
-                return
-            yield _sse_message("status", {"prompt_id": prompt_id, "mode": mode, "status": current_status})
-            last_status = current_status
-            heartbeat_ticks = 0
-        else:
-            heartbeat_ticks += 1
-            if heartbeat_ticks >= 8:
+            yield _sse_message(
+                "completed",
+                VideoGenerationStatus(prompt_id=prompt_id, mode=mode, status="completed", video=video).model_dump(),
+            )
+            return
+        if current_status == "failed":
+            yield _sse_message("failed", {"prompt_id": prompt_id, "mode": mode, "status": "failed"})
+            return
+        yield _sse_message("status", {"prompt_id": prompt_id, "mode": mode, "status": current_status})
+
+        while True:
+            try:
+                message = await asyncio.wait_for(events.get(), timeout=15)
+            except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
-                heartbeat_ticks = 0
-        await asyncio.sleep(2)
+                continue
+            yield _sse_message(message["event"], message["data"])
+            if message["event"] in {"completed", "failed", "error"}:
+                return
 
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:

@@ -1,6 +1,6 @@
 import { browser } from '$app/environment';
 import { SERVER_URL } from '$lib/configs/constants';
-import { streamSse } from '$lib/utils/api';
+import { apiJson, streamSse } from '$lib/utils/api';
 
 export type GenerationJobKind = 'image' | 'video';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
@@ -20,24 +20,16 @@ export type GenerationJob = {
 	createdAt: number;
 };
 
-type PersistedJob = Pick<
-	GenerationJob,
-	| 'key'
-	| 'kind'
-	| 'promptId'
-	| 'clientId'
-	| 'generationId'
-	| 'mode'
-	| 'status'
-	| 'progress'
-	| 'queuePosition'
-	| 'imageUrl'
-	| 'videoUrl'
-	| 'error'
-	| 'createdAt'
->;
+type ActiveGenerationResponse = {
+	kind: GenerationJobKind;
+	prompt_id: string;
+	client_id: string;
+	generation_id: string;
+	mode?: 'i2v' | 'fl2v' | 'r2v' | null;
+	status: 'queued' | 'processing';
+	created_at: string;
+};
 
-const STORAGE_KEY = 'local-field.generation-jobs';
 const terminalStatuses = new Set<GenerationJobStatus>(['completed', 'failed']);
 
 function isTerminal(status: GenerationJobStatus) {
@@ -53,6 +45,7 @@ class GenerationJobStore {
 	private streams = new Map<string, AbortController>();
 	private waiters = new Map<string, Set<() => void>>();
 	private initialized = false;
+	private initialization?: Promise<void>;
 
 	get list() {
 		return Object.values(this.jobs).sort((left, right) => right.createdAt - left.createdAt);
@@ -60,19 +53,9 @@ class GenerationJobStore {
 
 	async initialize() {
 		if (!browser || this.initialized) return;
-		this.initialized = true;
-		try {
-			const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as PersistedJob[];
-			for (const job of stored.slice(0, 20)) {
-				if (!job?.key || !job.promptId || !job.clientId || !job.generationId) continue;
-				this.jobs[job.key] = { ...job };
-			}
-		} catch {
-			localStorage.removeItem(STORAGE_KEY);
-		}
-		for (const job of this.list) {
-			if (!isTerminal(job.status)) void this.connect(job.key);
-		}
+		if (this.initialization) return this.initialization;
+		this.initialization = this.restoreActiveJobs();
+		return this.initialization;
 	}
 
 	track(input: Omit<GenerationJob, 'key' | 'status' | 'progress' | 'queuePosition' | 'createdAt'>) {
@@ -85,7 +68,6 @@ class GenerationJobStore {
 			queuePosition: null,
 			createdAt: Date.now()
 		};
-		this.persist();
 		void this.connect(key);
 		return key;
 	}
@@ -104,9 +86,30 @@ class GenerationJobStore {
 		});
 	}
 
-	dismiss(key: string) {
-		delete this.jobs[key];
-		this.persist();
+	private async restoreActiveJobs() {
+		try {
+			const activeJobs = await apiJson<ActiveGenerationResponse[]>('generation/active');
+			for (const active of activeJobs) {
+				const key = `${active.kind}:${active.prompt_id}`;
+				this.jobs[key] = {
+					key,
+					kind: active.kind,
+					promptId: active.prompt_id,
+					clientId: active.client_id,
+					generationId: active.generation_id,
+					mode: active.mode ?? undefined,
+					status: active.status,
+					progress: 0,
+					queuePosition: null,
+					createdAt: Date.parse(active.created_at) || Date.now()
+				};
+				void this.connect(key);
+			}
+		} catch {
+			// Authentication and page guards handle user-visible request errors.
+		} finally {
+			this.initialized = true;
+		}
 	}
 
 	private async connect(key: string) {
@@ -175,31 +178,10 @@ class GenerationJobStore {
 		const current = this.jobs[key];
 		if (!current) return;
 		this.jobs[key] = { ...current, ...changes };
-		this.persist();
 		if (isTerminal(this.jobs[key].status)) {
 			for (const resolve of this.waiters.get(key) ?? []) resolve();
 			this.waiters.delete(key);
 		}
-	}
-
-	private persist() {
-		if (!browser) return;
-		const jobs: PersistedJob[] = this.list.slice(0, 20).map(({ key, kind, promptId, clientId, generationId, mode, status, progress, queuePosition, imageUrl, videoUrl, error, createdAt }) => ({
-			key,
-			kind,
-			promptId,
-			clientId,
-			generationId,
-			mode,
-			status,
-			progress,
-			queuePosition,
-			imageUrl,
-			videoUrl,
-			error,
-			createdAt
-		}));
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
 	}
 }
 

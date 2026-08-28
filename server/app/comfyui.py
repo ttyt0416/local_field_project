@@ -12,7 +12,6 @@ from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-import websockets
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from starlette.responses import RedirectResponse, StreamingResponse
@@ -25,6 +24,7 @@ from .database import (
     get_image_generation,
     update_image_generation_status,
 )
+from .generation_events import generation_event_broker, generation_key
 from .prompts import (
     IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
@@ -159,7 +159,9 @@ async def image_generation_events(
     client_id: str = Query(min_length=1, max_length=128),
     user: UserResponse = Depends(current_user),
 ) -> StreamingResponse:
-    _require_owned_generation(prompt_id, user.id)
+    generation = _require_owned_generation(prompt_id, user.id)
+    if generation["client_id"] != client_id:
+        raise HTTPException(status_code=404, detail="생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
         _stream_generation_events(prompt_id, client_id, user.id),
         media_type="text/event-stream",
@@ -184,107 +186,39 @@ def image_generation_status(
 
 
 async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uuid.UUID):
-    yield _sse_message("queued", _queue_event(prompt_id))
-
-    try:
-        current = _history_generation_status(prompt_id, user_id)
-        if current.status == "completed":
-            yield _sse_message("completed", current.model_dump())
+    key = generation_key("image", user_id, prompt_id)
+    async with generation_event_broker.subscribe(key) as events:
+        generation = await asyncio.to_thread(get_image_generation, prompt_id, user_id)
+        if generation is None or generation["client_id"] != client_id:
+            yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed", "message": "생성 결과를 찾을 수 없습니다."})
             return
-        if current.status == "failed":
+
+        current_status = str(generation["status"])
+        if current_status == "completed":
+            try:
+                images = await asyncio.to_thread(_stored_image_outputs, generation, user_id)
+            except StorageError as exc:
+                yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
+                return
+            yield _sse_message(
+                "completed",
+                ImageGenerationStatus(prompt_id=prompt_id, status="completed", images=images).model_dump(),
+            )
+            return
+        if current_status == "failed":
             yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed"})
             return
-    except _ComfyUIError:
-        pass
+        yield _sse_message("status", {"prompt_id": prompt_id, "status": current_status})
 
-    try:
-        async with websockets.connect(
-            _comfy_websocket_url(client_id),
-            open_timeout=10,
-            ping_interval=20,
-            close_timeout=2,
-        ) as socket:
-            while True:
-                try:
-                    raw_message = await asyncio.wait_for(socket.recv(), timeout=_SSE_HEARTBEAT_SECONDS)
-                except asyncio.TimeoutError:
-                    queue_event = _queue_event(prompt_id)
-                    if queue_event["status"] == "queued":
-                        yield _sse_message("queued", queue_event)
-                    else:
-                        yield ": keep-alive\n\n"
-                    continue
-                except websockets.exceptions.ConnectionClosed:
-                    yield _sse_message("error", {"prompt_id": prompt_id, "message": "ComfyUI 진행 연결이 종료되었습니다."})
-                    return
-
-                if isinstance(raw_message, bytes):
-                    continue
-                try:
-                    message = json.loads(raw_message)
-                except json.JSONDecodeError:
-                    continue
-
-                event_name = message.get("type")
-                data = message.get("data") if isinstance(message.get("data"), dict) else {}
-                event_prompt_id = data.get("prompt_id")
-                if event_prompt_id is not None and event_prompt_id != prompt_id:
-                    continue
-
-                if event_name == "progress":
-                    value = _number(data.get("value"))
-                    maximum = _number(data.get("max"))
-                    progress = round(min(100, max(0, value / maximum * 100)) if maximum > 0 else 0, 2)
-                    yield _sse_message(
-                        "progress",
-                        {
-                            "prompt_id": prompt_id,
-                            "status": "processing",
-                            "progress": progress,
-                            "value": value,
-                            "total": maximum,
-                            "node": data.get("node"),
-                        },
-                    )
-                elif event_name == "executing":
-                    if data.get("node") is None:
-                        try:
-                            current = _history_generation_status(prompt_id, user_id)
-                        except _ComfyUIError:
-                            current = None
-                        if current and current.status == "completed":
-                            yield _sse_message("completed", current.model_dump())
-                            return
-                        if current and current.status == "failed":
-                            yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed"})
-                            return
-                    else:
-                        yield _sse_message(
-                            "processing",
-                            {"prompt_id": prompt_id, "status": "processing", "progress": 0, "node": data.get("node")},
-                        )
-                elif event_name == "execution_success":
-                    try:
-                        current = _history_generation_status(prompt_id, user_id)
-                    except _ComfyUIError as exc:
-                        yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
-                        return
-                    yield _sse_message("completed", current.model_dump())
-                    return
-                elif event_name in {"execution_error", "execution_interrupted"}:
-                    detail = data.get("exception_message") or data.get("message")
-                    update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-                    yield _sse_message(
-                        "failed",
-                        {
-                            "prompt_id": prompt_id,
-                            "status": "failed",
-                            "message": str(detail)[:500] if detail else "ComfyUI에서 이미지 생성에 실패했습니다.",
-                        },
-                    )
-                    return
-    except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
-        yield _sse_message("error", {"prompt_id": prompt_id, "message": "ComfyUI 진행 연결에 실패했습니다."})
+        while True:
+            try:
+                message = await asyncio.wait_for(events.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            yield _sse_message(message["event"], message["data"])
+            if message["event"] in {"completed", "failed", "error"}:
+                return
 
 
 def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGenerationStatus:
@@ -309,38 +243,6 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
         )
     update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
     return ImageGenerationStatus(prompt_id=prompt_id, status="processing")
-
-
-def _queue_event(prompt_id: str) -> dict[str, Any]:
-    try:
-        queue = _request_json("GET", "/queue")
-    except _ComfyUIError:
-        return {"prompt_id": prompt_id, "status": "queued", "progress": 0, "queue_position": None}
-
-    running = queue.get("queue_running", [])
-    if _queue_contains(running, prompt_id):
-        return {"prompt_id": prompt_id, "status": "processing", "progress": 0, "queue_position": 0}
-
-    pending = queue.get("queue_pending", [])
-    for index, item in enumerate(pending, start=1):
-        if _queue_item_prompt_id(item) == prompt_id:
-            return {"prompt_id": prompt_id, "status": "queued", "progress": 0, "queue_position": index}
-    return {"prompt_id": prompt_id, "status": "queued", "progress": 0, "queue_position": None}
-
-
-def _queue_contains(items: Any, prompt_id: str) -> bool:
-    return isinstance(items, list) and any(_queue_item_prompt_id(item) == prompt_id for item in items)
-
-
-def _queue_item_prompt_id(item: Any) -> str | None:
-    return item[1] if isinstance(item, list) and len(item) > 1 and isinstance(item[1], str) else None
-
-
-def _number(value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:
@@ -567,6 +469,22 @@ def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, 
     return prompt, seed
 
 
+def _stored_image_outputs(generation: dict[str, Any], user_id: uuid.UUID) -> list[ImageOutput]:
+    filename = generation.get("filename")
+    if not isinstance(filename, str) or not filename:
+        return []
+    subfolder = generation.get("subfolder", "")
+    image_type = generation.get("image_type", "output")
+    if not isinstance(subfolder, str) or not isinstance(image_type, str):
+        return []
+    storage_file_id = generation.get("storage_file_id")
+    if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
+        url = storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+    else:
+        url = _legacy_image_url(generation["prompt_id"], filename, subfolder, image_type)
+    return [ImageOutput(url=url, filename=filename, subfolder=subfolder, type=image_type)]
+
+
 def _image_outputs(prompt_id: str, user_id: uuid.UUID, outputs: Any) -> list[ImageOutput]:
     result = []
     generation = get_image_generation(prompt_id, user_id)
@@ -747,14 +665,6 @@ def _request_vllm_json(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _comfy_url(path: str) -> str:
     return f"{settings.comfyui_url.rstrip('/')}/{path.lstrip('/')}"
-
-
-def _comfy_websocket_url(client_id: str) -> str:
-    base_url = settings.comfyui_url.rstrip("/")
-    websocket_scheme = "wss" if base_url.startswith("https://") else "ws"
-    base_url = base_url.removeprefix("https://").removeprefix("http://")
-    query = urlencode({"clientId": client_id})
-    return f"{websocket_scheme}://{base_url}/ws?{query}"
 
 
 def _vllm_url(path: str) -> str:

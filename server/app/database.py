@@ -436,10 +436,16 @@ def get_image_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] |
     return _image_generation_row(row)
 
 
-def list_active_image_generations() -> list[dict[str, Any]]:
+def list_active_image_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+    filters = ["status IN ('queued', 'processing')"]
+    parameters: list[Any] = []
+    if user_id is not None:
+        filters.append("user_id = %s")
+        parameters.append(user_id)
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE status IN ('queued', 'processing') ORDER BY created_at"
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
+            parameters,
         ).fetchall()
     return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
 
@@ -688,10 +694,16 @@ def get_video_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] |
     return _video_generation_row(row)
 
 
-def list_active_video_generations() -> list[dict[str, Any]]:
+def list_active_video_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+    filters = ["status IN ('queued', 'processing')"]
+    parameters: list[Any] = []
+    if user_id is not None:
+        filters.append("user_id = %s")
+        parameters.append(user_id)
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE status IN ('queued', 'processing') ORDER BY created_at"
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
+            parameters,
         ).fetchall()
     return [generation for row in rows if (generation := _video_generation_row(row)) is not None]
 
