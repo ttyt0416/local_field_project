@@ -46,6 +46,18 @@
 			closeButton?.focus();
 		}
 	});
+
+	$effect(() => {
+		if (!open || typeof document === 'undefined') return;
+		const htmlOverflow = document.documentElement.style.overflow;
+		const bodyOverflow = document.body.style.overflow;
+		document.documentElement.style.overflow = 'hidden';
+		document.body.style.overflow = 'hidden';
+		return () => {
+			document.documentElement.style.overflow = htmlOverflow;
+			document.body.style.overflow = bodyOverflow;
+		};
+	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -53,14 +65,14 @@
 {#if open}
 	<dialog
 		open
-		class="fixed inset-0 z-50 m-0 flex h-full w-full max-w-none items-end justify-center border-0 bg-black/60 p-4 sm:items-center"
+		class="fixed inset-0 z-50 m-0 flex h-full w-full max-w-none items-end justify-center overflow-y-auto border-0 bg-black/60 p-4 sm:items-center"
 		aria-modal="true"
 		aria-labelledby="modal-title"
 		aria-describedby={description ? 'modal-description' : undefined}
 		onclick={handleBackdropClick}
 	>
-		<div class="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card text-card-foreground shadow-2xl">
-			<header class="flex items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
+		<div class="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl">
+			<header class="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
 				<div class="min-w-0">
 					<h2 id="modal-title" class="text-lg font-semibold tracking-tight">{title}</h2>
 					{#if description}
@@ -78,14 +90,14 @@
 				</button>
 			</header>
 
-			<div class="px-5 py-5 sm:px-6">
+			<div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
 				{#if children}
 					{@render children()}
 				{/if}
 			</div>
 
 			{#if footer}
-				<footer class="flex flex-col-reverse gap-2 border-t border-border bg-muted/40 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+				<footer class="flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-muted/40 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
 					{@render footer()}
 				</footer>
 			{/if}

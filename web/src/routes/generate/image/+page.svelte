@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { FolderOpen, ImagePlus, Plus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
@@ -152,6 +153,7 @@
 	let loras = $state<LoraSelection[]>([]);
 	let cfg = $state(4);
 	let steps = $state(30);
+	let seed = $state('');
 	let aspectRatio = $state<AspectRatio>('custom');
 	let width = $state(1024);
 	let height = $state(1024);
@@ -339,11 +341,52 @@
 			options = await apiJson<ImageOptions>('generation/image/options');
 			checkpoint = options.default_checkpoint;
 			loras = [];
+			loadGenerationParameters();
 		} catch (error) {
 			optionsError = getErrorMessage(error);
 		} finally {
 			optionsLoading = false;
 		}
+	}
+
+	function loadGenerationParameters() {
+		const params = page.url.searchParams;
+		const queryPrompt = params.get('prompt');
+		if (!queryPrompt) return;
+		prompt = queryPrompt;
+		negativePrompt = params.get('negative_prompt') ?? negativePrompt;
+		const queryCheckpoint = params.get('checkpoint');
+		if (queryCheckpoint && options.checkpoints.includes(queryCheckpoint)) checkpoint = queryCheckpoint;
+		const queryLoras = params.get('loras');
+		if (queryLoras) {
+			try {
+				const parsed = JSON.parse(queryLoras) as unknown;
+				if (Array.isArray(parsed)) {
+					loras = parsed
+						.filter(
+							(value): value is LoraSelection =>
+								Boolean(value) &&
+								typeof value === 'object' &&
+								typeof value.name === 'string' &&
+								options.loras.includes(value.name) &&
+								typeof value.strength === 'number'
+						)
+						.map(({ name, strength }) => ({ name, strength }));
+				}
+			} catch {
+				loras = [];
+			}
+		}
+		const queryCfg = Number(params.get('cfg'));
+		const querySteps = Number(params.get('steps'));
+		const queryWidth = Number(params.get('width'));
+		const queryHeight = Number(params.get('height'));
+		if (Number.isFinite(queryCfg) && queryCfg >= 0 && queryCfg <= 20) cfg = queryCfg;
+		if (Number.isInteger(querySteps) && querySteps >= 1 && querySteps <= 100) steps = querySteps;
+		if (Number.isInteger(queryWidth) && queryWidth >= 64 && queryWidth <= 2048) width = queryWidth;
+		if (Number.isInteger(queryHeight) && queryHeight >= 64 && queryHeight <= 2048) height = queryHeight;
+		const querySeed = params.get('seed');
+		if (querySeed && /^\d+$/.test(querySeed)) seed = querySeed;
 	}
 
 	async function generate() {
@@ -389,7 +432,8 @@
 					cfg,
 					steps,
 					width,
-					height
+					height,
+					seed: seed || null
 				}
 			});
 			promptId = queued.prompt_id;
@@ -667,10 +711,12 @@
 							</label>
 						</div>
 
-						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="fixed bottom-4 left-4 right-4 z-30 w-auto sm:static sm:z-auto sm:w-full">
-							<Sparkles size={17} strokeWidth={1.9} />
-							<span>{generating ? '생성 중' : '이미지 생성'}</span>
-						</PrimaryButton>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+							<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="w-full">
+								<Sparkles size={17} strokeWidth={1.9} />
+								<span>{generating ? '생성 중' : '이미지 생성'}</span>
+							</PrimaryButton>
+						</div>
 					</form>
 				</section>
 			</div>
@@ -681,7 +727,7 @@
 		<div class="space-y-5">
 			<label class="block space-y-2" for="preset-name">
 				<span class="text-sm font-medium">프리셋 이름</span>
-				<input id="preset-name" bind:value={presetName} maxlength="100" placeholder="예: 부드러운 인물" class={numberInputClass} />
+				<input id="preset-name" bind:value={presetName} maxlength="100" class={numberInputClass} />
 			</label>
 			<div class="grid gap-2 sm:grid-cols-2">
 				<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">

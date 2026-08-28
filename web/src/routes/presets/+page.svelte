@@ -393,7 +393,7 @@
 		<div class="space-y-5">
 			<label class="block space-y-2" for="managed-preset-name">
 				<span class="text-sm font-medium">프리셋 이름</span>
-				<input id="managed-preset-name" bind:value={presetName} maxlength="100" placeholder="예: 부드러운 인물" class={numberInputClass} />
+				<input id="managed-preset-name" bind:value={presetName} maxlength="100" class={numberInputClass} />
 			</label>
 
 			<div class="space-y-3">

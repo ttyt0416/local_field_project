@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, FileImage, SlidersHorizontal, Trash2 } from '@lucide/svelte';
+	import { ArrowLeft, FileImage, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
@@ -72,6 +72,26 @@
 
 	function cancelDelete() {
 		deleteModalOpen = false;
+	}
+
+	async function generateFromParameters() {
+		if (!generation) return;
+		const params = new URLSearchParams({
+			prompt: generation.prompt,
+			negative_prompt: generation.negative_prompt,
+			checkpoint: generation.checkpoint,
+			cfg: String(generation.cfg),
+			steps: String(generation.steps),
+			width: String(generation.width),
+			height: String(generation.height),
+			seed: String(generation.seed),
+			loras: JSON.stringify(generation.loras)
+		});
+		try {
+			await goto(`/generate/image?${params.toString()}`);
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '이미지 생성 페이지로 이동하지 못했습니다.';
+		}
 	}
 
 	async function deleteImage() {
@@ -152,7 +172,7 @@
 							{#if generation.loras.length > 0}
 								<dd class="mt-1 space-y-1 font-medium">
 									{#each generation.loras as lora (lora.name)}
-										<div class="break-all">{lora.name} · Strength {lora.strength}</div>
+										<div class="break-all">{lora.name} / {lora.strength}</div>
 									{/each}
 								</dd>
 							{:else}
@@ -177,7 +197,11 @@
 				</div>
 			</section>
 
-			<section class="flex justify-end">
+			<section class="flex flex-col justify-end gap-3 sm:flex-row">
+				<PrimaryButton onclick={() => void generateFromParameters()}>
+					<Sparkles size={16} strokeWidth={1.9} />
+					<span>이 설정으로 다시 생성</span>
+				</PrimaryButton>
 				<PrimaryButton
 					loading={deleting}
 					disabled={deleting}
