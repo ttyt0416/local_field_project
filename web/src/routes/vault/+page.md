@@ -4,4 +4,4 @@ Vault API는 Storage signed URL이 있는 이미지에는 외부 이미지 URL�
 
 보관함의 화면 순서는 제목, SearchBar와 정렬 선택, 콘텐츠 수, 이미지 목록이다. 제목 영역에는 별도 컨테이너·아이콘·설명·로그아웃 버튼을 두지 않는다. 보관함의 수와 빈 상태 문구는 `생성된 콘텐츠`, 즐겨찾기 화면에서는 `즐겨찾기 콘텐츠`를 사용하며 완료된 생성 결과만 센다. 완료 카드의 타입 표시는 `IMAGE`다.
 
-각 카드의 좌측 상단 checkbox로 콘텐츠를 여러 개 선택할 수 있다. 선택된 항목이 있으면 콘텐츠 수 row 우측에 `선택된 콘텐츠 삭제` 버튼이 나타나며, 확인 모달 후 `DELETE /vault/images/bulk`로 Storage 파일과 DB 레코드를 일괄 삭제한다. 카드 우측 하단의 favorite·삭제 버튼은 세로로 배치한다. 삭제 아이콘은 확인 모달 뒤 `DELETE /vault/images/{generation_id}`를 호출한다. 카드는 상세 링크를 제공하며, 상세 API에 진입할 때마다 조회수가 증가한다.
+각 카드의 좌측 상단 checkbox로 콘텐츠를 여러 개 선택할 수 있다. checkbox 바깥 wrapper에는 배경색을 두지 않는다. 선택된 항목이 있으면 선택 row 우측에 `선택된 n개 콘텐츠 제거` 버튼이 나타나며, 확인 모달 후 `DELETE /vault/images/bulk`로 Storage 파일과 DB 레코드를 일괄 삭제한다. 카드 우측 하단의 favorite·삭제 버튼은 세로로 배치하고, favorite는 배경색이 있는 filled 아이콘 버튼을 사용한다. 삭제 아이콘은 확인 모달 뒤 `DELETE /vault/images/{generation_id}`를 호출한다. 카드는 콘텐츠 상세 링크를 제공하며, 상세 API에 진입할 때마다 조회수가 증가한다.

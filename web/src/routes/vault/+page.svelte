@@ -157,7 +157,7 @@
 			deleteModalOpen = false;
 			deleteTarget = null;
 		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '이미지를 삭제하지 못했습니다.';
+			error = reason instanceof Error ? reason.message : '콘텐츠를 삭제하지 못했습니다.';
 		} finally {
 			deletingId = '';
 		}
@@ -229,19 +229,7 @@
 
 			<div class="flex items-center justify-between border-b border-border pb-4">
 				<p class="text-sm font-medium text-muted-foreground">{favoritesOnly ? '즐겨찾기 콘텐츠' : '생성된 콘텐츠'}</p>
-				<div class="flex items-center gap-3">
-					{#if selectedCount > 0}
-						<PrimaryButton
-							variant="destructive"
-							class="min-h-9 px-3 py-1 text-xs"
-							onclick={requestBulkDelete}
-						>
-							<Trash2 size={14} strokeWidth={2} />
-							<span>선택된 콘텐츠 삭제</span>
-						</PrimaryButton>
-					{/if}
-					<p class="text-2xl font-semibold tracking-tight">{contentCount}</p>
-				</div>
+				<p class="text-2xl font-semibold tracking-tight">{contentCount}</p>
 			</div>
 
 			{#if images.length === 0}
@@ -253,7 +241,7 @@
 				</section>
 			{:else}
 				<section class="space-y-3">
-					<div class="flex items-center justify-between">
+					<div class="flex flex-wrap items-center justify-between gap-3">
 						<label class="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
 							<input
 								type="checkbox"
@@ -265,7 +253,14 @@
 							<span>전체 선택</span>
 						</label>
 						{#if selectedCount > 0}
-							<span class="text-xs text-muted-foreground">{selectedCount}개 선택됨</span>
+							<PrimaryButton
+								variant="destructive"
+								class="min-h-9 px-3 py-1 text-xs"
+								onclick={requestBulkDelete}
+							>
+								<Trash2 size={14} strokeWidth={2} />
+								<span>선택된 {selectedCount}개 콘텐츠 제거</span>
+							</PrimaryButton>
 						{/if}
 					</div>
 					<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -273,12 +268,12 @@
 						<article class="relative overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
 							<a
 								href={`/vault/images/${image.id}`}
-								aria-label={`${image.prompt || image.checkpoint} 이미지 상세 보기`}
+								aria-label={`${image.prompt || image.checkpoint} 콘텐츠 상세 보기`}
 								class="absolute inset-0 z-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							></a>
 							<div class="pointer-events-none relative z-10">
 								<div class="relative">
-									<label class="pointer-events-auto absolute left-3 top-3 z-10 inline-flex cursor-pointer rounded-md bg-card/90 p-1.5 shadow-lg">
+									<label class="pointer-events-auto absolute left-3 top-3 z-10 inline-flex cursor-pointer">
 										<span class="sr-only">콘텐츠 선택</span>
 										<input
 											type="checkbox"
@@ -295,16 +290,17 @@
 									{/if}
 									<div class="pointer-events-auto absolute bottom-3 right-3 z-10 flex flex-col gap-2">
 										<IconOutlinedButton
+											variant="filled"
 											ariaLabel={image.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
 											pressed={image.is_favorite}
 											loading={favoriteUpdatingId === image.id}
-											class={`bg-card/90 shadow-lg ${image.is_favorite ? 'border-primary bg-primary/10 text-primary' : ''}`}
+											class={`${image.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} shadow-lg`}
 											onclick={() => void toggleFavorite(image)}
 										>
 											<Heart size={17} strokeWidth={1.9} fill={image.is_favorite ? 'currentColor' : 'none'} />
 										</IconOutlinedButton>
 										<IconOutlinedButton
-											ariaLabel="이미지 삭제"
+											ariaLabel="콘텐츠 삭제"
 											loading={deletingId === image.id}
 											variant="destructive"
 											class="shadow-lg"
@@ -336,8 +332,8 @@
 
 	<Modal
 		bind:open={deleteModalOpen}
-		title="이미지를 삭제하시겠습니까?"
-		description="삭제한 이미지는 복구할 수 없습니다."
+		title="콘텐츠를 삭제하시겠습니까?"
+		description="삭제한 콘텐츠는 복구할 수 없습니다."
 		closeOnBackdrop={!deletingId}
 		onclose={cancelDelete}
 	>
@@ -371,7 +367,7 @@
 				onclick={() => void bulkDeleteImages()}
 			>
 				<Trash2 size={16} strokeWidth={2} />
-				<span>선택된 콘텐츠 삭제</span>
+				<span>선택된 콘텐츠 제거</span>
 			</PrimaryButton>
 		{/snippet}
 	</Modal>

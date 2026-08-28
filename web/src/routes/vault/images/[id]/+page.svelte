@@ -65,7 +65,7 @@
 		try {
 			generation = await apiJson<VaultImageDetail>(`vault/images/${generationId}`);
 		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '생성 상세 정보를 불러오지 못했습니다.';
+			error = reason instanceof Error ? reason.message : '콘텐츠 상세 정보를 불러오지 못했습니다.';
 		} finally {
 			ready = true;
 		}
@@ -124,7 +124,7 @@
 			deleteModalOpen = false;
 			await goto('/vault');
 		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '이미지를 삭제하지 못했습니다.';
+			error = reason instanceof Error ? reason.message : '콘텐츠를 삭제하지 못했습니다.';
 		} finally {
 			deleting = false;
 		}
@@ -140,13 +140,13 @@
 </script>
 
 <svelte:head>
-	<title>이미지 상세 · Local Field</title>
-	<meta name="description" content="개인 이미지 생성 결과와 사용된 파라미터 상세" />
+	<title>콘텐츠 상세 · Local Field</title>
+	<meta name="description" content="개인 콘텐츠와 사용된 이미지 생성 파라미터 상세" />
 </svelte:head>
 
 {#if !ready}
 	<div class="flex min-h-screen items-center justify-center bg-background">
-		<LoadingSpinner size="lg" label="생성 상세 정보를 불러오는 중" />
+		<LoadingSpinner size="lg" label="콘텐츠 상세 정보를 불러오는 중" />
 	</div>
 {:else if generation}
 	<div class="min-h-screen bg-muted/30 px-4 py-8 text-foreground dark:bg-background sm:px-6 lg:px-8">
@@ -156,31 +156,34 @@
 				보관함으로 돌아가기
 			</a>
 
-			<section class="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8">
+			<section>
 				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div>
-						<Typography as="h1" variant="display">이미지 상세</Typography>
+						<Typography as="h1" variant="display">콘텐츠 상세</Typography>
 						<p class="mt-3 text-sm text-muted-foreground">조회 {generation.view_count}</p>
 					</div>
-					<IconOutlinedButton
-						ariaLabel={generation.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
-						pressed={generation.is_favorite}
-						loading={favoriteUpdating}
-						class={generation.is_favorite ? 'border-primary bg-primary/10 text-primary' : ''}
-						onclick={() => void toggleFavorite()}
-					>
-						<Heart size={18} strokeWidth={1.9} fill={generation.is_favorite ? 'currentColor' : 'none'} />
-					</IconOutlinedButton>
 				</div>
 			</section>
 
 			<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-					{#if generation.image_url}
-						<ImageMedia source={imageSource(generation)} sourceType={imageSourceType(imageSource(generation))} alt="생성 이미지" class="min-h-[24rem] sm:min-h-[36rem]" />
-					{:else}
-						<div class="flex min-h-[24rem] items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">이미지 결과가 아직 없습니다.</div>
-					{/if}
+					<div class="relative">
+						{#if generation.image_url}
+							<ImageMedia source={imageSource(generation)} sourceType={imageSourceType(imageSource(generation))} alt="생성 이미지" class="min-h-[24rem] sm:min-h-[36rem]" />
+						{:else}
+							<div class="flex min-h-[24rem] items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">이미지 결과가 아직 없습니다.</div>
+						{/if}
+						<IconOutlinedButton
+							variant="filled"
+							ariaLabel={generation.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+							pressed={generation.is_favorite}
+							loading={favoriteUpdating}
+							class={`${generation.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-card/90'} absolute bottom-3 right-3 z-10 shadow-lg`}
+							onclick={() => void toggleFavorite()}
+						>
+							<Heart size={18} strokeWidth={1.9} fill={generation.is_favorite ? 'currentColor' : 'none'} />
+						</IconOutlinedButton>
+					</div>
 					<p class="mt-3 text-xs text-muted-foreground">이미지를 클릭하거나 터치하면 크게 볼 수 있습니다.</p>
 				</section>
 
@@ -234,7 +237,7 @@
 					onclick={requestDelete}
 				>
 					<Trash2 size={16} strokeWidth={2} />
-					<span>이미지 삭제</span>
+					<span>콘텐츠 삭제</span>
 				</PrimaryButton>
 			</section>
 		</main>
@@ -242,7 +245,7 @@
 {:else}
 	<div class="flex min-h-screen items-center justify-center bg-background px-4">
 		<div class="text-center">
-			<Typography as="h1" variant="h2">생성 결과를 찾을 수 없습니다.</Typography>
+			<Typography as="h1" variant="h2">콘텐츠를 찾을 수 없습니다.</Typography>
 			<a href="/vault" class="mt-4 inline-flex text-sm font-semibold text-primary hover:underline">보관함으로 돌아가기</a>
 		</div>
 	</div>
@@ -250,12 +253,12 @@
 
 <Modal
 	bind:open={deleteModalOpen}
-	title="이미지를 삭제하시겠습니까?"
-	description="삭제한 이미지는 복구할 수 없습니다."
+	title="콘텐츠를 삭제하시겠습니까?"
+	description="삭제한 콘텐츠는 복구할 수 없습니다."
 	closeOnBackdrop={!deleting}
 	onclose={cancelDelete}
 >
-	<p class="text-sm leading-6 text-muted-foreground">이 이미지와 파일 스토리지의 원본을 삭제합니다.</p>
+	<p class="text-sm leading-6 text-muted-foreground">이 콘텐츠와 파일 스토리지의 원본을 삭제합니다.</p>
 	{#snippet footer()}
 		<OutlinedButton disabled={deleting} onclick={cancelDelete}>취소</OutlinedButton>
 		<PrimaryButton
