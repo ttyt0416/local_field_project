@@ -585,29 +585,67 @@ def has_media_asset(storage_file_id: str, user_id: uuid.UUID) -> bool:
     return row is not None
 
 
-def list_reusable_media(user_id: uuid.UUID) -> list[dict[str, Any]]:
-    with get_connection() as connection:
-        rows = connection.execute(
-            f"""
-            SELECT {_REUSABLE_MEDIA_FIELDS} FROM (
-                SELECT storage_file_id AS file_id, filename, content_type, media_kind,
-                       source_type, created_at, user_id
-                FROM media_assets
-                UNION ALL
+def list_reusable_media(
+    user_id: uuid.UUID,
+    *,
+    search: str = "",
+    sort: str = "latest",
+    include_generated: bool = False,
+    media_kind: str | None = None,
+) -> list[dict[str, Any]]:
+    order_by = {
+        "latest": "created_at DESC, file_id",
+        "oldest": "created_at ASC, file_id",
+        "name": "LOWER(filename) ASC, created_at DESC, file_id",
+    }.get(sort, "created_at DESC, file_id")
+    sources = [
+        """
+        SELECT storage_file_id AS file_id, filename, content_type, media_kind,
+               source_type, created_at, user_id
+        FROM media_assets
+        WHERE NOT EXISTS (
+            SELECT 1 FROM image_generations
+            WHERE image_generations.storage_file_id = media_assets.storage_file_id
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM video_generations
+            WHERE video_generations.storage_file_id = media_assets.storage_file_id
+        )
+        """
+    ]
+    if include_generated:
+        sources.extend(
+            (
+                """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
                        'image/png', 'image', 'image_generation', created_at, user_id
                 FROM image_generations
                 WHERE storage_file_id IS NOT NULL
-                UNION ALL
+                """,
+                """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
                        'video/mp4', 'video', 'video_generation', created_at, user_id
                 FROM video_generations
                 WHERE storage_file_id IS NOT NULL
-            ) AS assets
-            WHERE user_id = %s
-            ORDER BY created_at DESC
+                """,
+            )
+        )
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    if search.strip():
+        filters.append("filename ILIKE %s")
+        parameters.append(f"%{search.strip()}%")
+    if media_kind:
+        filters.append("media_kind = %s")
+        parameters.append(media_kind)
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT {_REUSABLE_MEDIA_FIELDS} FROM ({' UNION ALL '.join(sources)}) AS assets
+            WHERE {' AND '.join(filters)}
+            ORDER BY {order_by}
             """,
-            (user_id,),
+            parameters,
         ).fetchall()
     return [dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True)) for row in rows]
 

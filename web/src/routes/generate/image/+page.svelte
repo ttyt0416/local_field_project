@@ -140,7 +140,6 @@
 	let prompt = $state('');
 	let promptEnhancementEnabled = $state(false);
 	let improvedPrompt = $state('');
-	let improvedSourcePrompt = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
@@ -296,7 +295,6 @@
 		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
 		if (values.improved_prompt !== undefined) {
 			improvedPrompt = values.improved_prompt;
-			improvedSourcePrompt = prompt.trim();
 		}
 		if (values.checkpoint !== undefined) checkpoint = values.checkpoint;
 		if (values.loras !== undefined) loras = values.loras.map(({ name, strength }) => ({ name, strength }));
@@ -411,10 +409,7 @@
 			generationError = '개선된 프롬프트를 먼저 생성해 주세요.';
 			return;
 		}
-		if (promptEnhancementEnabled && improvedSourcePrompt !== prompt.trim()) {
-			generationError = '긍정 프롬프트가 변경되었습니다. 개선을 다시 실행해 주세요.';
-			return;
-		}
+
 		if (!checkpoint) {
 			generationError = '체크포인트를 선택해 주세요.';
 			return;
@@ -483,7 +478,6 @@
 			const resultPrompt = result.improved_prompt.contents.trim();
 			if (!resultPrompt) throw new Error('개선된 프롬프트가 비어 있습니다.');
 			improvedPrompt = resultPrompt;
-			improvedSourcePrompt = prompt.trim();
 		} catch (error) {
 			promptEnhancementError = getErrorMessage(error);
 		} finally {
@@ -611,7 +605,7 @@
 										onclick={() => void enhancePrompt()}
 									>
 										<Sparkles size={14} strokeWidth={1.9} />
-										<span>{enhancingPrompt ? '개선 중' : improvedSourcePrompt ? '다시 개선' : '프롬프트 개선'}</span>
+										<span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
 									</OutlinedButton>
 								</div>
 							</div>
@@ -622,9 +616,7 @@
 										<span class="text-sm font-medium">개선된 프롬프트</span>
 										<textarea id="improved-prompt" bind:value={improvedPrompt} rows="5" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 									</label>
-									{#if improvedSourcePrompt && improvedSourcePrompt !== prompt.trim()}
-										<p class="text-xs text-amber-600">긍정 프롬프트가 변경되었습니다. 개선을 다시 실행해 주세요.</p>
-									{/if}
+
 								</div>
 							{/if}
 						</div>

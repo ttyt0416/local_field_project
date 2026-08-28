@@ -39,7 +39,7 @@
 		try {
 			assets = await apiJson<MediaAsset[]>('uploads');
 		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '콘텐츠 라이브러리를 불러오지 못했습니다.';
+			error = reason instanceof Error ? reason.message : '업로드 콘텐츠를 불러오지 못했습니다.';
 		} finally {
 			loading = false;
 			ready = true;
@@ -72,21 +72,21 @@
 	}
 
 	function sourceLabel(asset: MediaAsset) {
-		return asset.source_type === 'image_generation' ? '생성 이미지' : asset.source_type === 'video_generation' ? '생성 영상' : '사용된 콘텐츠';
+		return '업로드 콘텐츠';
 	}
 </script>
 
 <svelte:head>
-	<title>콘텐츠 라이브러리 · Local Field</title>
-	<meta name="description" content="영상 생성에 재사용할 업로드·생성 콘텐츠" />
+	<title>업로드 콘텐츠 · Local Field</title>
+	<meta name="description" content="동영상 생성에 사용할 사용자의 업로드 콘텐츠" />
 </svelte:head>
 
 {#if !ready}
-	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="콘텐츠 라이브러리를 불러오는 중" /></div>
+	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="업로드 콘텐츠를 불러오는 중" /></div>
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<div class="flex flex-wrap items-end justify-between gap-4"><div><Typography as="h1" variant="display">콘텐츠 라이브러리</Typography><Typography as="p" variant="muted" class="mt-2">생성 과정에서 사용된 이미지·동영상·오디오와 생성 콘텐츠를 다시 사용할 수 있습니다.</Typography></div><a href="/generate/video" class="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"><Library size={16} />동영상 생성</a></div>
+			<div class="flex flex-wrap items-end justify-between gap-4"><div><Typography as="h1" variant="display">업로드 콘텐츠</Typography><Typography as="p" variant="muted" class="mt-2">동영상 생성에 사용자가 업로드한 이미지·동영상·오디오를 다시 사용할 수 있습니다.</Typography></div><a href="/generate/video" class="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"><Library size={16} />동영상 생성</a></div>
 			<div class="flex flex-wrap gap-2" role="tablist" aria-label="콘텐츠 종류">
 				{#each [{ value: 'all', label: '전체' }, { value: 'image', label: '이미지' }, { value: 'audio', label: '오디오' }, { value: 'video', label: '동영상' }] as item}
 					<button type="button" role="tab" aria-selected={filter === item.value} onclick={() => (filter = item.value as Filter)} class={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${filter === item.value ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>
@@ -100,9 +100,9 @@
 			{/if}
 
 			{#if loading}<section class="flex min-h-[24rem] items-center justify-center"><LoadingSpinner size="lg" label="콘텐츠를 불러오는 중" /></section>
-			{:else if filteredAssets.length === 0}<section class="rounded-2xl border border-dashed border-border bg-card/70 p-10 text-center"><Typography as="h2" variant="h2">저장된 콘텐츠가 없습니다.</Typography><Typography as="p" variant="muted" class="mx-auto mt-2 max-w-md">동영상 생성에서 새 이미지·동영상·오디오를 사용하면 생성 요청 시 이곳에 저장됩니다.</Typography></section>
+			{:else if filteredAssets.length === 0}<section class="rounded-2xl border border-dashed border-border bg-card/70 p-10 text-center"><Typography as="h2" variant="h2">업로드한 콘텐츠가 없습니다.</Typography><Typography as="p" variant="muted" class="mx-auto mt-2 max-w-md">동영상 생성에서 기기 콘텐츠를 선택하면 생성 요청 시 이곳에 저장됩니다. 생성 결과는 보관함에서 확인할 수 있습니다.</Typography></section>
 			{:else}<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{#each filteredAssets as asset (asset.file_id)}<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"><div class="aspect-video bg-muted">{#if asset.url && asset.media_kind === 'image'}<ImageMedia source={asset.url} sourceType={sourceType(asset.url)} alt={asset.filename} class="h-full" />{:else if asset.url && asset.media_kind === 'video'}<VideoMedia source={asset.url} sourceType="server" preview={false} muted={false} class="h-full" />{:else if asset.url && asset.media_kind === 'audio'}<div class="flex h-full flex-col items-center justify-center gap-4 p-6"><AudioLines size={36} class="text-primary" /><audio src={asset.url} controls class="w-full"></audio></div>{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">미리보기를 사용할 수 없습니다.</div>{/if}</div><div class="space-y-3 p-4"><div class="flex items-center gap-2 text-xs text-muted-foreground">{#if asset.media_kind === 'image'}<ImageIcon size={14} />{:else if asset.media_kind === 'audio'}<AudioLines size={14} />{:else}<Video size={14} />{/if}<span>{sourceLabel(asset)}</span><span>·</span><span>{new Date(asset.created_at).toLocaleDateString('ko-KR')}</span></div><p class="truncate text-sm font-medium" title={asset.filename}>{asset.filename}</p>{#if asset.media_kind === 'image'}<div class="grid grid-cols-2 gap-2"><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'i2v')}>I2V 시작</OutlinedButton><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'r2v-image')}>R2V 추가</OutlinedButton></div><div class="grid grid-cols-2 gap-2"><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'fl2v-first')}>FL2V 첫 프레임</OutlinedButton><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'fl2v-last')}>FL2V 마지막</OutlinedButton></div>{:else if asset.media_kind === 'video'}<OutlinedButton class="w-full px-2 text-xs" onclick={() => useAsset(asset, 'r2v-video')}>R2V 동영상 추가</OutlinedButton>{:else}<OutlinedButton class="w-full px-2 text-xs" onclick={() => useAsset(asset, 'r2v-audio')}>R2V 오디오 추가</OutlinedButton>{/if}</div></article>{/each}</div>{/if}
 		</div>
 	</Layout>
-	{#if error}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="라이브러리 불러오기 실패" message={error} onclose={() => (error = '')} /></div>{/if}
+	{#if error}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="업로드 콘텐츠 불러오기 실패" message={error} onclose={() => (error = '')} /></div>{/if}
 {/if}

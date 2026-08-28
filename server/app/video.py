@@ -257,15 +257,15 @@ def _request_assets(mode: str, request: VideoGenerationRequest) -> list[VideoAss
             raise HTTPException(status_code=422, detail="FL2V 입력 구성이 올바르지 않습니다.")
         return [request.first_frame, request.last_frame]
     if request.first_frame is not None or request.last_frame is not None:
-        raise HTTPException(status_code=422, detail="R2V는 reference 콘텐츠를 사용합니다.")
+        raise HTTPException(status_code=422, detail="R2V는 참조 콘텐츠를 사용합니다.")
     if any(asset.kind != "image" for asset in request.reference_images):
-        raise HTTPException(status_code=422, detail="R2V reference 이미지 구성이 올바르지 않습니다.")
+        raise HTTPException(status_code=422, detail="R2V 참조 이미지 구성이 올바르지 않습니다.")
     if any(asset.kind != "video" for asset in request.reference_videos):
-        raise HTTPException(status_code=422, detail="R2V reference 동영상 구성이 올바르지 않습니다.")
+        raise HTTPException(status_code=422, detail="R2V 참조 동영상 구성이 올바르지 않습니다.")
     if any(asset.kind != "audio" for asset in request.reference_audios):
-        raise HTTPException(status_code=422, detail="R2V reference 오디오 구성이 올바르지 않습니다.")
+        raise HTTPException(status_code=422, detail="R2V 참조 오디오 구성이 올바르지 않습니다.")
     if not request.reference_images and not request.reference_videos and not request.reference_audios:
-        raise HTTPException(status_code=422, detail="R2V에는 reference 이미지·동영상 또는 오디오가 필요합니다.")
+        raise HTTPException(status_code=422, detail="R2V에는 참조 이미지·동영상 또는 오디오가 필요합니다.")
     return [*request.reference_images, *request.reference_videos, *request.reference_audios]
 
 

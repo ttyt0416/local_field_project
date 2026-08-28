@@ -95,7 +95,7 @@
 			onclick={close}
 		>
 			<Library size={18} strokeWidth={1.8} />
-			<span>콘텐츠 라이브러리</span>
+			<span>업로드 콘텐츠</span>
 		</a>
 		<a
 			href="/presets"
