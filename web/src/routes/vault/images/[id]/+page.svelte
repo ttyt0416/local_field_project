@@ -145,8 +145,19 @@
 </svelte:head>
 
 {#if !ready}
-	<div class="flex min-h-screen items-center justify-center bg-background">
-		<LoadingSpinner size="lg" label="콘텐츠 상세 정보를 불러오는 중" />
+	<div class="min-h-screen bg-muted/30 px-4 py-8 text-foreground dark:bg-background sm:px-6 lg:px-8">
+		<main class="mx-auto max-w-6xl space-y-6">
+			<a href="/vault" class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground">
+				<ArrowLeft size={16} strokeWidth={1.8} />
+				보관함으로 돌아가기
+			</a>
+			<section>
+				<Typography as="h1" variant="display">콘텐츠 상세</Typography>
+				<div class="flex min-h-[24rem] items-center justify-center">
+					<LoadingSpinner size="lg" label="콘텐츠 상세 정보를 불러오는 중" />
+				</div>
+			</section>
+		</main>
 	</div>
 {:else if generation}
 	<div class="min-h-screen bg-muted/30 px-4 py-8 text-foreground dark:bg-background sm:px-6 lg:px-8">

@@ -201,32 +201,32 @@
 	<meta name="description" content="생성된 이미지를 검색하고 관리하는 보관함" />
 </svelte:head>
 
-{#if !ready}
-	<div class="flex min-h-screen items-center justify-center bg-background">
-		<LoadingSpinner size="lg" label="보관함을 불러오는 중" />
-	</div>
-{:else}
-	<Layout>
-		<div class="space-y-8">
-			<Typography as="h1" variant="display">{favoritesOnly ? '즐겨찾기' : '보관함'}</Typography>
+<Layout>
+	<div class="space-y-8">
+		<Typography as="h1" variant="display">{favoritesOnly ? '즐겨찾기' : '보관함'}</Typography>
 
-			<div class="flex flex-col gap-3 sm:flex-row">
-				<SearchBar bind:value={searchQuery} class="min-w-0 flex-1" oninput={handleSearchInput} />
-				<div class="sm:w-48">
-					<label for="vault-sort" class="sr-only">정렬</label>
-					<select
-						id="vault-sort"
-						bind:value={sort}
-						onchange={() => void loadVault()}
-						class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-					>
-						<option value="latest">최신순</option>
-						<option value="oldest">오래된순</option>
-						<option value="most_viewed">많이 본 순</option>
-					</select>
-				</div>
+		<div class="flex flex-col gap-3 sm:flex-row">
+			<SearchBar bind:value={searchQuery} class="min-w-0 flex-1" oninput={handleSearchInput} />
+			<div class="sm:w-48">
+				<label for="vault-sort" class="sr-only">정렬</label>
+				<select
+					id="vault-sort"
+					bind:value={sort}
+					onchange={() => void loadVault()}
+					class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+				>
+					<option value="latest">최신순</option>
+					<option value="oldest">오래된순</option>
+					<option value="most_viewed">많이 본 순</option>
+				</select>
 			</div>
+		</div>
 
+		{#if !ready}
+			<section class="flex min-h-[24rem] items-center justify-center">
+				<LoadingSpinner size="lg" label="보관함을 불러오는 중" />
+			</section>
+		{:else}
 			<div class="flex items-center justify-between border-b border-border pb-4">
 				<p class="text-sm font-medium text-muted-foreground">{favoritesOnly ? '즐겨찾기 콘텐츠' : '생성된 콘텐츠'}</p>
 				<p class="text-2xl font-semibold tracking-tight">{contentCount}</p>
@@ -327,7 +327,8 @@
 					</div>
 				</section>
 			{/if}
-		</div>
+		{/if}
+	</div>
 	</Layout>
 
 	<Modal
@@ -377,4 +378,3 @@
 			<Toast state="negative" title="보관함 작업 실패" message={error} onclose={() => (error = '')} />
 		</div>
 	{/if}
-{/if}

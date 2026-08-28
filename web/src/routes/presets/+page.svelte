@@ -360,15 +360,8 @@
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<section class="flex flex-col gap-5 rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8 md:flex-row md:items-end md:justify-between">
-				<div>
-					<div class="mb-4 flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
-						<Bookmark size={24} strokeWidth={1.8} />
-					</div>
-					<Typography as="p" variant="eyebrow">Generation presets</Typography>
-					<Typography as="h1" variant="display" class="mt-3">프리셋 관리</Typography>
-					<Typography as="p" variant="muted" class="mt-3 max-w-2xl text-base">이미지 생성 설정을 저장하고 수정하거나 삭제할 수 있습니다.</Typography>
-				</div>
+			<section class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+				<Typography as="h1" variant="display">프리셋 관리</Typography>
 				<PrimaryButton onclick={openNew} disabled={optionsLoading}>
 					<Plus size={17} strokeWidth={1.9} />
 					<span>새 프리셋</span>
@@ -395,7 +388,7 @@
 										<span class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">기본 프리셋</span>
 									{/if}
 								</div>
-								<p class="mt-2 truncate text-xs text-muted-foreground">t2i · {savedPresetLabels(preset)}</p>
+								<p class="mt-2 truncate text-xs text-muted-foreground">IMAGE GEN · {savedPresetLabels(preset)}</p>
 								<p class="mt-1 text-xs text-muted-foreground">수정 {new Date(preset.updated_at).toLocaleString('ko-KR')}</p>
 							</div>
 							<div class="flex shrink-0 flex-wrap items-center justify-end gap-2">

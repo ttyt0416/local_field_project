@@ -555,15 +555,13 @@
 					<div class="flex items-center justify-between gap-4">
 						<div>
 							<div id="result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
-							<Typography as="p" variant="muted" class="mt-1">
-								{#if generationStatus}
+							{#if generationStatus}
+								<Typography as="p" variant="muted" class="mt-1">
 									상태: {statusLabel(generationStatus)}
 									{#if generationStatus === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}
 									{#if generationStatus === 'processing' || generationStatus === 'completed'} · {Math.round(progress)}%{/if}
-								{:else}
-									생성 결과가 여기에 표시됩니다.
-								{/if}
-							</Typography>
+								</Typography>
+							{/if}
 						</div>
 						<ImagePlus size={22} class="text-primary" strokeWidth={1.8} />
 					</div>
