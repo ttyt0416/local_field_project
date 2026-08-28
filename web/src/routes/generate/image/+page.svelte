@@ -545,7 +545,7 @@
 								<Typography as="p" variant="muted" class="mt-1">
 									상태: {statusLabel(generationStatus)}
 									{#if generationStatus === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}
-									{#if generationStatus === 'processing' || generationStatus === 'completed'} · {Math.round(progress)}%{/if}
+									{#if generationStatus === 'processing'} · {Math.round(progress)}%{/if}
 								</Typography>
 							{/if}
 						</div>
