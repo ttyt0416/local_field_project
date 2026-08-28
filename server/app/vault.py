@@ -1,12 +1,19 @@
 from datetime import datetime
+from typing import Literal
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
-from .database import delete_image_generation, get_image_generation_by_id, list_image_generations
+from .database import (
+    delete_image_generation,
+    get_image_generation_by_id,
+    increment_image_generation_view_count,
+    list_image_generations,
+    update_image_favorite,
+)
 from .storage import StorageError, delete_file as storage_delete_file, enabled as storage_enabled, read_url as storage_read_url
 
 
@@ -20,6 +27,8 @@ class VaultImageSummary(BaseModel):
     prompt: str
     checkpoint: str
     image_url: str | None
+    view_count: int
+    is_favorite: bool
     created_at: datetime
     completed_at: datetime | None
 
@@ -44,9 +53,30 @@ class VaultImageDetail(VaultImageSummary):
     image_type: str
 
 
+class FavoriteRequest(BaseModel):
+    is_favorite: bool
+
+
+class FavoriteResponse(BaseModel):
+    is_favorite: bool
+
+
 @router.get("/images", response_model=list[VaultImageSummary])
-def vault_images(user: UserResponse = Depends(current_user)) -> list[VaultImageSummary]:
-    return [_summary(row, user.id) for row in list_image_generations(user.id)]
+def vault_images(
+    search: str = Query(default="", max_length=500),
+    sort: Literal["latest", "oldest", "most_viewed"] = "latest",
+    favorites_only: bool = False,
+    user: UserResponse = Depends(current_user),
+) -> list[VaultImageSummary]:
+    return [
+        _summary(row, user.id)
+        for row in list_image_generations(
+            user.id,
+            search=search,
+            sort=sort,
+            favorites_only=favorites_only,
+        )
+    ]
 
 
 @router.get("/images/{generation_id}", response_model=VaultImageDetail)
@@ -54,10 +84,22 @@ def vault_image_detail(
     generation_id: UUID,
     user: UserResponse = Depends(current_user),
 ) -> VaultImageDetail:
-    generation = get_image_generation_by_id(generation_id, user.id)
+    generation = increment_image_generation_view_count(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
     return _detail(generation, user.id)
+
+
+@router.patch("/images/{generation_id}/favorite", response_model=FavoriteResponse)
+def update_vault_image_favorite(
+    generation_id: UUID,
+    payload: FavoriteRequest,
+    user: UserResponse = Depends(current_user),
+) -> FavoriteResponse:
+    is_favorite = update_image_favorite(generation_id, user.id, payload.is_favorite)
+    if is_favorite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
+    return FavoriteResponse(is_favorite=is_favorite)
 
 
 @router.delete("/images/{generation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -91,6 +133,8 @@ def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:
         prompt=generation["prompt"],
         checkpoint=generation["checkpoint"],
         image_url=_image_url(generation, user_id),
+        view_count=generation["view_count"],
+        is_favorite=generation["is_favorite"],
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
     )

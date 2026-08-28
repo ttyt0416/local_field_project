@@ -2,10 +2,11 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, FileImage, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { ArrowLeft, FileImage, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
+	import IconOutlinedButton from '../../../../../components/buttons/icon-outlined-button.svelte';
 	import PrimaryButton from '../../../../../components/buttons/primary-button.svelte';
 	import Toast from '../../../../../components/feedback/toast.svelte';
 	import Modal from '../../../../../components/modals/modal.svelte';
@@ -34,6 +35,8 @@
 		image_url: string | null;
 		created_at: string;
 		completed_at: string | null;
+		view_count: number;
+		is_favorite: boolean;
 	};
 
 	let ready = $state(false);
@@ -41,6 +44,7 @@
 	let error = $state('');
 	let deleteModalOpen = $state(false);
 	let deleting = $state(false);
+	let favoriteUpdating = $state(false);
 
 	onMount(() => {
 		void loadDetail();
@@ -73,6 +77,22 @@
 
 	function cancelDelete() {
 		deleteModalOpen = false;
+	}
+
+	async function toggleFavorite() {
+		if (!generation || favoriteUpdating) return;
+		favoriteUpdating = true;
+		try {
+			const result = await apiJson<{ is_favorite: boolean }>(`vault/images/${generation.id}/favorite`, {
+				method: 'PATCH',
+				json: { is_favorite: !generation.is_favorite }
+			});
+			generation = { ...generation, is_favorite: result.is_favorite };
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '즐겨찾기를 변경하지 못했습니다.';
+		} finally {
+			favoriteUpdating = false;
+		}
 	}
 
 	async function generateFromParameters() {
@@ -145,8 +165,20 @@
 					<div>
 						<Typography as="p" variant="eyebrow">{generation.media_type} · {statusLabel(generation.status)}</Typography>
 						<Typography as="h1" variant="display" class="mt-3">이미지 상세</Typography>
+						<p class="mt-3 text-sm text-muted-foreground">조회 {generation.view_count}</p>
 					</div>
-					<FileImage size={28} class="text-primary" strokeWidth={1.7} />
+					<div class="flex items-start gap-3">
+						<IconOutlinedButton
+							ariaLabel={generation.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+							pressed={generation.is_favorite}
+							loading={favoriteUpdating}
+							class={generation.is_favorite ? 'border-primary bg-primary/10 text-primary' : ''}
+							onclick={() => void toggleFavorite()}
+						>
+							<Heart size={18} strokeWidth={1.9} fill={generation.is_favorite ? 'currentColor' : 'none'} />
+						</IconOutlinedButton>
+						<FileImage size={28} class="text-primary" strokeWidth={1.7} />
+					</div>
 				</div>
 			</section>
 

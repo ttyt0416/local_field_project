@@ -110,11 +110,35 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'image_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'view_count'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'is_favorite'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN is_favorite BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE EXTENSION IF NOT EXISTS vector",
+    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
     f"""
     CREATE TABLE IF NOT EXISTS danbooru_tags (
         id BIGSERIAL PRIMARY KEY,
@@ -192,12 +216,18 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         filename VARCHAR(255),
         subfolder VARCHAR(255) NOT NULL DEFAULT '',
         image_type VARCHAR(32) NOT NULL DEFAULT 'output',
+        view_count INTEGER NOT NULL DEFAULT 0,
+        is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMPTZ
     )
     """,
     """
     CREATE INDEX IF NOT EXISTS image_generations_user_id_idx ON image_generations(user_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS image_generations_prompt_trgm_idx
+    ON image_generations USING gin (prompt gin_trgm_ops)
     """,
     """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
@@ -288,7 +318,7 @@ def initialize_database() -> None:
 _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
     "loras, cfg, steps, width, height, seed, file_path, storage_file_id, filename, "
-    "subfolder, image_type, created_at, completed_at"
+    "subfolder, image_type, view_count, is_favorite, created_at, completed_at"
 )
 
 
@@ -353,11 +383,61 @@ def get_image_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> 
     return _image_generation_row(row)
 
 
-def list_image_generations(user_id: uuid.UUID) -> list[dict[str, Any]]:
+def increment_image_generation_view_count(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE image_generations
+            SET view_count = view_count + 1
+            WHERE id = %s AND user_id = %s
+            RETURNING {_IMAGE_GENERATION_FIELDS}
+            """,
+            (generation_id, user_id),
+        ).fetchone()
+    return _image_generation_row(row)
+
+
+def update_image_favorite(
+    generation_id: uuid.UUID, user_id: uuid.UUID, is_favorite: bool
+) -> bool | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE image_generations
+            SET is_favorite = %s
+            WHERE id = %s AND user_id = %s
+            RETURNING is_favorite
+            """,
+            (is_favorite, generation_id, user_id),
+        ).fetchone()
+    return bool(row[0]) if row is not None else None
+
+
+def list_image_generations(
+    user_id: uuid.UUID,
+    *,
+    search: str = "",
+    sort: str = "latest",
+    favorites_only: bool = False,
+) -> list[dict[str, Any]]:
+    order_by = {
+        "latest": "created_at DESC",
+        "oldest": "created_at ASC",
+        "most_viewed": "view_count DESC, created_at DESC",
+    }.get(sort, "created_at DESC")
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    normalized_search = search.strip()
+    if normalized_search:
+        filters.append("prompt ILIKE %s")
+        parameters.append(f"%{normalized_search}%")
+    if favorites_only:
+        filters.append("is_favorite = TRUE")
+    where_clause = " AND ".join(filters)
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE user_id = %s ORDER BY created_at DESC",
-            (user_id,),
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {where_clause} ORDER BY {order_by}",
+            parameters,
         ).fetchall()
     return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
 

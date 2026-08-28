@@ -50,8 +50,11 @@ class StorageClientTest(unittest.TestCase):
             patch("app.storage.urlopen", return_value=_Response({"url": "https://cdn.example/file"})) as open_url,
         ):
             url = storage.read_url(file_id="file/id", owner_id="user-id", expires_in=60)
+            cached_url = storage.read_url(file_id="file/id", owner_id="user-id", expires_in=60)
 
         self.assertEqual(url, "https://cdn.example/file")
+        self.assertEqual(cached_url, url)
+        self.assertEqual(open_url.call_count, 1)
         request = open_url.call_args.args[0]
         self.assertEqual(request.full_url, "https://storage.example/files/file%2Fid/url?expires_in=60")
         self.assertEqual(request.get_header("Authorization"), "Bearer service-token")

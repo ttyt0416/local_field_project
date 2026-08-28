@@ -2,6 +2,7 @@
 	import {
 		Archive,
 		Bookmark,
+		Heart,
 		ImagePlus,
 		Sparkles,
 		X
@@ -61,6 +62,14 @@
 		>
 			<Archive size={18} strokeWidth={1.8} />
 			<span>보관함</span>
+		</a>
+		<a
+			href="/vault?favorites=true"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Heart size={18} strokeWidth={1.8} />
+			<span>즐겨찾기</span>
 		</a>
 		<a
 			href="/generate/image"
