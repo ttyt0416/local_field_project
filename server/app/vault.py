@@ -1,15 +1,18 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Literal
 from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import UserResponse, current_user
 from .database import (
     delete_image_generation,
+    delete_image_generations,
     get_image_generation_by_id,
+    get_image_generations_by_ids,
     increment_image_generation_view_count,
     list_image_generations,
     update_image_favorite,
@@ -61,6 +64,14 @@ class FavoriteResponse(BaseModel):
     is_favorite: bool
 
 
+class BulkDeleteRequest(BaseModel):
+    generation_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted_count: int
+
+
 @router.get("/images", response_model=list[VaultImageSummary])
 def vault_images(
     search: str = Query(default="", max_length=500),
@@ -77,6 +88,45 @@ def vault_images(
             favorites_only=favorites_only,
         )
     ]
+
+
+@router.delete("/images/bulk", response_model=BulkDeleteResponse)
+def delete_vault_images(
+    payload: BulkDeleteRequest,
+    user: UserResponse = Depends(current_user),
+) -> BulkDeleteResponse:
+    generations = get_image_generations_by_ids(payload.generation_ids, user.id)
+    if len(generations) != len(payload.generation_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
+
+    storage_file_ids = list(
+        dict.fromkeys(
+            generation["storage_file_id"]
+            for generation in generations
+            if isinstance(generation.get("storage_file_id"), str) and generation["storage_file_id"]
+        )
+    )
+    if storage_file_ids and not storage_enabled():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+    try:
+        if storage_file_ids:
+            with ThreadPoolExecutor(max_workers=min(len(storage_file_ids) + 1, 8)) as executor:
+                database_future = executor.submit(delete_image_generations, payload.generation_ids, user.id)
+                storage_futures = [
+                    executor.submit(storage_delete_file, file_id=file_id, owner_id=str(user.id))
+                    for file_id in storage_file_ids
+                ]
+                deleted_count = database_future.result()
+                for future in storage_futures:
+                    future.result()
+        else:
+            deleted_count = delete_image_generations(payload.generation_ids, user.id)
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    if deleted_count != len(payload.generation_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
+    return BulkDeleteResponse(deleted_count=deleted_count)
 
 
 @router.get("/images/{generation_id}", response_model=VaultImageDetail)

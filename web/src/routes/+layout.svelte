@@ -21,14 +21,15 @@
 	function handleClick(event: MouseEvent) {
 		const target = event.target;
 		if (!(target instanceof Element)) return;
-		const element = target.closest('button, a, [role="button"]');
+		const element = target.closest('button, a, [role="button"], input[type="checkbox"]');
 		if (!(element instanceof HTMLElement)) return;
 		if (element instanceof HTMLButtonElement && element.disabled) return;
+		const targetType = element.matches('a') ? 'link' : element.matches('input[type="checkbox"]') ? 'checkbox' : 'button';
 
 		void trackWebEvent({
 			event_type: 'click',
 			page_path: currentPath(),
-			target_type: element.matches('a') ? 'link' : 'button',
+			target_type: targetType,
 			target_id: element.id || null,
 			target_label: targetLabel(element),
 			target_href: element.getAttribute('href')

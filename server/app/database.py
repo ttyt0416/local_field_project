@@ -383,6 +383,17 @@ def get_image_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> 
     return _image_generation_row(row)
 
 
+def get_image_generations_by_ids(
+    generation_ids: list[uuid.UUID], user_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE id = ANY(%s) AND user_id = %s",
+            (generation_ids, user_id),
+        ).fetchall()
+    return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
+
+
 def increment_image_generation_view_count(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
@@ -449,6 +460,15 @@ def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> boo
             (generation_id, user_id),
         ).fetchone()
     return row is not None
+
+
+def delete_image_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID) -> int:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "DELETE FROM image_generations WHERE id = ANY(%s) AND user_id = %s RETURNING id",
+            (generation_ids, user_id),
+        ).fetchall()
+    return len(rows)
 
 
 _PRESET_FIELDS = "id, user_id, type, name, values, is_default, created_at, updated_at"
