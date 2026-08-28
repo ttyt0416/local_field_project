@@ -1,13 +1,29 @@
 import unittest
 from unittest.mock import patch
 
-from app.comfyui import ImageGenerationRequest, _effective_positive_prompt, _enhance_prompt
+from pydantic import ValidationError
+
+from app.comfyui import ImageGenerationRequest, _MAX_SEED, _build_prompt, _effective_positive_prompt, _enhance_prompt
 
 
 class PromptEnhancementTest(unittest.TestCase):
     def test_disabled_enhancement_keeps_original_prompt(self) -> None:
         payload = ImageGenerationRequest(prompt="a red apple", checkpoint="Anima/test.safetensors")
         self.assertEqual(_effective_positive_prompt(payload), "a red apple")
+
+    def test_generated_seed_fits_postgres_bigint(self) -> None:
+        payload = ImageGenerationRequest(prompt="a red apple", checkpoint="Anima/test.safetensors")
+        with patch("app.comfyui.secrets.randbelow", return_value=_MAX_SEED):
+            _, seed = _build_prompt(payload)
+        self.assertEqual(seed, _MAX_SEED)
+
+    def test_seed_above_postgres_bigint_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            ImageGenerationRequest(
+                prompt="a red apple",
+                checkpoint="Anima/test.safetensors",
+                seed=_MAX_SEED + 1,
+            )
 
     def test_enabled_enhancement_uses_one_improved_prompt(self) -> None:
         payload = ImageGenerationRequest(

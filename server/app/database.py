@@ -83,6 +83,18 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'presets'
+        ) THEN
+            ALTER TABLE presets DROP CONSTRAINT IF EXISTS presets_user_id_type_name_key;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -130,6 +142,18 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS auth_history_user_id_idx ON auth_history(user_id)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS presets (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(16) NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        values JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS presets_user_type_idx ON presets(user_id, type, updated_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS image_generations (
         id UUID PRIMARY KEY,
@@ -328,6 +352,62 @@ def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> boo
             (generation_id, user_id),
         ).fetchone()
     return row is not None
+
+
+_PRESET_FIELDS = "id, user_id, type, name, values, created_at, updated_at"
+
+
+def create_preset(*, user_id: uuid.UUID, preset_type: str, name: str, values: dict[str, Any]) -> dict[str, Any]:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            INSERT INTO presets (id, user_id, type, name, values)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+            RETURNING {_PRESET_FIELDS}
+            """,
+            (uuid.uuid4(), user_id, preset_type, name, json.dumps(values, ensure_ascii=False)),
+        ).fetchone()
+    return _preset_row(row)
+
+
+def list_presets(*, user_id: uuid.UUID, preset_type: str) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_PRESET_FIELDS} FROM presets WHERE user_id = %s AND type = %s ORDER BY updated_at DESC, name",
+            (user_id, preset_type),
+        ).fetchall()
+    return [_preset_row(row) for row in rows]
+
+
+def update_preset(
+    *, preset_id: uuid.UUID, user_id: uuid.UUID, preset_type: str, name: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE presets
+            SET name = %s, values = %s::jsonb, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND user_id = %s AND type = %s
+            RETURNING {_PRESET_FIELDS}
+            """,
+            (name, json.dumps(values, ensure_ascii=False), preset_id, user_id, preset_type),
+        ).fetchone()
+    return _preset_row(row) if row is not None else None
+
+
+def delete_preset(*, preset_id: uuid.UUID, user_id: uuid.UUID, preset_type: str) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "DELETE FROM presets WHERE id = %s AND user_id = %s AND type = %s RETURNING id",
+            (preset_id, user_id, preset_type),
+        ).fetchone()
+    return row is not None
+
+
+def _preset_row(row: tuple[Any, ...] | None) -> dict[str, Any]:
+    if row is None:
+        raise RuntimeError("프리셋 저장 결과가 없습니다.")
+    return dict(zip(_PRESET_FIELDS.split(", "), row, strict=True))
 
 
 def update_image_generation_status(

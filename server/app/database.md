@@ -2,4 +2,6 @@
 
 `image_generations.storage_file_id`는 실제 이미지 바이트를 저장하지 않고 독립 Storage 서비스의 파일 식별자만 보관한다.
 
+`presets`는 사용자별 설정 모음이다. `type`으로 프리셋 종류를 구분하고 현재는 `t2i`를 사용하며, 선택 저장된 설정만 `values` JSONB에 기록한다. 같은 이름도 여러 개 저장할 수 있고 UUID로 수정·삭제 대상을 구분한다.
+
 기존 데이터베이스에는 시작 시 migration statement가 nullable 컬럼을 추가한다. 기존 `file_path`, `filename`, `subfolder`, `image_type` 값과 기존 이미지 프록시 fallback은 유지한다.

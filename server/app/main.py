@@ -10,6 +10,7 @@ from .auth import optional_user_id, router as auth_router
 from .comfyui import router as comfyui_router
 from .configs.constants import APP_TITLE, APP_VERSION, HEALTH_STATUS, settings
 from .database import initialize_database, record_api_call, record_api_error, record_web_event
+from .presets import router as presets_router
 from .vault import router as vault_router
 
 
@@ -121,4 +122,5 @@ async def health() -> dict[str, str]:
 
 app.include_router(auth_router)
 app.include_router(comfyui_router)
+app.include_router(presets_router)
 app.include_router(vault_router)

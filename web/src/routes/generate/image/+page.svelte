@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ImagePlus, Plus, Sparkles, X } from '@lucide/svelte';
+	import { FolderOpen, ImagePlus, Plus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
+	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
+	import Modal from '../../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import Select from '../../../../components/inputs/select.svelte';
@@ -34,6 +36,39 @@
 		strength: number;
 	};
 
+	type PresetField =
+		| 'prompt'
+		| 'negative_prompt'
+		| 'checkpoint'
+		| 'loras'
+		| 'aspect_ratio'
+		| 'cfg'
+		| 'steps'
+		| 'prompt_enhancement';
+	type PresetValues = {
+		prompt?: string;
+		negative_prompt?: string;
+		prompt_enhancement_enabled?: boolean;
+		improved_prompt?: string;
+		checkpoint?: string;
+		loras?: LoraSelection[];
+		aspect_ratio?: AspectRatio;
+		width?: number;
+		height?: number;
+		cfg?: number;
+		steps?: number;
+	};
+	type Preset = {
+		id: string;
+		type: 't2i';
+		name: string;
+		values: PresetValues;
+		saved_fields: string[];
+		created_at: string;
+		updated_at: string;
+	};
+	type PresetSaveMode = 'new' | 'overwrite';
+
 	type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 	type ImageSize = { width: number; height: number };
 
@@ -55,6 +90,26 @@
 		'16:9': { width: 1152, height: 648 },
 		'9:16': { width: 648, height: 1152 }
 	};
+	const presetFieldOptions: { key: PresetField; label: string }[] = [
+		{ key: 'prompt', label: '긍정 프롬프트' },
+		{ key: 'negative_prompt', label: '부정 프롬프트' },
+		{ key: 'checkpoint', label: '체크포인트' },
+		{ key: 'loras', label: 'LoRA' },
+		{ key: 'aspect_ratio', label: '이미지 비율·크기' },
+		{ key: 'cfg', label: 'CFG' },
+		{ key: 'steps', label: 'Steps' },
+		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
+	];
+	const defaultPresetFieldSelection: Record<PresetField, boolean> = {
+		prompt: true,
+		negative_prompt: true,
+		checkpoint: true,
+		loras: true,
+		aspect_ratio: true,
+		cfg: true,
+		steps: true,
+		prompt_enhancement: true
+	};
 
 	let active = true;
 	let ready = $state(false);
@@ -68,11 +123,21 @@
 	let generationStatus = $state('');
 	let progress = $state(0);
 	let queuePosition = $state<number | null>(null);
-	let streamConnected = $state(false);
 	let promptId = $state('');
 	let imageUrl = $state('');
 	let generationId = $state('');
 	let streamController: AbortController | null = null;
+	let presets = $state<Preset[]>([]);
+	let presetsLoading = $state(false);
+	let savingPreset = $state(false);
+	let presetError = $state('');
+	let presetSuccess = $state('');
+	let presetName = $state('');
+	let savePresetModalOpen = $state(false);
+	let loadPresetModalOpen = $state(false);
+	let selectedPresetFields = $state<Record<PresetField, boolean>>({ ...defaultPresetFieldSelection });
+	let presetSaveMode = $state<PresetSaveMode>('new');
+	let overwritePresetId = $state('');
 	let options = $state<ImageOptions>({
 		checkpoints: [],
 		loras: [],
@@ -108,11 +173,151 @@
 
 	function addLora() {
 		if (loras.some((lora) => !lora.name) || loras.length >= loraOptions.length) return;
-		loras = [...loras, { name: '', strength: 0.7 }];
+		loras = [...loras, { name: '', strength: 1.0 }];
 	}
 
 	function removeLora(index: number) {
 		loras = loras.filter((_, currentIndex) => currentIndex !== index);
+	}
+
+	function selectedPresetFieldCount() {
+		return presetFieldOptions.filter(({ key }) => selectedPresetFields[key]).length;
+	}
+
+	function setPresetField(key: PresetField, checked: boolean) {
+		selectedPresetFields[key] = checked;
+	}
+
+	async function openSavePreset() {
+		presetName = '';
+		presetError = '';
+		selectedPresetFields = { ...defaultPresetFieldSelection };
+		presetSaveMode = 'new';
+		overwritePresetId = '';
+		savePresetModalOpen = true;
+		presetsLoading = true;
+		try {
+			presets = await apiJson<Preset[]>('presets?type=t2i');
+		} catch (error) {
+			presetError = getErrorMessage(error);
+			presets = [];
+		} finally {
+			presetsLoading = false;
+		}
+	}
+
+	async function openLoadPreset() {
+		loadPresetModalOpen = true;
+		presetsLoading = true;
+		presetError = '';
+		try {
+			presets = await apiJson<Preset[]>('presets?type=t2i');
+		} catch (error) {
+			presetError = getErrorMessage(error);
+			presets = [];
+		} finally {
+			presetsLoading = false;
+		}
+	}
+
+	function buildPresetValues(): PresetValues {
+		const values: PresetValues = {};
+		if (selectedPresetFields.prompt) values.prompt = prompt.trim();
+		if (selectedPresetFields.negative_prompt) values.negative_prompt = negativePrompt.trim();
+		if (selectedPresetFields.checkpoint) values.checkpoint = checkpoint;
+		if (selectedPresetFields.loras) {
+			values.loras = loras.filter(({ name }) => name.trim()).map(({ name, strength }) => ({ name, strength }));
+		}
+		if (selectedPresetFields.aspect_ratio) {
+			values.aspect_ratio = aspectRatio;
+			values.width = width;
+			values.height = height;
+		}
+		if (selectedPresetFields.cfg) values.cfg = cfg;
+		if (selectedPresetFields.steps) values.steps = steps;
+		if (selectedPresetFields.prompt_enhancement) {
+			values.prompt_enhancement_enabled = promptEnhancementEnabled;
+			if (improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
+		}
+		return values;
+	}
+
+	async function savePreset() {
+		presetError = '';
+		if (!presetName.trim()) {
+			presetError = '프리셋 이름을 입력해 주세요.';
+			return;
+		}
+		if (selectedPresetFieldCount() === 0) {
+			presetError = '저장할 설정을 하나 이상 선택해 주세요.';
+			return;
+		}
+		if (selectedPresetFields.prompt && !prompt.trim()) {
+			presetError = '긍정 프롬프트를 입력해 주세요.';
+			return;
+		}
+		if (selectedPresetFields.checkpoint && !checkpoint) {
+			presetError = '체크포인트를 선택해 주세요.';
+			return;
+		}
+		if (presetSaveMode === 'overwrite' && !overwritePresetId) {
+			presetError = '덮어쓸 프리셋을 선택해 주세요.';
+			return;
+		}
+		savingPreset = true;
+		try {
+			await apiJson<Preset>(presetSaveMode === 'overwrite' ? `presets/${overwritePresetId}` : 'presets', {
+				method: presetSaveMode === 'overwrite' ? 'PUT' : 'POST',
+				json:
+					presetSaveMode === 'overwrite'
+						? { name: presetName.trim(), values: buildPresetValues() }
+						: { type: 't2i', name: presetName.trim(), values: buildPresetValues() }
+			});
+			savePresetModalOpen = false;
+			presetSuccess =
+				presetSaveMode === 'overwrite'
+					? `'${presetName.trim()}' 프리셋을 덮어썼습니다.`
+					: `'${presetName.trim()}' 프리셋을 새로 저장했습니다.`;
+		} catch (error) {
+			presetError = getErrorMessage(error);
+		} finally {
+			savingPreset = false;
+		}
+	}
+
+	function loadPreset(preset: Preset) {
+		const values = preset.values;
+		if (values.prompt !== undefined) prompt = values.prompt;
+		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
+		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
+		if (values.improved_prompt !== undefined) {
+			improvedPrompt = values.improved_prompt;
+			improvedSourcePrompt = prompt.trim();
+		}
+		if (values.checkpoint !== undefined) checkpoint = values.checkpoint;
+		if (values.loras !== undefined) loras = values.loras.map(({ name, strength }) => ({ name, strength }));
+		if (values.aspect_ratio !== undefined) aspectRatio = values.aspect_ratio;
+		if (values.width !== undefined) width = values.width;
+		if (values.height !== undefined) height = values.height;
+		if (values.cfg !== undefined) cfg = values.cfg;
+		if (values.steps !== undefined) steps = values.steps;
+		loadPresetModalOpen = false;
+		presetSuccess = `'${preset.name}' 프리셋을 불러왔습니다. 저장된 항목만 적용했습니다.`;
+	}
+
+	function savedPresetLabels(preset: Preset) {
+		const fields = new Set(preset.saved_fields);
+		if (fields.has('aspect_ratio')) {
+			fields.delete('width');
+			fields.delete('height');
+		}
+		if (fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt')) {
+			fields.delete('prompt_enhancement_enabled');
+			fields.delete('improved_prompt');
+			fields.add('prompt_enhancement');
+		}
+		const labels: Record<string, string> = Object.fromEntries(presetFieldOptions.map(({ key, label }) => [key, label]));
+		return [...fields].map((field) => labels[field] ?? field).join(', ');
 	}
 
 	onMount(() => {
@@ -148,7 +353,6 @@
 		generationId = '';
 		progress = 0;
 		queuePosition = null;
-		streamConnected = false;
 		if (!prompt.trim()) {
 			generationError = '생성할 프롬프트를 입력해 주세요.';
 			return;
@@ -256,18 +460,16 @@
 								throw new Error(payload.message ?? '이미지 생성에 실패했습니다.');
 							}
 						},
-						{ signal: controller.signal, onConnected: () => (streamConnected = true) }
+						{ signal: controller.signal }
 					);
 				} catch (error) {
 					if (terminalStatus === 'failed' || !active) throw error;
 					lastError = error;
 				}
 				if (terminalStatus || !active) break;
-				streamConnected = false;
 				if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
 			}
 		} finally {
-			streamConnected = false;
 			if (streamController === controller) streamController = null;
 		}
 		if (terminalStatus === 'failed') throw lastError;
@@ -283,8 +485,7 @@
 			queued: '대기 중',
 			processing: '생성 중',
 			completed: '완료',
-			failed: '실패',
-			connecting: '연결 중'
+			failed: '실패'
 		}[status] ?? status;
 	}
 
@@ -317,7 +518,6 @@
 									상태: {statusLabel(generationStatus)}
 									{#if generationStatus === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}
 									{#if generationStatus === 'processing' || generationStatus === 'completed'} · {Math.round(progress)}%{/if}
-									{#if generating} · {streamConnected ? 'SSE 연결됨' : 'SSE 연결 중'}{/if}
 								{:else}
 									생성 결과가 여기에 표시됩니다.
 								{/if}
@@ -356,10 +556,18 @@
 						<div>
 							<div id="settings-title"><Typography as="h2" variant="h2">파라미터 설정</Typography></div>
 						</div>
-						{#if optionsLoading}<LoadingSpinner size="sm" label="모델 목록 불러오는 중" />{/if}
+						<div class="flex items-center gap-2">
+							<IconOutlinedButton ariaLabel="프리셋 저장" loading={presetsLoading} disabled={optionsLoading || generating} onclick={() => void openSavePreset()}>
+								<Save size={17} strokeWidth={1.8} />
+							</IconOutlinedButton>
+							<IconOutlinedButton ariaLabel="프리셋 불러오기" loading={presetsLoading} disabled={optionsLoading || generating} onclick={() => void openLoadPreset()}>
+								<FolderOpen size={17} strokeWidth={1.8} />
+							</IconOutlinedButton>
+							{#if optionsLoading}<LoadingSpinner size="sm" label="모델 목록 불러오는 중" />{/if}
+						</div>
 					</div>
 
-					<form class="mt-6 space-y-5" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
 							<div class="flex items-center justify-between gap-3">
 								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
@@ -459,7 +667,7 @@
 							</label>
 						</div>
 
-						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="w-full">
+						<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="fixed bottom-4 left-4 right-4 z-30 w-auto sm:static sm:z-auto sm:w-full">
 							<Sparkles size={17} strokeWidth={1.9} />
 							<span>{generating ? '생성 중' : '이미지 생성'}</span>
 						</PrimaryButton>
@@ -468,6 +676,77 @@
 			</div>
 		</div>
 	</Layout>
+
+	<Modal bind:open={savePresetModalOpen} title="프리셋 저장" description="이름과 저장할 설정 항목을 선택해 주세요." closeOnBackdrop={!savingPreset}>
+		<div class="space-y-5">
+			<label class="block space-y-2" for="preset-name">
+				<span class="text-sm font-medium">프리셋 이름</span>
+				<input id="preset-name" bind:value={presetName} maxlength="100" placeholder="예: 부드러운 인물" class={numberInputClass} />
+			</label>
+			<div class="grid gap-2 sm:grid-cols-2">
+				<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">
+					<input type="radio" name="preset-save-mode" value="new" checked={presetSaveMode === 'new'} onchange={() => (presetSaveMode = 'new')} class="size-4 accent-primary" />
+					<span>새로 저장</span>
+				</label>
+				<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">
+					<input type="radio" name="preset-save-mode" value="overwrite" checked={presetSaveMode === 'overwrite'} onchange={() => (presetSaveMode = 'overwrite')} class="size-4 accent-primary" />
+					<span>기존 프리셋 덮어쓰기</span>
+				</label>
+			</div>
+			{#if presetSaveMode === 'overwrite'}
+				<label class="block space-y-2" for="overwrite-preset">
+					<span class="text-sm font-medium">덮어쓸 프리셋</span>
+					<select id="overwrite-preset" bind:value={overwritePresetId} class={numberInputClass}>
+						<option value="">프리셋을 선택해 주세요</option>
+						{#each presets as preset (preset.id)}
+							<option value={preset.id}>{preset.name} · {new Date(preset.updated_at).toLocaleString('ko-KR')}</option>
+						{/each}
+					</select>
+				</label>
+			{/if}
+			<div class="space-y-3">
+				<div class="flex items-center justify-between gap-3">
+					<span class="text-sm font-medium">저장할 설정</span>
+					<span class="text-xs text-muted-foreground">{selectedPresetFieldCount()}개 선택</span>
+				</div>
+				<div class="grid gap-2 sm:grid-cols-2">
+					{#each presetFieldOptions as field}
+						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">
+							<input type="checkbox" checked={selectedPresetFields[field.key]} onchange={(event) => setPresetField(field.key, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" />
+							<span>{field.label}</span>
+						</label>
+					{/each}
+				</div>
+			</div>
+			{#if presetError}<p class="text-sm text-destructive" role="alert">{presetError}</p>{/if}
+		</div>
+		{#snippet footer()}
+			<OutlinedButton disabled={savingPreset} onclick={() => (savePresetModalOpen = false)}>취소</OutlinedButton>
+			<PrimaryButton loading={savingPreset} disabled={!presetName.trim() || selectedPresetFieldCount() === 0 || (presetSaveMode === 'overwrite' && !overwritePresetId)} onclick={() => void savePreset()}>저장</PrimaryButton>
+		{/snippet}
+	</Modal>
+
+	<Modal bind:open={loadPresetModalOpen} title="프리셋 불러오기" description="선택한 프리셋의 저장 항목만 현재 설정에 적용합니다." closeOnBackdrop={!presetsLoading}>
+		{#if presetsLoading}
+			<div class="flex justify-center py-8"><LoadingSpinner size="md" label="프리셋 불러오는 중" /></div>
+		{:else if presetError}
+			<p class="py-4 text-sm text-destructive" role="alert">{presetError}</p>
+		{:else if presets.length === 0}
+			<p class="py-4 text-sm text-muted-foreground">저장된 t2i 프리셋이 없습니다.</p>
+		{:else}
+			<div class="space-y-2">
+				{#each presets as preset (preset.id)}
+					<div class="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
+						<div class="min-w-0">
+							<p class="truncate text-sm font-semibold">{preset.name}</p>
+							<p class="mt-1 truncate text-xs text-muted-foreground">{savedPresetLabels(preset)}</p>
+						</div>
+						<OutlinedButton class="shrink-0 px-3 text-xs" onclick={() => loadPreset(preset)}>불러오기</OutlinedButton>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</Modal>
 
 	{#if optionsError}
 		<div class="fixed right-4 top-4 z-50">
@@ -484,6 +763,10 @@
 	{:else if successMessage}
 		<div class="fixed right-4 top-4 z-50">
 			<Toast state="positive" title="생성 완료" message={successMessage} onclose={() => (successMessage = '')} />
+		</div>
+	{:else if presetSuccess}
+		<div class="fixed right-4 top-4 z-50">
+			<Toast state="positive" title="프리셋" message={presetSuccess} onclose={() => (presetSuccess = '')} />
 		</div>
 	{/if}
 {/if}

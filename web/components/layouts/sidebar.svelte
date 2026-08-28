@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		Archive,
+		Bookmark,
 		ImagePlus,
 		Sparkles,
 		X
@@ -68,6 +69,14 @@
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
 			<span>이미지 생성</span>
+		</a>
+		<a
+			href="/presets"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Bookmark size={18} strokeWidth={1.8} />
+			<span>프리셋 관리</span>
 		</a>
 	</nav>
 

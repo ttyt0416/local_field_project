@@ -38,11 +38,12 @@ router = APIRouter(prefix="/generation/image", tags=["image generation"])
 _DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"
 _COMFYUI_TIMEOUT_SECONDS = 30
 _SSE_HEARTBEAT_SECONDS = 15
+_MAX_SEED = 2**63 - 1
 
 
 class LoraSelection(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    strength: float = Field(default=0.7, ge=-2, le=2)
+    strength: float = Field(default=1.0, ge=-2, le=2)
 
 
 class ImageGenerationRequest(BaseModel):
@@ -56,7 +57,7 @@ class ImageGenerationRequest(BaseModel):
     steps: int = Field(default=30, ge=1, le=100)
     width: int = Field(default=1024, ge=64, le=2048)
     height: int = Field(default=1024, ge=64, le=2048)
-    seed: int | None = Field(default=None, ge=0, le=18_446_744_073_709_551_615)
+    seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
 
 
 class ImageGenerationOptions(BaseModel):
@@ -496,7 +497,7 @@ def _effective_positive_prompt(payload: ImageGenerationRequest) -> str:
 
 
 def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, Any]], int]:
-    seed = payload.seed if payload.seed is not None else secrets.randbelow(18_446_744_073_709_551_616)
+    seed = payload.seed if payload.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     positive_prompt = _effective_positive_prompt(payload)
     model: list[Any] = ["1", 0]
     prompt: dict[str, dict[str, Any]] = {
