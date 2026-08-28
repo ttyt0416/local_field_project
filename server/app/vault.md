@@ -6,4 +6,4 @@
 
 `DELETE /vault/images/bulk`는 최대 100개의 사용자 소유 이미지와 Storage 파일을 삭제한다. Storage 파일 삭제 작업과 Local Field DB 레코드 삭제 작업은 표준 라이브러리 스레드 풀에서 병렬로 시작하며, 각 Storage 파일 삭제에는 기존 소유자 검증을 적용한다.
 
-단일 삭제 API는 Storage 파일 삭제가 성공한 뒤 Local Field의 레코드를 삭제한다. Storage 삭제가 실패하면 레코드를 유지해 재시도할 수 있다. 영상 단일 삭제도 같은 Storage 소유권 검증을 사용한다.
+단일 삭제 API는 Storage 파일 삭제가 성공한 뒤 Local Field의 레코드를 삭제한다. 단, 결과가 다른 generation의 input으로 재사용되어 `media_assets`에 기록된 경우에는 Storage 파일을 보존하고 generation row만 삭제한다. Storage 삭제가 실패하면 레코드를 유지해 재시도할 수 있다. 영상 단일 삭제도 같은 Storage 소유권 검증을 사용한다.

@@ -15,6 +15,7 @@ from .database import (
     get_image_generation_by_id,
     get_image_generations_by_ids,
     get_video_generation_by_id,
+    has_media_asset,
     increment_image_generation_view_count,
     increment_video_generation_view_count,
     list_image_generations,
@@ -150,7 +151,7 @@ def delete_vault_video(
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
     storage_file_id = generation.get("storage_file_id")
-    if storage_file_id:
+    if storage_file_id and not has_media_asset(storage_file_id, user.id):
         if not storage_enabled():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
         try:
@@ -175,7 +176,9 @@ def delete_vault_images(
         dict.fromkeys(
             generation["storage_file_id"]
             for generation in generations
-            if isinstance(generation.get("storage_file_id"), str) and generation["storage_file_id"]
+            if isinstance(generation.get("storage_file_id"), str)
+            and generation["storage_file_id"]
+            and not has_media_asset(generation["storage_file_id"], user.id)
         )
     )
     if storage_file_ids and not storage_enabled():
@@ -234,7 +237,7 @@ def delete_vault_image(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
 
     storage_file_id = generation.get("storage_file_id")
-    if storage_file_id:
+    if storage_file_id and not has_media_asset(storage_file_id, user.id):
         if not storage_enabled():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
         try:

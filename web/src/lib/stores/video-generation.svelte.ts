@@ -12,6 +12,7 @@ type PendingVideoSelection = {
 	firstFrame?: VideoLibraryAsset;
 	lastFrame?: VideoLibraryAsset;
 	referenceImages: VideoLibraryAsset[];
+	referenceVideos: VideoLibraryAsset[];
 	referenceAudios: VideoLibraryAsset[];
 };
 
@@ -19,7 +20,7 @@ let pending: PendingVideoSelection | null = null;
 
 function ensure(mode: VideoMode) {
 	if (!pending || pending.mode !== mode) {
-		pending = { mode, referenceImages: [], referenceAudios: [] };
+		pending = { mode, referenceImages: [], referenceVideos: [], referenceAudios: [] };
 	}
 	return pending;
 }
@@ -33,11 +34,21 @@ export const videoGenerationStore = {
 	},
 	addReferenceImage(asset: VideoLibraryAsset) {
 		const state = ensure('r2v');
-		if (!state.referenceImages.some((item) => item.file_id === asset.file_id)) state.referenceImages.push(asset);
+		if (state.referenceImages.some((item) => item.file_id === asset.file_id)) return false;
+		state.referenceImages.push(asset);
+		return true;
+	},
+	addReferenceVideo(asset: VideoLibraryAsset) {
+		const state = ensure('r2v');
+		if (state.referenceVideos.some((item) => item.file_id === asset.file_id)) return false;
+		state.referenceVideos.push(asset);
+		return true;
 	},
 	addReferenceAudio(asset: VideoLibraryAsset) {
 		const state = ensure('r2v');
-		if (!state.referenceAudios.some((item) => item.file_id === asset.file_id)) state.referenceAudios.push(asset);
+		if (state.referenceAudios.some((item) => item.file_id === asset.file_id)) return false;
+		state.referenceAudios.push(asset);
+		return true;
 	},
 	consume(): PendingVideoSelection | null {
 	  if (!pending) return null;

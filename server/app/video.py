@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .auth import UserResponse, current_user
 from .comfyui import _ComfyUIError, _comfy_url, _request_bytes, _request_json
-from .configs.constants import settings
 from .database import (
     create_media_asset,
     create_video_generation,
@@ -45,7 +44,7 @@ _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 class VideoAsset(BaseModel):
-    kind: Literal["image", "audio"]
+    kind: Literal["image", "audio", "video"]
     file_id: str | None = Field(default=None, max_length=64)
     file_index: int | None = Field(default=None, ge=0, le=20)
 
@@ -59,6 +58,7 @@ class VideoGenerationRequest(BaseModel):
     first_frame: VideoAsset | None = None
     last_frame: VideoAsset | None = None
     reference_images: list[VideoAsset] = Field(default_factory=list, max_length=9)
+    reference_videos: list[VideoAsset] = Field(default_factory=list, max_length=3)
     reference_audios: list[VideoAsset] = Field(default_factory=list, max_length=3)
 
 
@@ -105,7 +105,7 @@ async def create_video(
     try:
         request = VideoGenerationRequest.model_validate_json(payload)
         _validate_request(mode, request, files)
-        resolved = await _resolve_assets(request, files, user)
+        resolved = await _resolve_assets(mode, request, files, user)
         prompt, seed = _build_prompt(mode, request, resolved)
         client_id = str(uuid.uuid4())
         response = _request_json("POST", "/prompt", {"prompt": prompt, "client_id": client_id})
@@ -178,7 +178,7 @@ def _request_assets(mode: str, request: VideoGenerationRequest) -> list[VideoAss
     if mode == "i2v":
         if request.first_frame is None or request.first_frame.kind != "image":
             raise HTTPException(status_code=422, detail="I2V에는 시작 이미지가 필요합니다.")
-        if request.last_frame is not None or request.reference_images or request.reference_audios:
+        if request.last_frame is not None or request.reference_images or request.reference_videos or request.reference_audios:
             raise HTTPException(status_code=422, detail="I2V 입력 구성이 올바르지 않습니다.")
         return [request.first_frame]
     if mode == "fl2v":
@@ -189,28 +189,31 @@ def _request_assets(mode: str, request: VideoGenerationRequest) -> list[VideoAss
             or request.last_frame.kind != "image"
         ):
             raise HTTPException(status_code=422, detail="FL2V에는 첫 프레임과 마지막 프레임이 필요합니다.")
-        if request.reference_images or request.reference_audios:
+        if request.reference_images or request.reference_videos or request.reference_audios:
             raise HTTPException(status_code=422, detail="FL2V 입력 구성이 올바르지 않습니다.")
         return [request.first_frame, request.last_frame]
     if request.first_frame is not None or request.last_frame is not None:
         raise HTTPException(status_code=422, detail="R2V는 reference 콘텐츠를 사용합니다.")
     if any(asset.kind != "image" for asset in request.reference_images):
         raise HTTPException(status_code=422, detail="R2V reference 이미지 구성이 올바르지 않습니다.")
+    if any(asset.kind != "video" for asset in request.reference_videos):
+        raise HTTPException(status_code=422, detail="R2V reference 동영상 구성이 올바르지 않습니다.")
     if any(asset.kind != "audio" for asset in request.reference_audios):
         raise HTTPException(status_code=422, detail="R2V reference 오디오 구성이 올바르지 않습니다.")
-    if not request.reference_images and not request.reference_audios:
-        raise HTTPException(status_code=422, detail="R2V에는 reference 이미지 또는 오디오가 필요합니다.")
-    return [*request.reference_images, *request.reference_audios]
+    if not request.reference_images and not request.reference_videos and not request.reference_audios:
+        raise HTTPException(status_code=422, detail="R2V에는 reference 이미지·동영상 또는 오디오가 필요합니다.")
+    return [*request.reference_images, *request.reference_videos, *request.reference_audios]
 
 
 async def _resolve_assets(
+    mode: str,
     request: VideoGenerationRequest,
     files: list[UploadFile],
     user: UserResponse,
-) -> dict[int, _ResolvedAsset]:
-    resolved: dict[int, _ResolvedAsset] = {}
-    for asset in _request_assets("i2v" if request.first_frame and not request.last_frame else "fl2v" if request.last_frame else "r2v", request):
-        cache_key = asset.file_index if asset.file_index is not None else -(hash(asset.file_id) % 2**31 + 1)
+) -> dict[str, _ResolvedAsset]:
+    resolved: dict[str, _ResolvedAsset] = {}
+    for asset in _request_assets(mode, request):
+        cache_key = _asset_cache_key(asset)
         if cache_key in resolved:
             continue
         if asset.file_id:
@@ -224,6 +227,14 @@ async def _resolve_assets(
                 content=content,
                 media_type=record["content_type"] or stored_type,
                 kind=asset.kind,
+            )
+            create_media_asset(
+                user_id=user.id,
+                storage_file_id=asset.file_id,
+                filename=record["filename"],
+                content_type=record["content_type"] or stored_type,
+                media_kind=asset.kind,
+                size=len(content),
             )
             continue
         upload = files[asset.file_index or 0]
@@ -253,7 +264,7 @@ async def _resolve_assets(
     return resolved
 
 
-def _build_prompt(mode: str, request: VideoGenerationRequest, resolved: dict[int, _ResolvedAsset]) -> tuple[dict[str, dict[str, Any]], int]:
+def _build_prompt(mode: str, request: VideoGenerationRequest, resolved: dict[str, _ResolvedAsset]) -> tuple[dict[str, dict[str, Any]], int]:
     try:
         with (_WORKFLOW_DIR / f"video_{mode}.json").open(encoding="utf-8") as handle:
             prompt = json.load(handle)
@@ -284,6 +295,19 @@ def _build_prompt(mode: str, request: VideoGenerationRequest, resolved: dict[int
                 "inputs": {"image": _upload_to_comfy(resolved, asset, "image")},
             }
             prompt["5"]["inputs"][f"ref_images.ref_image_{index}"] = [str(100 + index), 0]
+        for index, asset in enumerate(request.reference_videos):
+            video_node_id = str(300 + index)
+            components_node_id = str(400 + index)
+            prompt[video_node_id] = {
+                "class_type": "LoadVideo",
+                "inputs": {"file": _upload_to_comfy(resolved, asset, "video")},
+            }
+            prompt[components_node_id] = {
+                "class_type": "GetVideoComponents",
+                "inputs": {"video": [video_node_id, 0]},
+            }
+            prompt["5"]["inputs"][f"ref_videos.ref_video_{index}"] = [components_node_id, 0]
+            prompt["5"]["inputs"][f"ref_video_audios.ref_video_audio_{index}"] = [components_node_id, 1]
         for index, asset in enumerate(request.reference_audios):
             prompt[str(200 + index)] = {
                 "class_type": "LoadAudio",
@@ -293,22 +317,26 @@ def _build_prompt(mode: str, request: VideoGenerationRequest, resolved: dict[int
     return prompt, seed
 
 
-def _upload_to_comfy(resolved: dict[int, _ResolvedAsset], asset: VideoAsset | None, kind: str) -> str:
+def _asset_cache_key(asset: VideoAsset) -> str:
+    return f"index:{asset.file_index}" if asset.file_index is not None else f"id:{asset.file_id}"
+
+
+def _upload_to_comfy(resolved: dict[str, _ResolvedAsset], asset: VideoAsset | None, kind: str) -> str:
     if asset is None:
         raise _ComfyUIError("영상 입력 콘텐츠가 없습니다.")
-    cache_key = asset.file_index if asset.file_index is not None else -(hash(asset.file_id) % 2**31 + 1)
+    cache_key = _asset_cache_key(asset)
     source = resolved.get(cache_key)
     if source is None or source.kind != kind:
         raise _ComfyUIError("영상 입력 콘텐츠를 준비하지 못했습니다.")
-    suffix = Path(source.filename).suffix.lower() or (".png" if kind == "image" else ".wav")
+    suffix = Path(source.filename).suffix.lower() or {"image": ".png", "audio": ".wav", "video": ".mp4"}[kind]
     filename = f"local_field_{uuid.uuid4().hex}{suffix}"
     boundary = f"----LocalField{uuid.uuid4().hex}"
     fields = [("type", "input"), ("overwrite", "false")]
     body = bytearray()
     for name, value in fields:
         body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode())
-    field_name = "audio" if kind == "audio" else "image"
-    endpoint = "/upload/audio" if kind == "audio" else "/upload/image"
+    field_name = "image"
+    endpoint = "/upload/image"
     body.extend(
         f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"\r\n"
         f"Content-Type: {source.media_type}\r\n\r\n".encode()
@@ -429,5 +457,5 @@ def _multiple_of_32(value: int) -> int:
 def _safe_filename(filename: str | None, kind: str, media_type: str | None) -> str:
     candidate = Path(filename or "").name
     if not candidate or candidate in {".", ".."}:
-        candidate = f"input.{mimetypes.guess_extension(media_type or '') or ('.png' if kind == 'image' else '.wav')}"
+        candidate = f"input.{mimetypes.guess_extension(media_type or '') or {'image': '.png', 'audio': '.wav', 'video': '.mp4'}[kind]}"
     return candidate[:255]

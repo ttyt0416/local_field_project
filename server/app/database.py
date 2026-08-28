@@ -552,11 +552,23 @@ def create_media_asset(
             INSERT INTO media_assets
                 (id, user_id, storage_file_id, filename, content_type, media_kind, size)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (storage_file_id) DO UPDATE
+            SET source_type = 'generation_input'
+            WHERE media_assets.user_id = EXCLUDED.user_id
             RETURNING {_MEDIA_FIELDS}
             """,
             (uuid.uuid4(), user_id, storage_file_id, filename, content_type, media_kind, size),
         ).fetchone()
     return dict(zip(_MEDIA_FIELDS.split(", "), row, strict=True))
+
+
+def has_media_asset(storage_file_id: str, user_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT 1 FROM media_assets WHERE storage_file_id = %s AND user_id = %s",
+            (storage_file_id, user_id),
+        ).fetchone()
+    return row is not None
 
 
 def list_reusable_media(user_id: uuid.UUID) -> list[dict[str, Any]]:

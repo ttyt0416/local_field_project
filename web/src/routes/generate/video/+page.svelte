@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ImagePlus, Library, Music, Sparkles, Video } from '@lucide/svelte';
+	import { Library, Sparkles, Video } from '@lucide/svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
-	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
+
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
@@ -13,7 +13,7 @@
 	import { videoGenerationStore, type VideoLibraryAsset, type VideoMode } from '$lib/stores/video-generation.svelte';
 	import { apiForm, apiJson } from '$lib/utils/api';
 
-	type AssetRef = { kind: 'image' | 'audio'; file_id?: string; file_index?: number };
+	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
 	type VideoStatus = {
 		prompt_id: string;
 		mode: VideoMode;
@@ -24,7 +24,7 @@
 	const modes: { value: VideoMode; label: string; description: string }[] = [
 		{ value: 'i2v', label: 'I2V', description: '시작 이미지에서 영상 생성' },
 		{ value: 'fl2v', label: 'FL2V', description: '첫·마지막 프레임 사이 생성' },
-		{ value: 'r2v', label: 'R2V', description: 'reference 이미지·오디오 기반 생성' }
+		{ value: 'r2v', label: 'R2V', description: 'reference 이미지·동영상·오디오 기반 생성' }
 	];
 	const inputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const fileClass = 'block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary';
@@ -39,10 +39,12 @@
 	let firstFile = $state<File | null>(null);
 	let lastFile = $state<File | null>(null);
 	let referenceImageFiles = $state<File[]>([]);
+	let referenceVideoFiles = $state<File[]>([]);
 	let referenceAudioFiles = $state<File[]>([]);
 	let selectedFirst: VideoLibraryAsset | null = $state(null);
 	let selectedLast: VideoLibraryAsset | null = $state(null);
 	let selectedReferenceImages = $state<VideoLibraryAsset[]>([]);
+	let selectedReferenceVideos = $state<VideoLibraryAsset[]>([]);
 	let selectedReferenceAudios = $state<VideoLibraryAsset[]>([]);
 	let generating = $state(false);
 	let status = $state('');
@@ -75,6 +77,7 @@
 		selectedFirst = pending.firstFrame ?? null;
 		selectedLast = pending.lastFrame ?? null;
 		selectedReferenceImages = pending.referenceImages;
+		selectedReferenceVideos = pending.referenceVideos;
 		selectedReferenceAudios = pending.referenceAudios;
 	}
 
@@ -84,10 +87,12 @@
 		firstFile = null;
 		lastFile = null;
 		referenceImageFiles = [];
+		referenceVideoFiles = [];
 		referenceAudioFiles = [];
 		selectedFirst = null;
 		selectedLast = null;
 		selectedReferenceImages = [];
+		selectedReferenceVideos = [];
 		selectedReferenceAudios = [];
 	}
 
@@ -98,14 +103,16 @@
 		else lastFile = file;
 	}
 
-	function handleMultipleFiles(event: Event, target: 'images' | 'audios') {
+	function handleMultipleFiles(event: Event, target: 'images' | 'videos' | 'audios') {
 		if (!(event.currentTarget instanceof HTMLInputElement)) return;
-		const files = Array.from(event.currentTarget.files ?? []);
+		const max = target === 'images' ? 9 : 3;
+		const files = Array.from(event.currentTarget.files ?? []).slice(0, max);
 		if (target === 'images') referenceImageFiles = files;
+		else if (target === 'videos') referenceVideoFiles = files;
 		else referenceAudioFiles = files;
 	}
 
-	function assetRef(kind: 'image' | 'audio', file: File | null, selected: VideoLibraryAsset | null, files: File[], form: FormData): AssetRef {
+	function assetRef(kind: 'image' | 'audio' | 'video', file: File | null, selected: VideoLibraryAsset | null, files: File[], form: FormData): AssetRef {
 		if (file) {
 			const index = files.length;
 			files.push(file);
@@ -113,7 +120,7 @@
 			return { kind, file_index: index };
 		}
 		if (selected) return { kind, file_id: selected.file_id };
-		throw new Error(kind === 'image' ? '필요한 이미지를 선택해 주세요.' : '오디오를 선택해 주세요.');
+		throw new Error(kind === 'image' ? '필요한 이미지를 선택해 주세요.' : kind === 'video' ? '동영상을 선택해 주세요.' : '오디오를 선택해 주세요.');
 	}
 
 	function selectedAssetLabel(asset: VideoLibraryAsset | null, file: File | null) {
@@ -148,6 +155,10 @@
 				payload.reference_images = [
 					...selectedReferenceImages.map((asset) => ({ kind: 'image', file_id: asset.file_id })),
 					...referenceImageFiles.map((file) => assetRef('image', file, null, newFiles, form))
+				];
+				payload.reference_videos = [
+					...selectedReferenceVideos.map((asset) => ({ kind: 'video', file_id: asset.file_id })),
+					...referenceVideoFiles.map((file) => assetRef('video', file, null, newFiles, form))
 				];
 				payload.reference_audios = [
 					...selectedReferenceAudios.map((asset) => ({ kind: 'audio', file_id: asset.file_id })),
@@ -240,8 +251,8 @@
 							<label class="block space-y-2" for="i2v-image"><span class="text-sm font-medium">시작 이미지</span><input id="i2v-image" type="file" accept="image/*" class={fileClass} onchange={(event) => handleSingleFile(event, 'first')} /><span class="block truncate text-xs text-muted-foreground">{selectedAssetLabel(selectedFirst, firstFile)} · 파일은 생성 시 업로드됩니다.</span></label>
 						{:else if mode === 'fl2v'}
 							<div class="space-y-4"><label class="block space-y-2" for="fl2v-first"><span class="text-sm font-medium">첫 프레임</span><input id="fl2v-first" type="file" accept="image/*" class={fileClass} onchange={(event) => handleSingleFile(event, 'first')} /><span class="block truncate text-xs text-muted-foreground">{selectedAssetLabel(selectedFirst, firstFile)}</span></label><label class="block space-y-2" for="fl2v-last"><span class="text-sm font-medium">마지막 프레임</span><input id="fl2v-last" type="file" accept="image/*" class={fileClass} onchange={(event) => handleSingleFile(event, 'last')} /><span class="block truncate text-xs text-muted-foreground">{selectedAssetLabel(selectedLast, lastFile)}</span></label><p class="text-xs text-muted-foreground">새 파일은 생성 버튼을 누를 때만 Storage에 저장됩니다.</p></div>
-						{:else}
-							<div class="space-y-4"><label class="block space-y-2" for="r2v-images"><span class="text-sm font-medium">Reference 이미지 · 최대 9개</span><input id="r2v-images" type="file" accept="image/*" multiple class={fileClass} onchange={(event) => handleMultipleFiles(event, 'images')} /><span class="block truncate text-xs text-muted-foreground">{selectedReferenceImages.length + referenceImageFiles.length}개 선택</span></label><label class="block space-y-2" for="r2v-audios"><span class="text-sm font-medium">Reference 오디오 · 최대 3개</span><input id="r2v-audios" type="file" accept="audio/*" multiple class={fileClass} onchange={(event) => handleMultipleFiles(event, 'audios')} /><span class="block truncate text-xs text-muted-foreground">{selectedReferenceAudios.length + referenceAudioFiles.length}개 선택</span></label><p class="text-xs text-muted-foreground">라이브러리에서 기존 콘텐츠를 추가하거나 새 파일을 선택할 수 있습니다. 새 파일은 생성 시에만 업로드됩니다.</p></div>
+								{:else}
+							<div class="space-y-4"><label class="block space-y-2" for="r2v-images"><span class="text-sm font-medium">Reference 이미지 · 최대 9개</span><input id="r2v-images" type="file" accept="image/*" multiple class={fileClass} onchange={(event) => handleMultipleFiles(event, 'images')} /><span class="block truncate text-xs text-muted-foreground">{selectedReferenceImages.length + referenceImageFiles.length}개 선택</span></label><label class="block space-y-2" for="r2v-videos"><span class="text-sm font-medium">Reference 동영상 · 최대 3개</span><input id="r2v-videos" type="file" accept="video/*" multiple class={fileClass} onchange={(event) => handleMultipleFiles(event, 'videos')} /><span class="block truncate text-xs text-muted-foreground">{selectedReferenceVideos.length + referenceVideoFiles.length}개 선택</span></label><label class="block space-y-2" for="r2v-audios"><span class="text-sm font-medium">Reference 오디오 · 최대 3개</span><input id="r2v-audios" type="file" accept="audio/*" multiple class={fileClass} onchange={(event) => handleMultipleFiles(event, 'audios')} /><span class="block truncate text-xs text-muted-foreground">{selectedReferenceAudios.length + referenceAudioFiles.length}개 선택</span></label><p class="text-xs text-muted-foreground">라이브러리에서 기존 콘텐츠를 추가하거나 새 파일을 선택할 수 있습니다. 새 파일은 생성 시에만 업로드됩니다.</p></div>
 						{/if}
 						<a href="/uploads" class="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"><Library size={16} />업로드·생성 콘텐츠에서 선택</a>
 

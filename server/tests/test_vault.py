@@ -65,6 +65,7 @@ class VaultRouteTest(unittest.TestCase):
         with (
             patch.object(vault, "get_image_generations_by_ids", return_value=stored),
             patch.object(vault, "storage_enabled", return_value=True),
+            patch.object(vault, "has_media_asset", return_value=False),
             patch.object(vault, "delete_image_generations", side_effect=delete_database) as delete_database_mock,
             patch.object(vault, "storage_delete_file", side_effect=delete_storage) as delete_storage_mock,
         ):
