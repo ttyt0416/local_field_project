@@ -11,16 +11,10 @@
 	import VideoMedia from '../../../../components/media/video.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { videoGenerationStore, type VideoLibraryAsset, type VideoMode } from '$lib/stores/video-generation.svelte';
-	import { apiForm, apiJson } from '$lib/utils/api';
+	import { apiForm } from '$lib/utils/api';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 
 	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
-	type VideoStatus = {
-		prompt_id: string;
-		mode: VideoMode;
-		status: string;
-		video: { url: string } | null;
-	};
-
 	const modes: { value: VideoMode; label: string; description: string }[] = [
 		{ value: 'i2v', label: 'I2V', description: '시작 이미지에서 영상 생성' },
 		{ value: 'fl2v', label: 'FL2V', description: '첫·마지막 프레임 사이 생성' },
@@ -52,6 +46,7 @@
 	let error = $state('');
 	let success = $state('');
 	let active = true;
+	let videoJobKey = $state('');
 
 	onMount(() => {
 		void initialize();
@@ -60,11 +55,29 @@
 		};
 	});
 
+	$effect(() => {
+		const job = videoJobKey ? generationJobStore.jobs[videoJobKey] : undefined;
+		if (!job) return;
+		status = job.status;
+		videoUrl = job.videoUrl ?? '';
+		if (job.status === 'completed') success = '영상 생성이 완료되었습니다.';
+		if (job.status === 'failed') error = job.error ?? '영상 생성에 실패했습니다.';
+	});
+
 	async function initialize() {
 		await authStore.initialize();
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
 			return;
+		}
+		await generationJobStore.initialize();
+		const latestJob = generationJobStore.latest('video');
+		if (latestJob) {
+			videoJobKey = latestJob.key;
+			mode = latestJob.mode ?? mode;
+			status = latestJob.status;
+			videoUrl = latestJob.videoUrl ?? '';
+			generating = latestJob.status !== 'completed' && latestJob.status !== 'failed';
 		}
 		applyPendingSelection();
 		ready = true;
@@ -167,8 +180,15 @@
 			}
 			form.append('payload', JSON.stringify(payload));
 			generating = true;
-			const accepted = await apiForm<{ prompt_id: string }>(`generation/video/${mode}`, form, { timeout: 120_000 });
-			await poll(accepted.prompt_id);
+			const accepted = await apiForm<{ prompt_id: string; client_id: string; generation_id: string }>(`generation/video/${mode}`, form, { timeout: 120_000 });
+			videoJobKey = generationJobStore.track({
+				kind: 'video',
+				promptId: accepted.prompt_id,
+				clientId: accepted.client_id,
+				generationId: accepted.generation_id,
+				mode
+			});
+			await generationJobStore.waitForTerminal(videoJobKey);
 		} catch (reason) {
 			if (active) {
 				error = reason instanceof Error ? reason.message : '영상 생성을 시작하지 못했습니다.';
@@ -177,22 +197,6 @@
 		} finally {
 			generating = false;
 		}
-	}
-
-	async function poll(promptId: string) {
-		for (let attempt = 0; attempt < 900 && active; attempt += 1) {
-			const result = await apiJson<VideoStatus>(`generation/video/${mode}/${promptId}`, { timeout: 20_000 });
-			status = result.status;
-			if (result.status === 'completed') {
-				if (!result.video?.url) throw new Error('생성된 영상을 찾을 수 없습니다.');
-				videoUrl = result.video.url;
-				success = '영상 생성이 완료되었습니다.';
-				return;
-			}
-			if (result.status === 'failed') throw new Error('영상 생성에 실패했습니다.');
-			await new Promise((resolve) => setTimeout(resolve, 2000));
-		}
-		if (active) throw new Error('영상 생성 상태 확인 시간이 초과되었습니다.');
 	}
 
 	function statusLabel(value: string) {

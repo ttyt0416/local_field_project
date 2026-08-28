@@ -13,23 +13,15 @@
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
 	import { SERVER_URL } from '$lib/configs/constants';
-	import { apiJson, streamSse } from '$lib/utils/api';
+	import { apiJson } from '$lib/utils/api';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 
 	type ImageOptions = {
 		checkpoints: string[];
 		loras: string[];
 		default_checkpoint: string;
-	};
-
-	type ImageGenerationEvent = {
-		prompt_id: string;
-		status?: 'queued' | 'processing' | 'completed' | 'failed';
-		progress?: number;
-		queue_position?: number | null;
-		message?: string;
-		images?: { url: string }[];
 	};
 
 	type LoraSelection = {
@@ -128,7 +120,7 @@
 	let promptId = $state('');
 	let imageUrl = $state('');
 	let generationId = $state('');
-	let streamController: AbortController | null = null;
+	let imageJobKey = $state('');
 	let presets = $state<Preset[]>([]);
 	let presetsLoading = $state(false);
 	let savingPreset = $state(false);
@@ -356,8 +348,19 @@
 		void initialize();
 		return () => {
 			active = false;
-			streamController?.abort();
 		};
+	});
+
+	$effect(() => {
+		const job = imageJobKey ? generationJobStore.jobs[imageJobKey] : undefined;
+		if (!job) return;
+		generationStatus = job.status;
+		progress = job.progress;
+		queuePosition = job.queuePosition;
+		generationId = job.generationId;
+		imageUrl = job.imageUrl ?? '';
+		if (job.status === 'completed') successMessage = '이미지 생성이 완료되었습니다.';
+		if (job.status === 'failed') generationError = job.error ?? '이미지 생성에 실패했습니다.';
 	});
 
 	async function initialize() {
@@ -365,6 +368,14 @@
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
 			return;
+		}
+		await generationJobStore.initialize();
+		const latestJob = generationJobStore.latest('image');
+		if (latestJob) {
+			imageJobKey = latestJob.key;
+			promptId = latestJob.promptId;
+			generationId = latestJob.generationId;
+			generating = latestJob.status !== 'completed' && latestJob.status !== 'failed';
 		}
 		const regenerationParameters = imageGenerationStore.consume();
 		ready = true;
@@ -436,7 +447,13 @@
 			});
 			promptId = queued.prompt_id;
 			generationId = queued.generation_id;
-			await streamGeneration(queued.prompt_id, queued.client_id);
+			imageJobKey = generationJobStore.track({
+				kind: 'image',
+				promptId: queued.prompt_id,
+				clientId: queued.client_id,
+				generationId: queued.generation_id
+			});
+			await generationJobStore.waitForTerminal(imageJobKey);
 		} catch (error) {
 			if (!active) return;
 			generationError = getErrorMessage(error);
@@ -470,52 +487,6 @@
 		} finally {
 			enhancingPrompt = false;
 		}
-	}
-
-	async function streamGeneration(id: string, clientId: string) {
-		const controller = new AbortController();
-		streamController = controller;
-		let terminalStatus = '';
-		let lastError: unknown = new Error('SSE 진행 연결이 종료되었습니다.');
-		try {
-			for (let attempt = 0; attempt < 5 && active && !terminalStatus; attempt += 1) {
-				try {
-					await streamSse(
-						`generation/image/${id}/events?client_id=${encodeURIComponent(clientId)}`,
-						(event) => {
-							const payload = JSON.parse(event.data) as ImageGenerationEvent;
-							generationStatus = payload.status ?? event.event;
-							if (typeof payload.progress === 'number') progress = payload.progress;
-							if ('queue_position' in payload) queuePosition = payload.queue_position ?? null;
-							if (event.event === 'completed') {
-								terminalStatus = 'completed';
-								progress = 100;
-								const image = payload.images?.[0];
-								if (!image) {
-									terminalStatus = 'failed';
-									throw new Error('생성 결과 이미지를 찾을 수 없습니다.');
-								}
-								imageUrl = new URL(image.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
-								successMessage = '이미지 생성이 완료되었습니다.';
-							} else if (event.event === 'failed' || event.event === 'error') {
-								terminalStatus = 'failed';
-								throw new Error(payload.message ?? '이미지 생성에 실패했습니다.');
-							}
-						},
-						{ signal: controller.signal }
-					);
-				} catch (error) {
-					if (terminalStatus === 'failed' || !active) throw error;
-					lastError = error;
-				}
-				if (terminalStatus || !active) break;
-				if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
-			}
-		} finally {
-			if (streamController === controller) streamController = null;
-		}
-		if (terminalStatus === 'failed') throw lastError;
-		if (terminalStatus !== 'completed' && active) throw lastError;
 	}
 
 	function imageSourceType(url: string): 'server' | 'external' {

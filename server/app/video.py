@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import mimetypes
@@ -14,8 +15,9 @@ from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field, ValidationError
+from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
 from .comfyui import _ComfyUIError, _comfy_url, _request_bytes, _request_json
@@ -152,6 +154,67 @@ def video_status(
         return _history_status(generation, user.id)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@router.get("/{mode}/{prompt_id}/events")
+async def video_generation_events(
+    mode: Literal["i2v", "fl2v", "r2v"],
+    prompt_id: str,
+    client_id: str = Query(min_length=1, max_length=128),
+    user: UserResponse = Depends(current_user),
+) -> StreamingResponse:
+    generation = get_video_generation(prompt_id, user.id)
+    if generation is None or generation["mode"] != mode or generation["client_id"] != client_id:
+        raise HTTPException(status_code=404, detail="영상 생성 결과를 찾을 수 없습니다.")
+    return StreamingResponse(
+        _stream_video_events(prompt_id, mode, user.id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
+    last_status: str | None = None
+    heartbeat_ticks = 0
+    while True:
+        generation = await asyncio.to_thread(get_video_generation, prompt_id, user_id)
+        if generation is None or generation["mode"] != mode:
+            yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed", "message": "영상 생성 결과를 찾을 수 없습니다."})
+            return
+
+        current_status = str(generation["status"])
+        if current_status != last_status:
+            if current_status == "completed":
+                try:
+                    video = await asyncio.to_thread(_video_output, generation, user_id)
+                except StorageError as exc:
+                    yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
+                    return
+                yield _sse_message(
+                    "completed",
+                    VideoGenerationStatus(prompt_id=prompt_id, mode=mode, status="completed", video=video).model_dump(),
+                )
+                return
+            if current_status == "failed":
+                yield _sse_message("failed", {"prompt_id": prompt_id, "mode": mode, "status": "failed"})
+                return
+            yield _sse_message("status", {"prompt_id": prompt_id, "mode": mode, "status": current_status})
+            last_status = current_status
+            heartbeat_ticks = 0
+        else:
+            heartbeat_ticks += 1
+            if heartbeat_ticks >= 8:
+                yield ": keep-alive\n\n"
+                heartbeat_ticks = 0
+        await asyncio.sleep(2)
+
+
+def _sse_message(event_name: str, data: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _validate_request(mode: str, request: VideoGenerationRequest, files: list[UploadFile]) -> None:

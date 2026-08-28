@@ -436,6 +436,14 @@ def get_image_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] |
     return _image_generation_row(row)
 
 
+def list_active_image_generations() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE status IN ('queued', 'processing') ORDER BY created_at"
+        ).fetchall()
+    return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
+
+
 def get_image_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
@@ -678,6 +686,14 @@ def get_video_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] |
             (prompt_id, user_id),
         ).fetchone()
     return _video_generation_row(row)
+
+
+def list_active_video_generations() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE status IN ('queued', 'processing') ORDER BY created_at"
+        ).fetchall()
+    return [generation for row in rows if (generation := _video_generation_row(row)) is not None]
 
 
 def get_video_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:

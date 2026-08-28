@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import uuid
 from typing import Any, Literal
 
@@ -10,6 +11,7 @@ from .auth import optional_user_id, router as auth_router
 from .comfyui import router as comfyui_router
 from .configs.constants import APP_TITLE, APP_VERSION, HEALTH_STATUS, settings
 from .database import initialize_database, record_api_call, record_api_error, record_web_event
+from .generation_worker import run_generation_reconciler
 from .presets import router as presets_router
 from .uploads import router as uploads_router
 from .vault import router as vault_router
@@ -19,7 +21,13 @@ from .video import router as video_router
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
-    yield
+    stop_event = asyncio.Event()
+    reconciler = asyncio.create_task(run_generation_reconciler(stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        await reconciler
 
 
 app = FastAPI(title=APP_TITLE, version=APP_VERSION, lifespan=lifespan)

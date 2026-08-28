@@ -9,6 +9,7 @@
 	import Typography from '../../../components/typography/typography.svelte';
 	import { APP_NAME } from '$lib/configs/constants';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 
 	type Mode = 'login' | 'signup';
@@ -47,6 +48,7 @@
 			} else {
 				await authStore.signup(username, password);
 			}
+			await generationJobStore.initialize();
 			await goto('/vault');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '인증 요청에 실패했습니다.';
