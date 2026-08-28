@@ -133,6 +133,29 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'video_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'view_count'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'is_favorite'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN is_favorite BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -229,6 +252,45 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS image_generations_prompt_trgm_idx
     ON image_generations USING gin (prompt gin_trgm_ops)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS media_assets (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        storage_file_id TEXT UNIQUE NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        content_type VARCHAR(128) NOT NULL,
+        media_kind VARCHAR(16) NOT NULL,
+        size BIGINT NOT NULL,
+        source_type VARCHAR(32) NOT NULL DEFAULT 'generation_input',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS media_assets_user_created_idx ON media_assets(user_id, created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS video_generations (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        prompt_id VARCHAR(128) UNIQUE NOT NULL,
+        client_id VARCHAR(128) NOT NULL,
+        mode VARCHAR(8) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'queued',
+        prompt TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        length INTEGER NOT NULL,
+        seed BIGINT NOT NULL,
+        input_file_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        storage_file_id TEXT,
+        filename VARCHAR(255),
+        subfolder VARCHAR(255) NOT NULL DEFAULT '',
+        video_type VARCHAR(32) NOT NULL DEFAULT 'output',
+        view_count INTEGER NOT NULL DEFAULT 0,
+        is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
@@ -469,6 +531,257 @@ def delete_image_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID
             (generation_ids, user_id),
         ).fetchall()
     return len(rows)
+
+
+_MEDIA_FIELDS = "id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type, created_at"
+_REUSABLE_MEDIA_FIELDS = "file_id, filename, content_type, media_kind, source_type, created_at"
+
+
+def create_media_asset(
+    *,
+    user_id: uuid.UUID,
+    storage_file_id: str,
+    filename: str,
+    content_type: str,
+    media_kind: str,
+    size: int,
+) -> dict[str, Any]:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            INSERT INTO media_assets
+                (id, user_id, storage_file_id, filename, content_type, media_kind, size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING {_MEDIA_FIELDS}
+            """,
+            (uuid.uuid4(), user_id, storage_file_id, filename, content_type, media_kind, size),
+        ).fetchone()
+    return dict(zip(_MEDIA_FIELDS.split(", "), row, strict=True))
+
+
+def list_reusable_media(user_id: uuid.UUID) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT {_REUSABLE_MEDIA_FIELDS} FROM (
+                SELECT storage_file_id AS file_id, filename, content_type, media_kind,
+                       source_type, created_at, user_id
+                FROM media_assets
+                UNION ALL
+                SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
+                       'image/png', 'image', 'image_generation', created_at, user_id
+                FROM image_generations
+                WHERE storage_file_id IS NOT NULL
+                UNION ALL
+                SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
+                       'video/mp4', 'video', 'video_generation', created_at, user_id
+                FROM video_generations
+                WHERE storage_file_id IS NOT NULL
+            ) AS assets
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True)) for row in rows]
+
+
+def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT {_REUSABLE_MEDIA_FIELDS} FROM (
+                SELECT storage_file_id AS file_id, filename, content_type, media_kind,
+                       source_type, created_at, user_id
+                FROM media_assets
+                UNION ALL
+                SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
+                       'image/png', 'image', 'image_generation', created_at, user_id
+                FROM image_generations
+                WHERE storage_file_id IS NOT NULL
+                UNION ALL
+                SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
+                       'video/mp4', 'video', 'video_generation', created_at, user_id
+                FROM video_generations
+                WHERE storage_file_id IS NOT NULL
+            ) AS assets
+            WHERE file_id = %s AND user_id = %s
+            LIMIT 1
+            """,
+            (file_id, user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True))
+
+
+_VIDEO_FIELDS = (
+    "id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length, seed, "
+    "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, created_at, completed_at"
+)
+
+
+def create_video_generation(
+    *,
+    user_id: uuid.UUID,
+    prompt_id: str,
+    client_id: str,
+    mode: str,
+    prompt: str,
+    width: int,
+    height: int,
+    length: int,
+    seed: int,
+    input_file_ids: list[str],
+) -> uuid.UUID:
+    generation_id = uuid.uuid4()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO video_generations
+                (id, user_id, prompt_id, client_id, mode, prompt, width, height, length, seed, input_file_ids)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                generation_id,
+                user_id,
+                prompt_id,
+                client_id,
+                mode,
+                prompt,
+                width,
+                height,
+                length,
+                seed,
+                json.dumps(input_file_ids),
+            ),
+        )
+    return generation_id
+
+
+def get_video_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE prompt_id = %s AND user_id = %s",
+            (prompt_id, user_id),
+        ).fetchone()
+    return _video_generation_row(row)
+
+
+def get_video_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE id = %s AND user_id = %s",
+            (generation_id, user_id),
+        ).fetchone()
+    return _video_generation_row(row)
+
+
+def increment_video_generation_view_count(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE video_generations
+            SET view_count = view_count + 1
+            WHERE id = %s AND user_id = %s
+            RETURNING {_VIDEO_FIELDS}
+            """,
+            (generation_id, user_id),
+        ).fetchone()
+    return _video_generation_row(row)
+
+
+def update_video_favorite(generation_id: uuid.UUID, user_id: uuid.UUID, is_favorite: bool) -> bool | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE video_generations
+            SET is_favorite = %s
+            WHERE id = %s AND user_id = %s
+            RETURNING is_favorite
+            """,
+            (is_favorite, generation_id, user_id),
+        ).fetchone()
+    return bool(row[0]) if row is not None else None
+
+
+def list_video_generations(
+    user_id: uuid.UUID,
+    *,
+    search: str = "",
+    sort: str = "latest",
+    favorites_only: bool = False,
+) -> list[dict[str, Any]]:
+    order_by = {
+        "latest": "created_at DESC",
+        "oldest": "created_at ASC",
+        "most_viewed": "view_count DESC, created_at DESC",
+    }.get(sort, "created_at DESC")
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    if search.strip():
+        filters.append("prompt ILIKE %s")
+        parameters.append(f"%{search.strip()}%")
+    if favorites_only:
+        filters.append("is_favorite = TRUE")
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE {' AND '.join(filters)} ORDER BY {order_by}",
+            parameters,
+        ).fetchall()
+    return [dict(zip(_VIDEO_FIELDS.split(", "), row, strict=True)) for row in rows]
+
+
+def delete_video_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "DELETE FROM video_generations WHERE id = %s AND user_id = %s RETURNING id",
+            (generation_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
+def update_video_generation_status(
+    *,
+    prompt_id: str,
+    user_id: uuid.UUID,
+    status: str,
+    storage_file_id: str | None = None,
+    filename: str | None = None,
+    subfolder: str = "",
+    video_type: str = "output",
+) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE video_generations
+            SET status = %s,
+                storage_file_id = COALESCE(%s, storage_file_id),
+                filename = COALESCE(%s, filename),
+                subfolder = CASE WHEN %s IS NULL THEN subfolder ELSE %s END,
+                video_type = CASE WHEN %s IS NULL THEN video_type ELSE %s END,
+                completed_at = CASE WHEN %s IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END
+            WHERE prompt_id = %s AND user_id = %s
+            """,
+            (
+                status,
+                storage_file_id,
+                filename,
+                subfolder if filename is not None else None,
+                subfolder,
+                video_type if filename is not None else None,
+                video_type,
+                status,
+                prompt_id,
+                user_id,
+            ),
+        )
+
+
+def _video_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_VIDEO_FIELDS.split(", "), row, strict=True))
 
 
 _PRESET_FIELDS = "id, user_id, type, name, values, is_default, created_at, updated_at"

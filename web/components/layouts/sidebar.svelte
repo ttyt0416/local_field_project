@@ -4,7 +4,9 @@
 		Bookmark,
 		Heart,
 		ImagePlus,
+		Library,
 		Sparkles,
+		Video,
 		X
 	} from '@lucide/svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
@@ -78,6 +80,22 @@
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
 			<span>이미지 생성</span>
+		</a>
+		<a
+			href="/generate/video"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Video size={18} strokeWidth={1.8} />
+			<span>동영상 생성</span>
+		</a>
+		<a
+			href="/uploads"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Library size={18} strokeWidth={1.8} />
+			<span>콘텐츠 라이브러리</span>
 		</a>
 		<a
 			href="/presets"

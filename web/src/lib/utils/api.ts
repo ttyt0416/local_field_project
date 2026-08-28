@@ -71,6 +71,13 @@ export async function apiJson<T>(path: string, options?: Options) {
 	}
 }
 
+export async function apiForm<T>(path: string, form: FormData, options?: Options) {
+	try {
+		return await api(path, { ...options, method: options?.method ?? 'POST', body: form }).json<T>();
+	} catch (error) {
+		throw new Error(getErrorMessage(error));
+	}
+}
 export async function apiBlob(path: string, options?: Options) {
 	try {
 		return await api(path, options).blob();

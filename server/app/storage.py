@@ -75,6 +75,18 @@ def read_url(*, file_id: str, owner_id: str, expires_in: int = 900) -> str:
     return url
 
 
+def download_file(*, file_id: str, owner_id: str) -> tuple[bytes, str]:
+    url = read_url(file_id=file_id, owner_id=owner_id, expires_in=300)
+    try:
+        with urlopen(UrlRequest(url), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+            return response.read(), response.headers.get_content_type()
+    except UrlHTTPError as exc:
+        raise StorageError(f"스토리지 파일 읽기가 실패했습니다. (HTTP {exc.code})", status_code=exc.code) from exc
+    except (URLError, TimeoutError) as exc:
+        raise StorageError("스토리지 파일을 읽을 수 없습니다.") from exc
+
+
+
 def _invalidate_read_url_cache(file_id: str, owner_id: str) -> None:
     for cache_key in tuple(_read_url_cache):
         if cache_key[:2] == (file_id, owner_id):

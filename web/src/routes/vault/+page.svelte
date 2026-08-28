@@ -2,8 +2,9 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Heart, Trash2 } from '@lucide/svelte';
+	import { Heart, Trash2, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
+	import VideoMedia from '../../../components/media/video.svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
@@ -31,6 +32,19 @@
 		completed_at: string | null;
 	};
 
+	type VaultVideo = {
+		id: string;
+		media_type: string;
+		mode: 'i2v' | 'fl2v' | 'r2v';
+		status: string;
+		prompt: string;
+		video_url: string | null;
+		view_count: number;
+		is_favorite: boolean;
+		created_at: string;
+		completed_at: string | null;
+	};
+
 	type FavoriteResponse = {
 		is_favorite: boolean;
 	};
@@ -40,20 +54,27 @@
 	};
 
 	let ready = $state(false);
+	let mediaTab = $state<'images' | 'videos'>(page.url.searchParams.get('tab') === 'videos' ? 'videos' : 'images');
 	let images = $state<VaultImage[]>([]);
+	let videos = $state<VaultVideo[]>([]);
 	let searchQuery = $state('');
 	let sort = $state<Sort>('latest');
 	let favoritesOnly = $state(page.url.searchParams.get('favorites') === 'true');
 	let error = $state('');
 	let deleteTarget = $state<VaultImage | null>(null);
+	let videoDeleteTarget = $state<VaultVideo | null>(null);
 	let deleteModalOpen = $state(false);
+	let videoDeleteModalOpen = $state(false);
 	let deletingId = $state('');
+	let videoDeletingId = $state('');
 	let bulkDeleteModalOpen = $state(false);
 	let bulkDeleting = $state(false);
 	let selectedIds = $state<Set<string>>(new Set());
 	let favoriteUpdatingId = $state('');
+	let videoFavoriteUpdatingId = $state('');
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
 	let contentCount = $derived(images.filter((image) => image.status === 'completed').length);
+	let videoCount = $derived(videos.filter((video) => video.status === 'completed').length);
 	let selectedCount = $derived(selectedIds.size);
 	let allVisibleSelected = $derived(images.length > 0 && images.every((image) => selectedIds.has(image.id)));
 
@@ -63,8 +84,10 @@
 
 	$effect(() => {
 		const nextFavoritesOnly = page.url.searchParams.get('favorites') === 'true';
-		if (nextFavoritesOnly === favoritesOnly) return;
+		const nextMediaTab = page.url.searchParams.get('tab') === 'videos' ? 'videos' : 'images';
+		if (nextFavoritesOnly === favoritesOnly && nextMediaTab === mediaTab) return;
 		favoritesOnly = nextFavoritesOnly;
+		mediaTab = nextMediaTab;
 		if (ready) void loadVault();
 	});
 
@@ -79,8 +102,12 @@
 			const query = searchQuery.trim();
 			if (query) params.set('search', query);
 			if (favoritesOnly) params.set('favorites_only', 'true');
-			images = await apiJson<VaultImage[]>(`vault/images?${params.toString()}`);
-			selectedIds = new Set();
+			if (mediaTab === 'images') {
+				images = await apiJson<VaultImage[]>(`vault/images?${params.toString()}`);
+				selectedIds = new Set();
+			} else {
+				videos = await apiJson<VaultVideo[]>(`vault/videos?${params.toString()}`);
+			}
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '보관함을 불러오지 못했습니다.';
 		} finally {
@@ -183,6 +210,48 @@
 		}
 	}
 
+	async function toggleFavoriteVideo(video: VaultVideo) {
+		if (videoFavoriteUpdatingId) return;
+		videoFavoriteUpdatingId = video.id;
+		try {
+			const result = await apiJson<FavoriteResponse>(`vault/videos/${video.id}/favorite`, {
+				method: 'PATCH',
+				json: { is_favorite: !video.is_favorite }
+			});
+			if (favoritesOnly && !result.is_favorite) videos = videos.filter((item) => item.id !== video.id);
+			else videos = videos.map((item) => (item.id === video.id ? { ...item, is_favorite: result.is_favorite } : item));
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '영상 즐겨찾기를 변경하지 못했습니다.';
+		} finally {
+			videoFavoriteUpdatingId = '';
+		}
+	}
+
+	function requestDeleteVideo(video: VaultVideo) {
+		videoDeleteTarget = video;
+		videoDeleteModalOpen = true;
+	}
+
+	async function deleteVideo() {
+		const target = videoDeleteTarget;
+		if (!target || videoDeletingId) return;
+		videoDeletingId = target.id;
+		try {
+			await apiDelete(`vault/videos/${target.id}`);
+			videos = videos.filter((video) => video.id !== target.id);
+			videoDeleteModalOpen = false;
+			videoDeleteTarget = null;
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '영상을 삭제하지 못했습니다.';
+		} finally {
+			videoDeletingId = '';
+		}
+	}
+
+	function videoModeLabel(mode: VaultVideo['mode']) {
+		return mode.toUpperCase();
+	}
+
 	function imageSource(image: VaultImage) {
 		return image.image_url ?? '';
 	}
@@ -198,12 +267,16 @@
 
 <svelte:head>
 	<title>{favoritesOnly ? '즐겨찾기' : '보관함'} · Local Field</title>
-	<meta name="description" content="생성된 이미지를 검색하고 관리하는 보관함" />
+	<meta name="description" content="생성된 이미지와 동영상을 검색하고 관리하는 보관함" />
 </svelte:head>
 
 <Layout>
 	<div class="space-y-8">
 		<Typography as="h1" variant="display">{favoritesOnly ? '즐겨찾기' : '보관함'}</Typography>
+		<div class="flex gap-2 border-b border-border" role="tablist" aria-label="보관함 콘텐츠 종류">
+			<a href={favoritesOnly ? '/vault?favorites=true&tab=images' : '/vault?tab=images'} role="tab" aria-selected={mediaTab === 'images'} class={`border-b-2 px-3 py-2 text-sm font-semibold transition ${mediaTab === 'images' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>이미지</a>
+			<a href={favoritesOnly ? '/vault?favorites=true&tab=videos' : '/vault?tab=videos'} role="tab" aria-selected={mediaTab === 'videos'} class={`border-b-2 px-3 py-2 text-sm font-semibold transition ${mediaTab === 'videos' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>동영상</a>
+		</div>
 
 		<div class="flex flex-col gap-3 sm:flex-row">
 			<SearchBar bind:value={searchQuery} class="min-w-0 flex-1" oninput={handleSearchInput} />
@@ -229,9 +302,10 @@
 		{:else}
 			<div class="flex items-center justify-between border-b border-border pb-4">
 				<p class="text-sm font-medium text-muted-foreground">{favoritesOnly ? '즐겨찾기 콘텐츠' : '생성된 콘텐츠'}</p>
-				<p class="text-2xl font-semibold tracking-tight">{contentCount}</p>
+				<p class="text-2xl font-semibold tracking-tight">{mediaTab === 'images' ? contentCount : videoCount}</p>
 			</div>
 
+			{#if mediaTab === 'images'}
 			{#if images.length === 0}
 				<section class="rounded-2xl border border-dashed border-border bg-card/70 p-8 text-center sm:p-12">
 					<Typography as="h2" variant="h2">{favoritesOnly ? '즐겨찾기 한 콘텐츠가 없습니다.' : searchQuery ? '조건에 맞는 콘텐츠가 없습니다.' : '생성된 콘텐츠가 없습니다.'}</Typography>
@@ -327,6 +401,29 @@
 					</div>
 				</section>
 			{/if}
+			{:else}
+				{#if videos.length === 0}
+					<section class="rounded-2xl border border-dashed border-border bg-card/70 p-8 text-center sm:p-12">
+						<Typography as="h2" variant="h2">{favoritesOnly ? '즐겨찾기 한 영상이 없습니다.' : searchQuery ? '조건에 맞는 영상이 없습니다.' : '생성된 영상이 없습니다.'}</Typography>
+						<Typography as="p" variant="muted" class="mx-auto mt-2 max-w-md">{favoritesOnly ? '영상에 즐겨찾기를 추가하면 이곳에 표시됩니다.' : '동영상을 생성하면 이곳에 결과가 표시됩니다.'}</Typography>
+					</section>
+				{:else}
+					<section class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+						{#each videos as video (video.id)}
+							<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
+								<div class="relative aspect-video bg-muted">
+									{#if video.video_url}<VideoMedia source={video.video_url} sourceType="server" preview={false} muted={false} class="h-full" />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">영상 준비 중</div>{/if}
+								</div>
+								<div class="space-y-3 p-4">
+									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{videoModeLabel(video.mode)} · {statusLabel(video.status)}</span><span>{new Date(video.created_at).toLocaleDateString('ko-KR')}</span></div>
+									<p class="line-clamp-2 text-sm leading-5 text-foreground">{video.prompt}</p>
+									<div class="flex items-center justify-between gap-3"><span class="text-xs text-muted-foreground">조회 {video.view_count}</span><div class="flex gap-2"><IconOutlinedButton variant="filled" ariaLabel={video.is_favorite ? '영상 즐겨찾기 해제' : '영상 즐겨찾기 추가'} pressed={video.is_favorite} loading={videoFavoriteUpdatingId === video.id} class={video.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} onclick={() => void toggleFavoriteVideo(video)}><Heart size={17} strokeWidth={1.9} fill={video.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton><IconOutlinedButton ariaLabel="영상 콘텐츠 삭제" loading={videoDeletingId === video.id} variant="destructive" onclick={() => requestDeleteVideo(video)}><Trash2 size={17} strokeWidth={2} /></IconOutlinedButton></div></div>
+								</div>
+							</article>
+						{/each}
+					</section>
+				{/if}
+			{/if}
 		{/if}
 	</div>
 	</Layout>
@@ -370,6 +467,19 @@
 				<Trash2 size={16} strokeWidth={2} />
 				<span>선택된 콘텐츠 제거</span>
 			</PrimaryButton>
+		{/snippet}
+	</Modal>
+
+	<Modal
+		bind:open={videoDeleteModalOpen}
+		title="영상을 삭제하시겠습니까?"
+		description="삭제한 영상과 파일은 복구할 수 없습니다."
+		closeOnBackdrop={!videoDeletingId}
+	>
+		<p class="text-sm leading-6 text-muted-foreground">선택한 영상을 보관함과 파일 스토리지에서 삭제합니다.</p>
+		{#snippet footer()}
+			<OutlinedButton disabled={Boolean(videoDeletingId)} onclick={() => (videoDeleteModalOpen = false)}>취소</OutlinedButton>
+			<PrimaryButton loading={Boolean(videoDeletingId)} variant="destructive" onclick={() => void deleteVideo()}><Trash2 size={16} strokeWidth={2} /><span>삭제</span></PrimaryButton>
 		{/snippet}
 	</Modal>
 
