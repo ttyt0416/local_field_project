@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from app.presets import PresetCreateRequest, PresetValues
+from app.presets import PresetCreateRequest, PresetUpdateRequest, PresetValues
 
 
 class PresetRequestTest(unittest.TestCase):
@@ -15,6 +15,22 @@ class PresetRequestTest(unittest.TestCase):
 
         self.assertEqual(payload.name, "portrait")
         self.assertEqual(payload.values.model_dump(exclude_none=True), {"prompt": "a portrait", "cfg": 5.0})
+
+    def test_default_flag_is_supported(self) -> None:
+        create_payload = PresetCreateRequest(
+            type="t2i",
+            name="portrait",
+            values=PresetValues(prompt="a portrait"),
+            is_default=True,
+        )
+        update_payload = PresetUpdateRequest(
+            name="portrait",
+            values=PresetValues(prompt="a portrait"),
+            is_default=False,
+        )
+
+        self.assertTrue(create_payload.is_default)
+        self.assertFalse(update_payload.is_default)
 
     def test_unknown_value_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):

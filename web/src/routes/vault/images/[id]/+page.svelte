@@ -11,6 +11,7 @@
 	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 
 	type VaultImageDetail = {
@@ -76,19 +77,19 @@
 
 	async function generateFromParameters() {
 		if (!generation) return;
-		const params = new URLSearchParams({
+		imageGenerationStore.set({
 			prompt: generation.prompt,
 			negative_prompt: generation.negative_prompt,
 			checkpoint: generation.checkpoint,
-			cfg: String(generation.cfg),
-			steps: String(generation.steps),
-			width: String(generation.width),
-			height: String(generation.height),
+			cfg: generation.cfg,
+			steps: generation.steps,
+			width: generation.width,
+			height: generation.height,
 			seed: String(generation.seed),
-			loras: JSON.stringify(generation.loras)
+			loras: generation.loras.map(({ name, strength }) => ({ name, strength }))
 		});
 		try {
-			await goto(`/generate/image?${params.toString()}`);
+			await goto('/generate/image');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '이미지 생성 페이지로 이동하지 못했습니다.';
 		}
@@ -123,7 +124,7 @@
 </script>
 
 <svelte:head>
-	<title>이미지 생성 상세 · Local Field</title>
+	<title>이미지 상세 · Local Field</title>
 	<meta name="description" content="개인 이미지 생성 결과와 사용된 파라미터 상세" />
 </svelte:head>
 
@@ -143,7 +144,7 @@
 				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div>
 						<Typography as="p" variant="eyebrow">{generation.media_type} · {statusLabel(generation.status)}</Typography>
-						<Typography as="h1" variant="display" class="mt-3">이미지 생성 상세</Typography>
+						<Typography as="h1" variant="display" class="mt-3">이미지 상세</Typography>
 					</div>
 					<FileImage size={28} class="text-primary" strokeWidth={1.7} />
 				</div>

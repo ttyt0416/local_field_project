@@ -89,6 +89,21 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
         IF EXISTS (
             SELECT 1 FROM information_schema.tables
             WHERE table_schema = current_schema() AND table_name = 'presets'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'presets' AND column_name = 'is_default'
+        ) THEN
+            ALTER TABLE presets ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+    END
+    $$
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'presets'
         ) THEN
             ALTER TABLE presets DROP CONSTRAINT IF EXISTS presets_user_id_type_name_key;
         END IF;
@@ -149,11 +164,13 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         type VARCHAR(16) NOT NULL,
         name VARCHAR(100) NOT NULL,
         values JSONB NOT NULL DEFAULT '{}'::jsonb,
+        is_default BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     "CREATE INDEX IF NOT EXISTS presets_user_type_idx ON presets(user_id, type, updated_at DESC)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS presets_one_default_per_user_type_idx ON presets(user_id, type) WHERE is_default",
     """
     CREATE TABLE IF NOT EXISTS image_generations (
         id UUID PRIMARY KEY,
@@ -354,18 +371,25 @@ def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> boo
     return row is not None
 
 
-_PRESET_FIELDS = "id, user_id, type, name, values, created_at, updated_at"
+_PRESET_FIELDS = "id, user_id, type, name, values, is_default, created_at, updated_at"
 
 
-def create_preset(*, user_id: uuid.UUID, preset_type: str, name: str, values: dict[str, Any]) -> dict[str, Any]:
+def create_preset(
+    *, user_id: uuid.UUID, preset_type: str, name: str, values: dict[str, Any], is_default: bool = False
+) -> dict[str, Any]:
     with get_connection() as connection:
+        if is_default:
+            connection.execute(
+                "UPDATE presets SET is_default = FALSE WHERE user_id = %s AND type = %s",
+                (user_id, preset_type),
+            )
         row = connection.execute(
             f"""
-            INSERT INTO presets (id, user_id, type, name, values)
-            VALUES (%s, %s, %s, %s, %s::jsonb)
+            INSERT INTO presets (id, user_id, type, name, values, is_default)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s)
             RETURNING {_PRESET_FIELDS}
             """,
-            (uuid.uuid4(), user_id, preset_type, name, json.dumps(values, ensure_ascii=False)),
+            (uuid.uuid4(), user_id, preset_type, name, json.dumps(values, ensure_ascii=False), is_default),
         ).fetchone()
     return _preset_row(row)
 
@@ -380,17 +404,37 @@ def list_presets(*, user_id: uuid.UUID, preset_type: str) -> list[dict[str, Any]
 
 
 def update_preset(
-    *, preset_id: uuid.UUID, user_id: uuid.UUID, preset_type: str, name: str, values: dict[str, Any]
+    *,
+    preset_id: uuid.UUID,
+    user_id: uuid.UUID,
+    preset_type: str,
+    name: str,
+    values: dict[str, Any],
+    is_default: bool | None = None,
 ) -> dict[str, Any] | None:
     with get_connection() as connection:
+        target = connection.execute(
+            "SELECT id FROM presets WHERE id = %s AND user_id = %s AND type = %s FOR UPDATE",
+            (preset_id, user_id, preset_type),
+        ).fetchone()
+        if target is None:
+            return None
+        if is_default is True:
+            connection.execute(
+                "UPDATE presets SET is_default = FALSE WHERE user_id = %s AND type = %s AND id <> %s",
+                (user_id, preset_type, preset_id),
+            )
         row = connection.execute(
             f"""
             UPDATE presets
-            SET name = %s, values = %s::jsonb, updated_at = CURRENT_TIMESTAMP
+            SET name = %s,
+                values = %s::jsonb,
+                is_default = COALESCE(%s, is_default),
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = %s AND user_id = %s AND type = %s
             RETURNING {_PRESET_FIELDS}
             """,
-            (name, json.dumps(values, ensure_ascii=False), preset_id, user_id, preset_type),
+            (name, json.dumps(values, ensure_ascii=False), is_default, preset_id, user_id, preset_type),
         ).fetchone()
     return _preset_row(row) if row is not None else None
 

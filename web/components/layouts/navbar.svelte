@@ -30,7 +30,7 @@
 							<span class="hidden max-w-36 truncate sm:inline">{authStore.user?.username}</span>
 							<ChevronDown size={14} strokeWidth={1.8} class="transition-transform group-open:rotate-180" />
 						</summary>
-						<div class="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-border bg-card p-1.5 text-card-foreground shadow-xl">
+						<div class="absolute left-0 top-full z-50 mt-2 w-48 rounded-xl border border-border bg-card p-1.5 text-card-foreground shadow-xl">
 							<button type="button" class="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" onclick={logout}>
 								<LogOut size={15} strokeWidth={1.8} />
 								<span>로그아웃</span>

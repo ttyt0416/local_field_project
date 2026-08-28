@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Bookmark, Pencil, Plus, Trash2 } from '@lucide/svelte';
+	import { Bookmark, Check, Pencil, Plus, Trash2 } from '@lucide/svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
@@ -43,6 +43,7 @@
 		type: 't2i';
 		name: string;
 		values: PresetValues;
+		is_default: boolean;
 		saved_fields: string[];
 		created_at: string;
 		updated_at: string;
@@ -114,6 +115,7 @@
 	let deleteTarget = $state<Preset | null>(null);
 	let deleteModalOpen = $state(false);
 	let deleting = $state(false);
+	let defaultUpdatingId = $state<string | null>(null);
 
 	let checkpointOptions = $derived(options.checkpoints.map((value) => ({ value, label: value })));
 	let loraOptions = $derived(options.loras.map((value) => ({ value, label: value })));
@@ -306,6 +308,26 @@
 		}
 	}
 
+	async function setDefaultPreset(preset: Preset) {
+		if (defaultUpdatingId) return;
+		defaultUpdatingId = preset.id;
+		error = '';
+		try {
+			const updated = await apiJson<Preset>(`presets/${preset.id}`, {
+				method: 'PUT',
+				json: { name: preset.name, values: preset.values, is_default: !preset.is_default }
+			});
+			presets = presets.map((item) =>
+				item.id === updated.id ? updated : { ...item, is_default: false }
+			);
+			success = updated.is_default ? `'${updated.name}'을 기본 프리셋으로 설정했습니다.` : '기본 프리셋을 해제했습니다.';
+		} catch (reason) {
+			error = getErrorMessage(reason);
+		} finally {
+			defaultUpdatingId = null;
+		}
+	}
+
 	function savedPresetLabels(preset: Preset) {
 		const fields = new Set(preset.saved_fields);
 		if (fields.has('aspect_ratio')) {
@@ -369,11 +391,22 @@
 								<div class="flex items-center gap-2">
 									<Bookmark size={17} class="shrink-0 text-primary" strokeWidth={1.8} />
 									<h2 class="truncate text-base font-semibold">{preset.name}</h2>
+									{#if preset.is_default}
+										<span class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">기본 프리셋</span>
+									{/if}
 								</div>
 								<p class="mt-2 truncate text-xs text-muted-foreground">t2i · {savedPresetLabels(preset)}</p>
 								<p class="mt-1 text-xs text-muted-foreground">수정 {new Date(preset.updated_at).toLocaleString('ko-KR')}</p>
 							</div>
-							<div class="flex shrink-0 items-center gap-2">
+							<div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+								<OutlinedButton
+									class="px-3 text-xs"
+									loading={defaultUpdatingId === preset.id}
+									onclick={() => void setDefaultPreset(preset)}
+								>
+									{#if preset.is_default}<Check size={14} strokeWidth={2} />{/if}
+									<span>{preset.is_default ? '기본 해제' : '기본 프리셋으로 설정'}</span>
+								</OutlinedButton>
 								<OutlinedButton class="px-3 text-xs" onclick={() => openEdit(preset)}>
 									<Pencil size={14} strokeWidth={1.8} />
 									<span>수정</span>

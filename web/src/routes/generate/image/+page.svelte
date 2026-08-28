@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { FolderOpen, ImagePlus, Plus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
@@ -16,6 +15,7 @@
 	import { SERVER_URL } from '$lib/configs/constants';
 	import { apiJson, streamSse } from '$lib/utils/api';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 
 	type ImageOptions = {
 		checkpoints: string[];
@@ -64,6 +64,7 @@
 		type: 't2i';
 		name: string;
 		values: PresetValues;
+		is_default: boolean;
 		saved_fields: string[];
 		created_at: string;
 		updated_at: string;
@@ -160,10 +161,18 @@
 
 	let checkpointOptions = $derived(options.checkpoints.map((value) => ({ value, label: value })));
 	let loraOptions = $derived(options.loras.map((value) => ({ value, label: value })));
+	let explicitAspectSize: ImageSize | null = null;
 
 	$effect(() => {
 		const preset = aspectRatioPresets[aspectRatio];
 		if (!preset) return;
+		const size = explicitAspectSize;
+		explicitAspectSize = null;
+		if (size) {
+			width = size.width;
+			height = size.height;
+			return;
+		}
 		width = preset.width;
 		height = preset.height;
 	});
@@ -287,7 +296,7 @@
 		}
 	}
 
-	function loadPreset(preset: Preset) {
+	function applyPreset(preset: Preset, announce = false) {
 		const values = preset.values;
 		if (values.prompt !== undefined) prompt = values.prompt;
 		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
@@ -301,10 +310,31 @@
 		if (values.aspect_ratio !== undefined) aspectRatio = values.aspect_ratio;
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
+		if (values.width !== undefined || values.height !== undefined) {
+			explicitAspectSize = { width, height };
+		}
 		if (values.cfg !== undefined) cfg = values.cfg;
 		if (values.steps !== undefined) steps = values.steps;
-		loadPresetModalOpen = false;
-		presetSuccess = `'${preset.name}' 프리셋을 불러왔습니다. 저장된 항목만 적용했습니다.`;
+		if (announce) {
+			loadPresetModalOpen = false;
+			presetSuccess = `'${preset.name}' 프리셋을 불러왔습니다. 저장된 항목만 적용했습니다.`;
+		}
+	}
+
+	function loadPreset(preset: Preset) {
+		applyPreset(preset, true);
+	}
+
+	function applyGenerationParameters(parameters: ImageGenerationParameters) {
+		prompt = parameters.prompt;
+		negativePrompt = parameters.negative_prompt;
+		checkpoint = parameters.checkpoint;
+		loras = parameters.loras.map(({ name, strength }) => ({ name, strength }));
+		cfg = parameters.cfg;
+		steps = parameters.steps;
+		width = parameters.width;
+		height = parameters.height;
+		seed = parameters.seed;
 	}
 
 	function savedPresetLabels(preset: Preset) {
@@ -336,57 +366,25 @@
 			await goto('/login');
 			return;
 		}
+		const regenerationParameters = imageGenerationStore.consume();
 		ready = true;
 		try {
-			options = await apiJson<ImageOptions>('generation/image/options');
+			[presets, options] = await Promise.all([
+				apiJson<Preset[]>('presets?type=t2i'),
+				apiJson<ImageOptions>('generation/image/options')
+			]);
 			checkpoint = options.default_checkpoint;
-			loras = [];
-			loadGenerationParameters();
+			if (regenerationParameters) {
+				applyGenerationParameters(regenerationParameters);
+			} else {
+				const defaultPreset = presets.find((preset) => preset.is_default);
+				if (defaultPreset) applyPreset(defaultPreset);
+			}
 		} catch (error) {
 			optionsError = getErrorMessage(error);
 		} finally {
 			optionsLoading = false;
 		}
-	}
-
-	function loadGenerationParameters() {
-		const params = page.url.searchParams;
-		const queryPrompt = params.get('prompt');
-		if (!queryPrompt) return;
-		prompt = queryPrompt;
-		negativePrompt = params.get('negative_prompt') ?? negativePrompt;
-		const queryCheckpoint = params.get('checkpoint');
-		if (queryCheckpoint && options.checkpoints.includes(queryCheckpoint)) checkpoint = queryCheckpoint;
-		const queryLoras = params.get('loras');
-		if (queryLoras) {
-			try {
-				const parsed = JSON.parse(queryLoras) as unknown;
-				if (Array.isArray(parsed)) {
-					loras = parsed
-						.filter(
-							(value): value is LoraSelection =>
-								Boolean(value) &&
-								typeof value === 'object' &&
-								typeof value.name === 'string' &&
-								options.loras.includes(value.name) &&
-								typeof value.strength === 'number'
-						)
-						.map(({ name, strength }) => ({ name, strength }));
-				}
-			} catch {
-				loras = [];
-			}
-		}
-		const queryCfg = Number(params.get('cfg'));
-		const querySteps = Number(params.get('steps'));
-		const queryWidth = Number(params.get('width'));
-		const queryHeight = Number(params.get('height'));
-		if (Number.isFinite(queryCfg) && queryCfg >= 0 && queryCfg <= 20) cfg = queryCfg;
-		if (Number.isInteger(querySteps) && querySteps >= 1 && querySteps <= 100) steps = querySteps;
-		if (Number.isInteger(queryWidth) && queryWidth >= 64 && queryWidth <= 2048) width = queryWidth;
-		if (Number.isInteger(queryHeight) && queryHeight >= 64 && queryHeight <= 2048) height = queryHeight;
-		const querySeed = params.get('seed');
-		if (querySeed && /^\d+$/.test(querySeed)) seed = querySeed;
 	}
 
 	async function generate() {
@@ -723,7 +721,7 @@
 		</div>
 	</Layout>
 
-	<Modal bind:open={savePresetModalOpen} title="프리셋 저장" description="이름과 저장할 설정 항목을 선택해 주세요." closeOnBackdrop={!savingPreset}>
+	<Modal bind:open={savePresetModalOpen} title="프리셋 저장" closeOnBackdrop={!savingPreset}>
 		<div class="space-y-5">
 			<label class="block space-y-2" for="preset-name">
 				<span class="text-sm font-medium">프리셋 이름</span>
@@ -772,13 +770,13 @@
 		{/snippet}
 	</Modal>
 
-	<Modal bind:open={loadPresetModalOpen} title="프리셋 불러오기" description="선택한 프리셋의 저장 항목만 현재 설정에 적용합니다." closeOnBackdrop={!presetsLoading}>
+	<Modal bind:open={loadPresetModalOpen} title="프리셋 불러오기" closeOnBackdrop={!presetsLoading}>
 		{#if presetsLoading}
 			<div class="flex justify-center py-8"><LoadingSpinner size="md" label="프리셋 불러오는 중" /></div>
 		{:else if presetError}
 			<p class="py-4 text-sm text-destructive" role="alert">{presetError}</p>
 		{:else if presets.length === 0}
-			<p class="py-4 text-sm text-muted-foreground">저장된 t2i 프리셋이 없습니다.</p>
+			<p class="py-4 text-sm text-muted-foreground">저장된 프리셋이 없습니다.</p>
 		{:else}
 			<div class="space-y-2">
 				{#each presets as preset (preset.id)}

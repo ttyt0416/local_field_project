@@ -45,6 +45,7 @@ class PresetCreateRequest(BaseModel):
     type: PresetType
     name: str = Field(min_length=1, max_length=100)
     values: PresetValues
+    is_default: bool = False
 
     @field_validator("name")
     @classmethod
@@ -60,6 +61,7 @@ class PresetUpdateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=100)
     values: PresetValues
+    is_default: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -75,6 +77,7 @@ class PresetResponse(BaseModel):
     type: str
     name: str
     values: dict[str, Any]
+    is_default: bool
     saved_fields: list[str]
     created_at: datetime
     updated_at: datetime
@@ -102,6 +105,7 @@ def save_preset(
             preset_type=payload.type,
             name=payload.name,
             values=values,
+            is_default=payload.is_default,
         )
     )
 
@@ -121,6 +125,7 @@ def edit_preset(
         preset_type="t2i",
         name=payload.name,
         values=values,
+        is_default=payload.is_default,
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="프리셋을 찾을 수 없습니다.")
@@ -144,6 +149,7 @@ def _response(row: dict[str, Any]) -> PresetResponse:
         type=row["type"],
         name=row["name"],
         values=values,
+        is_default=row["is_default"],
         saved_fields=list(values),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
