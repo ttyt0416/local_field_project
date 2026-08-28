@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { ArrowLeft, Copy, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
@@ -42,6 +42,8 @@
 	let ready = $state(false);
 	let generation = $state<VaultImageDetail | null>(null);
 	let error = $state('');
+	let copyError = $state('');
+	let copySuccess = $state('');
 	let deleteModalOpen = $state(false);
 	let deleting = $state(false);
 	let favoriteUpdating = $state(false);
@@ -137,6 +139,17 @@
 	function imageSourceType(url: string): 'server' | 'external' {
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
 	}
+
+	async function copyPrompt(prompt: string, label: string) {
+		copyError = '';
+		copySuccess = '';
+		try {
+			await navigator.clipboard.writeText(prompt);
+			copySuccess = `${label}를 복사했습니다.`;
+		} catch {
+			copyError = `${label}를 복사하지 못했습니다.`;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -227,11 +240,21 @@
 
 			<section class="grid gap-6 lg:grid-cols-2">
 				<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-					<Typography as="h2" variant="h2">사용된 긍정 프롬프트</Typography>
+					<div class="flex items-center justify-between gap-3">
+						<Typography as="h2" variant="h2">사용된 긍정 프롬프트</Typography>
+						<IconOutlinedButton ariaLabel="긍정 프롬프트 복사" onclick={() => void copyPrompt(generation!.prompt, '긍정 프롬프트')}>
+							<Copy size={16} strokeWidth={1.8} />
+						</IconOutlinedButton>
+					</div>
 					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p>
 				</div>
 				<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-					<Typography as="h2" variant="h2">부정 프롬프트</Typography>
+					<div class="flex items-center justify-between gap-3">
+						<Typography as="h2" variant="h2">부정 프롬프트</Typography>
+						<IconOutlinedButton ariaLabel="부정 프롬프트 복사" onclick={() => void copyPrompt(generation!.negative_prompt, '부정 프롬프트')}>
+							<Copy size={16} strokeWidth={1.8} />
+						</IconOutlinedButton>
+					</div>
 					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.negative_prompt}</p>
 				</div>
 			</section>
@@ -286,5 +309,13 @@
 {#if error}
 	<div class="fixed right-4 top-4 z-50">
 		<Toast state="negative" title="상세 조회 실패" message={error} onclose={() => (error = '')} />
+	</div>
+{:else if copyError}
+	<div class="fixed right-4 top-4 z-50">
+		<Toast state="negative" title="프롬프트 복사 실패" message={copyError} onclose={() => (copyError = '')} />
+	</div>
+{:else if copySuccess}
+	<div class="fixed right-4 top-4 z-50">
+		<Toast state="positive" title="프롬프트 복사" message={copySuccess} onclose={() => (copySuccess = '')} />
 	</div>
 {/if}

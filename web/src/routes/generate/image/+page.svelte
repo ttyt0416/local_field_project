@@ -147,6 +147,7 @@
 	let cfg = $state(4);
 	let steps = $state(30);
 	let seed = $state('');
+	let randomSeed = $state(true);
 	let aspectRatio = $state<AspectRatio>('custom');
 	let width = $state(1024);
 	let height = $state(1024);
@@ -327,6 +328,7 @@
 		width = parameters.width;
 		height = parameters.height;
 		seed = parameters.seed;
+		randomSeed = !parameters.seed.trim();
 	}
 
 	function savedPresetLabels(preset: Preset) {
@@ -364,19 +366,13 @@
 	});
 
 	async function initialize() {
+		resetResult();
 		await authStore.initialize();
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
 			return;
 		}
 		await generationJobStore.initialize();
-		const latestJob = generationJobStore.latest('image');
-		if (latestJob) {
-			imageJobKey = latestJob.key;
-			promptId = latestJob.promptId;
-			generationId = latestJob.generationId;
-			generating = latestJob.status !== 'completed' && latestJob.status !== 'failed';
-		}
 		const regenerationParameters = imageGenerationStore.consume();
 		ready = true;
 		try {
@@ -399,6 +395,8 @@
 	}
 
 	async function generate() {
+		imageJobKey = '';
+		promptId = '';
 		generationError = '';
 		successMessage = '';
 		imageUrl = '';
@@ -419,6 +417,10 @@
 		}
 		if (!checkpoint) {
 			generationError = '체크포인트를 선택해 주세요.';
+			return;
+		}
+		if (!randomSeed && !seed.trim()) {
+			generationError = '시드를 입력하거나 무작위 시드를 선택해 주세요.';
 			return;
 		}
 		if (width % 8 !== 0 || height % 8 !== 0) {
@@ -442,7 +444,7 @@
 					steps,
 					width,
 					height,
-					seed: seed || null
+					seed: randomSeed ? null : seed.trim() || null
 				}
 			});
 			promptId = queued.prompt_id;
@@ -500,6 +502,19 @@
 			completed: '완료',
 			failed: '실패'
 		}[status] ?? status;
+	}
+
+	function resetResult() {
+		generationError = '';
+		successMessage = '';
+		generationStatus = '';
+		progress = 0;
+		queuePosition = null;
+		promptId = '';
+		imageUrl = '';
+		generationId = '';
+		imageJobKey = '';
+		generating = false;
 	}
 
 	function getErrorMessage(error: unknown) {
@@ -676,9 +691,20 @@
 								<span class="text-sm font-medium">Steps</span>
 								<input id="steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} />
 							</label>
-						</div>
+							</div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+							<div class="grid gap-4 sm:grid-cols-2">
+							<label class="block space-y-2" for="seed">
+								<span class="text-sm font-medium">Seed</span>
+								<input id="seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={numberInputClass} />
+							</label>
+							<label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5">
+								<input id="random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" />
+								<span>무작위 시드</span>
+							</label>
+							</div>
+
+							<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
 							<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="w-full">
 								<Sparkles size={17} strokeWidth={1.9} />
 								<span>{generating ? '생성 중' : '이미지 생성'}</span>

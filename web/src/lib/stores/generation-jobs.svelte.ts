@@ -72,10 +72,6 @@ class GenerationJobStore {
 		return key;
 	}
 
-	latest(kind: GenerationJobKind) {
-		return this.list.find((job) => job.kind === kind) ?? null;
-	}
-
 	waitForTerminal(key: string) {
 		const job = this.jobs[key];
 		if (!job || isTerminal(job.status)) return Promise.resolve();

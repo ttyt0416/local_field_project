@@ -65,20 +65,13 @@
 	});
 
 	async function initialize() {
+		resetResult();
 		await authStore.initialize();
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
 			return;
 		}
 		await generationJobStore.initialize();
-		const latestJob = generationJobStore.latest('video');
-		if (latestJob) {
-			videoJobKey = latestJob.key;
-			mode = latestJob.mode ?? mode;
-			status = latestJob.status;
-			videoUrl = latestJob.videoUrl ?? '';
-			generating = latestJob.status !== 'completed' && latestJob.status !== 'failed';
-		}
 		applyPendingSelection();
 		ready = true;
 	}
@@ -141,6 +134,7 @@
 	}
 
 	async function generate() {
+		videoJobKey = '';
 		error = '';
 		success = '';
 		videoUrl = '';
@@ -201,6 +195,15 @@
 
 	function statusLabel(value: string) {
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패' }[value] ?? value;
+	}
+
+	function resetResult() {
+		status = '';
+		videoUrl = '';
+		error = '';
+		success = '';
+		videoJobKey = '';
+		generating = false;
 	}
 </script>
 

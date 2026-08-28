@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { CheckCircle2, Info, X, XCircle } from '@lucide/svelte';
+	import { onMount } from 'svelte';
 
 	type ToastState = 'positive' | 'negative' | 'info';
 	type Props = {
@@ -10,6 +11,13 @@
 	};
 
 	let { state = 'info', title, message, onclose }: Props = $props();
+
+	onMount(() => {
+		if (!onclose) return;
+		const timer = setTimeout(onclose, 1000);
+		return () => clearTimeout(timer);
+	});
+
 	const styles = $derived(
 		state === 'positive'
 			? 'border-success/30 bg-success/10 text-success'
