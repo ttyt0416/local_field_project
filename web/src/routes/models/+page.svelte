@@ -208,7 +208,6 @@
 			<div class="flex flex-wrap items-end justify-between gap-4">
 				<div>
 					<Typography as="h1" variant="display">civitai 다운로드</Typography>
-					<Typography as="p" variant="muted" class="mt-2">Civitai 모델을 ComfyUI에서 사용할 수 있는 폴더에 저장합니다.</Typography>
 				</div>
 				<OutlinedButton class="gap-2" onclick={() => void refresh()}><RefreshCw size={16} />새로고침</OutlinedButton>
 			</div>
@@ -246,7 +245,7 @@
 			{#if error}<div class="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">{error}</div>{/if}
 
 			<section class="space-y-3">
-				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">다운로드 상태</Typography><span class="text-xs text-muted-foreground">브라우저와 무관하게 서버에서 계속 진행됩니다.</span></div>
+				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">다운로드 상태</Typography></div>
 				{#if jobs.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">요청한 모델 다운로드가 없습니다.</div>
 				{:else}<div class="space-y-3">{#each jobs as job (job.id)}<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="truncate text-sm font-semibold" title={job.filename}>{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div><span class={`rounded-full px-2.5 py-1 text-xs font-semibold ${job.status === 'completed' ? 'bg-success/10 text-success' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}`}>{statusLabels[job.status] ?? job.status}</span></div>{#if job.status === 'queued' || job.status === 'downloading'}<div class="h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>{:else if job.status === 'failed'}<div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-destructive">{job.error_message ?? '다운로드에 실패했습니다.'}</p><button type="button" class="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted" onclick={() => void retryJob(job.id)}>다시 시도</button></div>{:else}<p class="text-xs text-success">{formatSize(job.total_bytes ?? job.downloaded_bytes)} · ComfyUI 모델 폴더에 저장됨</p>{/if}</article>{/each}</div>{/if}
 			</section>

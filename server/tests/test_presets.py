@@ -31,12 +31,23 @@ class PresetRequestTest(unittest.TestCase):
 
         self.assertTrue(create_payload.is_default)
         self.assertFalse(update_payload.is_default)
+        self.assertEqual(update_payload.type, "t2i")
 
     def test_unknown_value_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
             PresetCreateRequest.model_validate({"type": "t2i", "name": "portrait", "values": {"unknown": "value"}})
 
-    def test_only_t2i_type_is_supported(self) -> None:
+    def test_image_and_video_types_are_supported(self) -> None:
+        payload = PresetCreateRequest(
+            type="video",
+            name="  motion  ",
+            values=PresetValues(prompt="a moving portrait", mode="i2v", width=1344, height=768, duration=5, random_seed=True),
+        )
+
+        self.assertEqual(payload.type, "video")
+        self.assertEqual(payload.values.mode, "i2v")
+
+    def test_unknown_type_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
             PresetCreateRequest.model_validate({"type": "i2v", "name": "portrait", "values": {"prompt": "a portrait"}})
 

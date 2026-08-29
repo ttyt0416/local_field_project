@@ -12,8 +12,9 @@ from .database import create_preset, delete_preset, list_presets, update_preset
 
 
 router = APIRouter(prefix="/presets", tags=["presets"])
-PresetType = Literal["t2i"]
+PresetType = Literal["t2i", "video"]
 PresetAspectRatio = Literal["custom", "2:3", "3:2", "1:1", "16:9", "9:16"]
+PresetVideoMode = Literal["i2v", "fl2v", "r2v"]
 
 
 class PresetLora(BaseModel):
@@ -33,10 +34,14 @@ class PresetValues(BaseModel):
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
     loras: list[PresetLora] | None = Field(default=None, max_length=8)
     aspect_ratio: PresetAspectRatio | None = None
-    width: int | None = Field(default=None, ge=64, le=2048)
-    height: int | None = Field(default=None, ge=64, le=2048)
+    width: int | None = Field(default=None, ge=32, le=2048)
+    height: int | None = Field(default=None, ge=32, le=2048)
     cfg: float | None = Field(default=None, ge=0, le=20)
     steps: int | None = Field(default=None, ge=1, le=100)
+    mode: PresetVideoMode | None = None
+    duration: float | None = Field(default=None, ge=1, le=15)
+    seed: str | None = Field(default=None, min_length=1, max_length=19, pattern=r"^[0-9]+$")
+    random_seed: bool | None = None
 
 
 class PresetCreateRequest(BaseModel):
@@ -59,6 +64,7 @@ class PresetCreateRequest(BaseModel):
 class PresetUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    type: PresetType = "t2i"
     name: str = Field(min_length=1, max_length=100)
     values: PresetValues
     is_default: bool | None = None
@@ -122,7 +128,7 @@ def edit_preset(
     row = update_preset(
         preset_id=preset_id,
         user_id=user.id,
-        preset_type="t2i",
+        preset_type=payload.type,
         name=payload.name,
         values=values,
         is_default=payload.is_default,
@@ -135,9 +141,10 @@ def edit_preset(
 @router.delete("/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_preset(
     preset_id: UUID,
+    preset_type: PresetType = Query(default="t2i", alias="type"),
     user: UserResponse = Depends(current_user),
 ) -> Response:
-    if not delete_preset(preset_id=preset_id, user_id=user.id, preset_type="t2i"):
+    if not delete_preset(preset_id=preset_id, user_id=user.id, preset_type=preset_type):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="프리셋을 찾을 수 없습니다.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

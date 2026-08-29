@@ -71,7 +71,7 @@
 		aria-describedby={description ? 'modal-description' : undefined}
 		onclick={handleBackdropClick}
 	>
-		<div class="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl">
+		<div class="flex max-h-[80dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl">
 			<header class="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
 				<div class="min-w-0">
 					<h2 id="modal-title" class="text-lg font-semibold tracking-tight">{title}</h2>

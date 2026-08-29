@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { AudioLines, Image as ImageIcon, Library, Video } from '@lucide/svelte';
+	import { AudioLines, Image as ImageIcon, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
@@ -86,7 +86,7 @@
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<div class="flex flex-wrap items-end justify-between gap-4"><div><Typography as="h1" variant="display">업로드 콘텐츠</Typography><Typography as="p" variant="muted" class="mt-2">동영상 생성에 사용자가 업로드한 이미지·동영상·오디오를 다시 사용할 수 있습니다.</Typography></div><a href="/generate/video" class="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"><Library size={16} />동영상 생성</a></div>
+			<div class="flex flex-wrap items-end justify-between gap-4"><div><Typography as="h1" variant="display">업로드 콘텐츠</Typography></div></div>
 			<div class="flex flex-wrap gap-2" role="tablist" aria-label="콘텐츠 종류">
 				{#each [{ value: 'all', label: '전체' }, { value: 'image', label: '이미지' }, { value: 'audio', label: '오디오' }, { value: 'video', label: '동영상' }] as item}
 					<button type="button" role="tab" aria-selected={filter === item.value} onclick={() => (filter = item.value as Filter)} class={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${filter === item.value ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>
