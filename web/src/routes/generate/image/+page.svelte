@@ -472,7 +472,7 @@
 				improved_prompt: { contents: string };
 			}>('generation/image/enhance-prompt', {
 				method: 'POST',
-				timeout: 120_000,
+				timeout: 600_000,
 				json: { prompt: prompt.trim() }
 			});
 			const resultPrompt = result.improved_prompt.contents.trim();

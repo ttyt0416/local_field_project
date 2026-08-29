@@ -37,6 +37,7 @@ from .storage import StorageError, enabled as storage_enabled, read_url as stora
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
 _DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"
 _COMFYUI_TIMEOUT_SECONDS = 30
+_VLLM_TIMEOUT_SECONDS = 600
 _SSE_HEARTBEAT_SECONDS = 15
 _MAX_SEED = 2**63 - 1
 
@@ -683,7 +684,7 @@ def _request_vllm_json(payload: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=60) as response:
+        with urlopen(request, timeout=_VLLM_TIMEOUT_SECONDS) as response:
             decoded = json.loads(response.read())
     except UrlHTTPError as exc:
         raise _VLLMError(f"vLLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc

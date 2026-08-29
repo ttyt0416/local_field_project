@@ -348,6 +348,7 @@
 		try {
 			const result = await apiJson<{ improved_prompt: { contents: string } }>('generation/video/enhance-prompt', {
 				method: 'POST',
+				timeout: 600_000,
 				json: {
 					prompt: prompt.trim(),
 					mode,
