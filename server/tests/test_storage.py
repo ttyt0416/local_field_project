@@ -21,6 +21,24 @@ class _Response:
         return self._body
 
 
+class _DownloadHeaders:
+    def get_content_type(self) -> str:
+        return "image/png"
+
+
+class _DownloadResponse:
+    headers = _DownloadHeaders()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self) -> bytes:
+        return b"image"
+
+
 class StorageClientTest(unittest.TestCase):
     def test_upload_file_sends_owner_and_authentication(self) -> None:
         with (
@@ -59,6 +77,22 @@ class StorageClientTest(unittest.TestCase):
         self.assertEqual(request.full_url, "https://storage.example/files/file%2Fid/url?expires_in=60")
         self.assertEqual(request.get_header("Authorization"), "Bearer service-token")
         self.assertEqual(request.get_header("X-owner-id"), "user-id")
+
+    def test_download_file_reads_signed_path_through_internal_storage_url(self) -> None:
+        with (
+            patch(
+                "app.storage.settings",
+                replace(storage.settings, storage_url="http://storage.internal:8090", storage_api_token="service-token"),
+            ),
+            patch.object(storage, "read_url", return_value="https://storage.5ddd.org/files/file-id?expires=123&signature=signed"),
+            patch("app.storage.urlopen", return_value=_DownloadResponse()) as open_url,
+        ):
+            content, media_type = storage.download_file(file_id="file-id", owner_id="user-id")
+
+        self.assertEqual(content, b"image")
+        self.assertEqual(media_type, "image/png")
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "http://storage.internal:8090/files/file-id?expires=123&signature=signed")
 
     def test_delete_file_accepts_no_content(self) -> None:
         with (

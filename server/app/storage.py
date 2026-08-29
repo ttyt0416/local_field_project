@@ -4,8 +4,10 @@ import json
 from time import monotonic
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
-from urllib.parse import urlencode
 from urllib.parse import quote
+from urllib.parse import urlencode
+from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
@@ -76,7 +78,10 @@ def read_url(*, file_id: str, owner_id: str, expires_in: int = 900) -> str:
 
 
 def download_file(*, file_id: str, owner_id: str) -> tuple[bytes, str]:
-    url = read_url(file_id=file_id, owner_id=owner_id, expires_in=300)
+    public_url = read_url(file_id=file_id, owner_id=owner_id, expires_in=300)
+    signed = urlsplit(public_url)
+    internal = urlsplit(settings.storage_url)
+    url = urlunsplit((internal.scheme, internal.netloc, signed.path, signed.query, ""))
     try:
         with urlopen(UrlRequest(url), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
             return response.read(), response.headers.get_content_type()
