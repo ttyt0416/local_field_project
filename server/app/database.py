@@ -1024,8 +1024,8 @@ def update_video_generation_status(
             SET status = %s,
                 storage_file_id = COALESCE(%s, storage_file_id),
                 filename = COALESCE(%s, filename),
-                subfolder = CASE WHEN %s IS NULL THEN subfolder ELSE %s END,
-                video_type = CASE WHEN %s IS NULL THEN video_type ELSE %s END,
+                subfolder = COALESCE(%s::varchar, subfolder),
+                video_type = COALESCE(%s::varchar, video_type),
                 completed_at = CASE WHEN %s IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END
             WHERE prompt_id = %s AND user_id = %s
             """,
@@ -1034,9 +1034,7 @@ def update_video_generation_status(
                 storage_file_id,
                 filename,
                 subfolder if filename is not None else None,
-                subfolder,
                 video_type if filename is not None else None,
-                video_type,
                 status,
                 prompt_id,
                 user_id,
