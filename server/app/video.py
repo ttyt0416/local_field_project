@@ -7,6 +7,7 @@ import mimetypes
 import re
 import secrets
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 from urllib.error import HTTPError as UrlHTTPError
@@ -16,11 +17,20 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
-from .comfyui import _ComfyUIError, _comfy_url, _request_bytes, _request_json
+from .comfyui import (
+    PromptEnhancementContent,
+    PromptEnhancementResponse,
+    _ComfyUIError,
+    _VLLMError,
+    _comfy_url,
+    _request_bytes,
+    _request_json,
+    _request_structured_object,
+)
 from .database import (
     create_media_asset,
     create_video_generation,
@@ -36,6 +46,7 @@ from .storage import (
     read_url as storage_read_url,
     upload_file as storage_upload_file,
 )
+from .prompts import VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT, VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT
 
 
 router = APIRouter(prefix="/generation/video", tags=["video generation"])
@@ -44,6 +55,19 @@ _ALLOWED_MODES = {"i2v", "fl2v", "r2v"}
 _MAX_SEED = 2**63 - 1
 _MAX_INPUT_SIZE = 50 * 1024 * 1024
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_VIDEO_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
+_VIDEO_PROMPT_LANGUAGE_CHARS = {
+    "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
+    "en": r"A-Za-z",
+    "ja": r"\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
+}
+_VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
+_VIDEO_PROMPT_FIELDS = ("style", "timeline", "camera", "audio", "text", "negative")
+_VIDEO_PROMPT_SECTION_LABELS = {
+    "ko": ("스타일:", "타임라인:", "카메라:", "오디오:", "텍스트:", "부정:"),
+    "en": ("Style:", "Timeline:", "Camera:", "Audio:", "Text:", "Negative:"),
+    "ja": ("スタイル:", "タイムライン:", "カメラ:", "オーディオ:", "テキスト:", "ネガティブ:"),
+}
 
 
 class VideoAsset(BaseModel):
@@ -54,6 +78,9 @@ class VideoAsset(BaseModel):
 
 class VideoGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
+    prompt_enhancement_enabled: bool = False
+    improved_prompt: str | None = Field(default=None, max_length=5000)
+    prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
     width: int = Field(default=1344, ge=32, le=1344)
     height: int = Field(default=768, ge=32, le=1344)
     duration: float = Field(default=5, ge=1, le=15)
@@ -63,6 +90,27 @@ class VideoGenerationRequest(BaseModel):
     reference_images: list[VideoAsset] = Field(default_factory=list, max_length=9)
     reference_videos: list[VideoAsset] = Field(default_factory=list, max_length=3)
     reference_audios: list[VideoAsset] = Field(default_factory=list, max_length=3)
+
+    @field_validator("prompt_output_languages")
+    @classmethod
+    def unique_prompt_output_languages(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("동영상 프롬프트 출력 언어는 중복 선택할 수 없습니다.")
+        return value
+
+
+class VideoPromptEnhancementRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=5000)
+    mode: Literal["i2v", "fl2v", "r2v"]
+    duration: float = Field(default=5, ge=1, le=15)
+    prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
+
+    @field_validator("prompt_output_languages")
+    @classmethod
+    def unique_prompt_output_languages(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("동영상 프롬프트 출력 언어는 중복 선택할 수 없습니다.")
+        return value
 
 
 class VideoGenerationAccepted(BaseModel):
@@ -96,6 +144,17 @@ class _ResolvedAsset:
         self.kind = kind
 
 
+@router.post("/enhance-prompt", response_model=PromptEnhancementResponse)
+def enhance_video_prompt(
+    payload: VideoPromptEnhancementRequest,
+    _: UserResponse = Depends(current_user),
+) -> PromptEnhancementResponse:
+    try:
+        return _enhance_video_prompt(payload)
+    except _VLLMError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
 @router.post("/{mode}", response_model=VideoGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_video(
     mode: Literal["i2v", "fl2v", "r2v"],
@@ -108,8 +167,9 @@ async def create_video(
     try:
         request = VideoGenerationRequest.model_validate_json(payload)
         _validate_request(mode, request, files)
+        effective_prompt = _effective_video_prompt(mode, request)
         resolved = await _resolve_assets(mode, request, files, user)
-        prompt, seed = _build_prompt(mode, request, resolved)
+        prompt, seed = _build_prompt(mode, request, resolved, effective_prompt=effective_prompt)
         client_id = str(uuid.uuid4())
         response = _request_json("POST", "/prompt", {"prompt": prompt, "client_id": client_id})
     except (StorageError, _ComfyUIError) as exc:
@@ -126,7 +186,7 @@ async def create_video(
         prompt_id=prompt_id,
         client_id=client_id,
         mode=mode,
-        prompt=request.prompt.strip(),
+        prompt=effective_prompt,
         width=request.width,
         height=request.height,
         length=_frame_length(request.duration),
@@ -328,7 +388,167 @@ async def _resolve_assets(
     return resolved
 
 
-def _build_prompt(mode: str, request: VideoGenerationRequest, resolved: dict[str, _ResolvedAsset]) -> tuple[dict[str, dict[str, Any]], int]:
+def _video_prompt_pattern(languages: Sequence[str]) -> str:
+    if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_CHARS for language in languages):
+        raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
+    language_chars = "".join(_VIDEO_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
+    return rf"^(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|image|video|audio)+$"
+
+
+def _video_prompt_section_labels(languages: Sequence[str]) -> tuple[str, ...]:
+    if not languages or languages[0] not in _VIDEO_PROMPT_SECTION_LABELS:
+        raise ValueError("동영상 프롬프트 출력 언어가 없습니다.")
+    return _VIDEO_PROMPT_SECTION_LABELS[languages[0]]
+
+
+def _validate_video_prompt_contents(contents: str, languages: Sequence[str]) -> str:
+    contents = contents.strip()
+    if not re.fullmatch(_video_prompt_pattern(languages), contents):
+        raise _VLLMError("동영상 프롬프트에 선택하지 않은 언어 또는 허용되지 않은 문자가 포함되어 있습니다.")
+    labels = _video_prompt_section_labels(languages)
+    positions: list[int] = []
+    for label in labels:
+        match = re.search(rf"(?m)^{re.escape(label)}[ ]*$", contents)
+        if match is None:
+            raise _VLLMError("동영상 프롬프트의 Atlas 6블록 형식이 올바르지 않습니다.")
+        positions.append(match.start())
+    if positions != sorted(positions):
+        raise _VLLMError("동영상 프롬프트의 Atlas 6블록 순서가 올바르지 않습니다.")
+    for index, position in enumerate(positions):
+        end = positions[index + 1] if index + 1 < len(positions) else len(contents)
+        if not contents[position:end].split("\n", 1)[-1].strip():
+            raise _VLLMError("동영상 프롬프트의 Atlas 6블록 내용이 비어 있습니다.")
+    return contents
+
+
+def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhancementResponse:
+    languages = payload.prompt_output_languages
+    pattern = _video_prompt_pattern(languages)
+    fields = _request_structured_object(
+        system_prompt=VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+        user_prompt=VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT.format(
+            prompt=payload.prompt.strip(),
+            mode=payload.mode,
+            duration=payload.duration,
+            languages=", ".join(_VIDEO_PROMPT_LANGUAGE_NAMES[language] for language in languages),
+        ),
+        max_tokens=1536,
+        temperature=0.8,
+        schema=_video_prompt_fields_schema(pattern),
+        name="video_prompt_fields",
+    )
+    fields = _validate_video_prompt_fields(fields, pattern)
+    contents = _assemble_video_prompt(fields, languages)
+    return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
+
+
+def _video_prompt_fields_schema(pattern: str) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            field: {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": pattern}
+            for field in _VIDEO_PROMPT_FIELDS
+        },
+        "required": list(_VIDEO_PROMPT_FIELDS),
+        "additionalProperties": False,
+    }
+
+
+def _validate_video_prompt_fields(fields: dict[str, Any], pattern: str) -> dict[str, str]:
+    if set(fields) != set(_VIDEO_PROMPT_FIELDS):
+        raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드가 올바르지 않습니다.")
+    validated: dict[str, str] = {}
+    for field in _VIDEO_PROMPT_FIELDS:
+        value = fields[field]
+        if not isinstance(value, str) or not value.strip() or not re.fullmatch(pattern, value.strip()):
+            raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드에 허용되지 않은 값이 있습니다.")
+        validated[field] = value.strip()
+    return validated
+
+
+def _assemble_video_prompt(fields: dict[str, str], languages: Sequence[str]) -> str:
+    labels = _video_prompt_section_labels(languages)
+    contents = "\n".join(
+        f"{label}\n{fields[field]}" for label, field in zip(labels, _VIDEO_PROMPT_FIELDS, strict=True)
+    )
+    if len(contents) > 5000:
+        raise _VLLMError("조립된 동영상 프롬프트가 길이 제한을 초과했습니다.")
+    return contents
+
+
+def _video_reference_prompt(mode: str, request: VideoGenerationRequest) -> str:
+    language = request.prompt_output_languages[0]
+    if language == "ko":
+        heading = "참조:"
+        descriptions = {
+            "i2v_first": "시작 이미지 참조. 주체와 구도를 유지합니다.",
+            "fl2v_first": "첫 프레임 참조. 시작 구도를 유지합니다.",
+            "fl2v_last": "마지막 프레임 참조. 종료 구도를 유지합니다.",
+            "image": "이미지 참조. 주체와 시각적 정체성을 유지합니다.",
+            "video": "동영상 참조. 움직임의 리듬과 카메라 동작을 참고합니다.",
+            "audio": "오디오 참조. 분위기와 타이밍을 참고합니다.",
+        }
+    elif language == "ja":
+        heading = "参照:"
+        descriptions = {
+            "i2v_first": "開始画像の参照。被写体と構図を維持します。",
+            "fl2v_first": "最初のフレームの参照。開始構図を維持します。",
+            "fl2v_last": "最後のフレームの参照。終了構図を維持します。",
+            "image": "画像の参照。被写体と視覚的な一貫性を維持します。",
+            "video": "動画の参照。動きのリズムとカメラ動作を参考にします。",
+            "audio": "音声の参照。雰囲気とタイミングを参考にします。",
+        }
+    else:
+        heading = "Reference:"
+        descriptions = {
+            "i2v_first": "start-image reference. Preserve the subject and composition.",
+            "fl2v_first": "first-frame reference. Preserve the opening composition.",
+            "fl2v_last": "last-frame reference. Preserve the closing composition.",
+            "image": "image reference. Preserve the subject and visual identity.",
+            "video": "video reference. Follow its motion rhythm and camera movement.",
+            "audio": "audio reference. Follow its mood and timing.",
+        }
+    lines = [heading]
+    if mode == "i2v":
+        lines.append(f"@image1: {descriptions['i2v_first']}")
+    elif mode == "fl2v":
+        lines.extend(
+            [
+                f"@image1: {descriptions['fl2v_first']}",
+                f"@image2: {descriptions['fl2v_last']}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                *(f"@image{index}: {descriptions['image']}" for index, _ in enumerate(request.reference_images, start=1)),
+                *(f"@video{index}: {descriptions['video']}" for index, _ in enumerate(request.reference_videos, start=1)),
+                *(f"@audio{index}: {descriptions['audio']}" for index, _ in enumerate(request.reference_audios, start=1)),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _effective_video_prompt(mode: str, request: VideoGenerationRequest) -> str:
+    if not request.prompt_enhancement_enabled:
+        return request.prompt.strip()
+    improved_prompt = (request.improved_prompt or "").strip()
+    if not improved_prompt:
+        raise HTTPException(status_code=422, detail="개선된 프롬프트를 먼저 생성해 주세요.")
+    try:
+        improved_prompt = _validate_video_prompt_contents(improved_prompt, request.prompt_output_languages)
+    except _VLLMError as exc:
+        raise HTTPException(status_code=422, detail="개선된 동영상 프롬프트 형식이 올바르지 않습니다.") from exc
+    return f"{_video_reference_prompt(mode, request)}\n\n{improved_prompt}"
+
+
+def _build_prompt(
+    mode: str,
+    request: VideoGenerationRequest,
+    resolved: dict[str, _ResolvedAsset],
+    *,
+    effective_prompt: str | None = None,
+) -> tuple[dict[str, dict[str, Any]], int]:
     try:
         with (_WORKFLOW_DIR / f"video_{mode}.json").open(encoding="utf-8") as handle:
             prompt = json.load(handle)
@@ -336,11 +556,12 @@ def _build_prompt(mode: str, request: VideoGenerationRequest, resolved: dict[str
         raise _ComfyUIError(f"{mode} 영상 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
+    effective_prompt = effective_prompt if effective_prompt is not None else _effective_video_prompt(mode, request)
     for node in prompt.values():
         if isinstance(node, dict) and isinstance(node.get("inputs"), dict):
             inputs = node["inputs"]
             if "prompt" in inputs and node.get("class_type") in {"MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"}:
-                inputs["prompt"] = request.prompt.strip()
+                inputs["prompt"] = effective_prompt
             if node.get("class_type") == "RandomNoise":
                 inputs["noise_seed"] = seed
             if node.get("class_type") in {"MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"}:

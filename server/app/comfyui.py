@@ -594,7 +594,46 @@ def _request_structured_content(
     user_prompt: str,
     max_tokens: int,
     temperature: float,
+    pattern: str = r"^[A-Za-z0-9 ,'-]+$",
 ) -> str:
+    parsed = _request_structured_object(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        schema={
+            "type": "object",
+            "properties": {
+                "contents": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 5000,
+                    "pattern": pattern,
+                }
+            },
+            "required": ["contents"],
+            "additionalProperties": False,
+        },
+        name="prompt_contents",
+    )
+    contents = parsed.get("contents")
+    if not isinstance(contents, str) or not contents.strip():
+        raise _VLLMError("vLLM 구조화 응답의 contents가 비어 있습니다.")
+    contents = contents.strip()
+    if not re.fullmatch(pattern, contents):
+        raise _VLLMError("vLLM 프롬프트 결과에 허용되지 않은 문자가 포함되어 있습니다.")
+    return contents[:5000]
+
+
+def _request_structured_object(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    temperature: float,
+    schema: dict[str, Any],
+    name: str,
+) -> dict[str, Any]:
     response = _request_vllm_json(
         {
             "model": settings.vllm_model,
@@ -608,20 +647,8 @@ def _request_structured_content(
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "prompt_contents",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "contents": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 5000,
-                                "pattern": r"^[A-Za-z0-9 ,'-]+$",
-                            }
-                        },
-                        "required": ["contents"],
-                        "additionalProperties": False,
-                    },
+                    "name": name,
+                    "schema": schema,
                     "strict": True,
                 },
             },
@@ -643,10 +670,9 @@ def _request_structured_content(
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         raise _VLLMError("vLLM 구조화 응답을 JSON으로 읽을 수 없습니다.") from exc
-    contents = parsed.get("contents") if isinstance(parsed, dict) else None
-    if not isinstance(contents, str) or not contents.strip():
-        raise _VLLMError("vLLM 구조화 응답의 contents가 비어 있습니다.")
-    return contents.strip()[:5000]
+    if not isinstance(parsed, dict):
+        raise _VLLMError("vLLM 구조화 응답이 JSON 객체가 아닙니다.")
+    return parsed
 
 
 def _request_vllm_json(payload: dict[str, Any]) -> dict[str, Any]:

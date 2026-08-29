@@ -23,10 +23,16 @@
 	type SelectionSource = 'device' | 'stored';
 	type StoredMediaAsset = VideoLibraryAsset & { source_type: string; created_at: string };
 	type StoredSort = 'latest' | 'oldest' | 'name';
+	type VideoPromptLanguage = 'ko' | 'en' | 'ja';
 	const modes: { value: VideoMode; label: string; description: string }[] = [
 		{ value: 'i2v', label: 'I2V', description: '시작 이미지에서 영상 생성' },
 		{ value: 'fl2v', label: 'FL2V', description: '첫·마지막 프레임 사이 생성' },
 		{ value: 'r2v', label: 'R2V', description: '참조 이미지·동영상·오디오 기반 생성' }
+];
+	const promptLanguageOptions: { value: VideoPromptLanguage; label: string }[] = [
+		{ value: 'ko', label: '한글' },
+		{ value: 'en', label: '영어' },
+		{ value: 'ja', label: '일어' }
 	];
 	const inputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const fileClass = 'block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary';
@@ -34,6 +40,10 @@
 	let ready = $state(false);
 	let mode = $state<VideoMode>('i2v');
 	let prompt = $state('');
+	let promptEnhancementEnabled = $state(false);
+	let improvedPrompt = $state('');
+	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
+	let enhancingPrompt = $state(false);
 	let width = $state(1344);
 	let height = $state(768);
 	let duration = $state(5);
@@ -124,6 +134,7 @@
 	function selectMode(next: VideoMode) {
 		if (generating || mode === next) return;
 		mode = next;
+		improvedPrompt = '';
 		firstFile = null;
 		lastFile = null;
 		referenceImageFiles = [];
@@ -134,6 +145,20 @@
 		selectedReferenceImages = [];
 		selectedReferenceVideos = [];
 		selectedReferenceAudios = [];
+	}
+
+	function togglePromptLanguage(language: VideoPromptLanguage, checked: boolean) {
+		if (checked) {
+			if (!promptOutputLanguages.includes(language)) promptOutputLanguages = [...promptOutputLanguages, language];
+			improvedPrompt = '';
+			return;
+		}
+		if (promptOutputLanguages.length === 1) {
+			error = '출력 언어를 하나 이상 선택해 주세요.';
+			return;
+		}
+		promptOutputLanguages = promptOutputLanguages.filter((value) => value !== language);
+		improvedPrompt = '';
 	}
 
 
@@ -272,6 +297,35 @@
 		return asset.source_type === 'image_generation' ? '생성 이미지' : asset.source_type === 'video_generation' ? '생성 동영상' : '업로드 콘텐츠';
 	}
 
+	async function enhancePrompt() {
+		error = '';
+		if (!prompt.trim()) {
+			error = '개선할 프롬프트를 입력해 주세요.';
+			return;
+		}
+		if (!promptOutputLanguages.length) {
+			error = '출력 언어를 하나 이상 선택해 주세요.';
+			return;
+		}
+		enhancingPrompt = true;
+		try {
+			const result = await apiJson<{ improved_prompt: { contents: string } }>('generation/video/enhance-prompt', {
+				method: 'POST',
+				json: {
+					prompt: prompt.trim(),
+					mode,
+					duration: Number(duration),
+					prompt_output_languages: promptOutputLanguages
+				}
+			});
+			improvedPrompt = result.improved_prompt.contents;
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '프롬프트를 개선하지 못했습니다.';
+		} finally {
+			enhancingPrompt = false;
+		}
+	}
+
 	async function generate() {
 		videoJobKey = '';
 		error = '';
@@ -280,6 +334,14 @@
 		status = 'queued';
 		if (!prompt.trim()) {
 			error = '생성할 프롬프트를 입력해 주세요.';
+			return;
+		}
+		if (!promptOutputLanguages.length) {
+			error = '출력 언어를 하나 이상 선택해 주세요.';
+			return;
+		}
+		if (promptEnhancementEnabled && !improvedPrompt.trim()) {
+			error = '개선된 프롬프트를 먼저 생성해 주세요.';
 			return;
 		}
 		if (!randomSeed && !seed.trim()) {
@@ -291,6 +353,9 @@
 		try {
 			const payload: Record<string, unknown> = {
 				prompt: prompt.trim(),
+				prompt_enhancement_enabled: promptEnhancementEnabled,
+				improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
+				prompt_output_languages: promptOutputLanguages,
 				width: Number(width),
 				height: Number(height),
 				duration: Number(duration),
@@ -394,7 +459,48 @@
 					<p class="mt-2 text-xs text-muted-foreground">{modes.find((item) => item.value === mode)?.description}</p>
 
 					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
-						<label class="block space-y-2" for="video-prompt"><span class="text-sm font-medium">프롬프트</span><textarea id="video-prompt" bind:value={prompt} rows="6" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="장면, 움직임, 카메라, 음성을 설명해 주세요."></textarea></label>
+						<div class="space-y-3">
+							<div class="flex items-center justify-between gap-3">
+								<label for="video-prompt" class="text-sm font-medium">프롬프트</label>
+								<div class="flex items-center gap-2">
+									<label for="video-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
+										<input id="video-prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} class="peer sr-only" />
+										<span>프롬프트 개선</span>
+										<span class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground peer-checked:bg-primary/10 peer-checked:text-primary">{promptEnhancementEnabled ? 'ON' : 'OFF'}</span>
+									</label>
+									<OutlinedButton
+										type="button"
+										loading={enhancingPrompt}
+										disabled={generating || !prompt.trim() || !promptEnhancementEnabled || !promptOutputLanguages.length}
+										class="min-h-9 px-3 text-xs"
+										onclick={() => void enhancePrompt()}
+									>
+										<Sparkles size={14} strokeWidth={1.9} />
+										<span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
+									</OutlinedButton>
+								</div>
+							</div>
+							<textarea id="video-prompt" bind:value={prompt} oninput={() => (improvedPrompt = '')} rows="6" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="장면, 움직임, 카메라, 음성을 설명해 주세요."></textarea>
+							{#if promptEnhancementEnabled}
+								<div class="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+									<div class="space-y-2">
+										<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">출력 언어</span><span class="text-xs text-muted-foreground">복수 선택 가능</span></div>
+										<div class="grid gap-2 sm:grid-cols-3">
+											{#each promptLanguageOptions as language}
+												<label class="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm transition hover:bg-muted">
+													<input type="checkbox" checked={promptOutputLanguages.includes(language.value)} onchange={(event) => togglePromptLanguage(language.value, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" />
+													<span>{language.label}</span>
+												</label>
+											{/each}
+										</div>
+									</div>
+									<label class="block space-y-2" for="video-improved-prompt">
+										<span class="text-sm font-medium">개선된 프롬프트</span>
+										<textarea id="video-improved-prompt" bind:value={improvedPrompt} rows="9" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Atlas 형식으로 개선된 프롬프트가 여기에 표시됩니다."></textarea>
+									</label>
+								</div>
+							{/if}
+						</div>
 
 						{#if mode === 'i2v'}
 							<div class="space-y-3">
@@ -517,10 +623,10 @@
 						{/if}
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min="32" max="1344" step="32" bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min="32" max="1344" step="32" bind:value={height} class={inputClass} /></label></div>
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" min="1" max="15" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" min="1" max="15" step="0.1" bind:value={duration} oninput={() => (improvedPrompt = '')} class={inputClass} /></label><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label></div>
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim()} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || enhancingPrompt} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>

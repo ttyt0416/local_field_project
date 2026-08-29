@@ -1,10 +1,13 @@
 import asyncio
+import re
 import unittest
+from typing import Literal
 from unittest.mock import patch
 from uuid import uuid4
 
 from app import video
 from app.auth import UserResponse
+from pydantic import ValidationError
 
 
 class VideoContractTest(unittest.TestCase):
@@ -157,6 +160,68 @@ class VideoContractTest(unittest.TestCase):
         request = open_url.call_args.args[0]
         self.assertIn(b'filename="local_field_', request.data)
         self.assertIn(b".mp4", request.data)
+
+    def test_video_prompt_pattern_is_language_union_with_digits_and_symbols(self) -> None:
+        korean_labels = video._video_prompt_section_labels(["ko"])
+        korean_prompt = "\n".join(f"{label}\n장면 0초-3초 @image1: !?" for label in korean_labels)
+        self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt))
+        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt.replace("장면", "scene", 1)))
+
+        mixed_labels = video._video_prompt_section_labels(["ko", "en"])
+        mixed_prompt = "\n".join(f"{label}\nred 빨강 16:9 @image1: !?" for label in mixed_labels)
+        self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko", "en"]), mixed_prompt))
+
+        japanese_labels = video._video_prompt_section_labels(["ja"])
+        japanese_prompt = "\n".join(f"{label}\n動き 0秒-3秒 @image1: !?" for label in japanese_labels)
+        self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt))
+        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt.replace("動き", "move", 1)))
+
+    def test_video_prompt_requires_atlas_six_blocks_in_order(self) -> None:
+        labels = video._video_prompt_section_labels(["en"])
+        valid = "\n".join(f"{label}\nA concrete instruction." for label in labels)
+        self.assertEqual(video._validate_video_prompt_contents(valid, ["en"]), valid)
+        with self.assertRaises(video._VLLMError):
+            video._validate_video_prompt_contents(valid.replace("Negative:", "Text:", 1), ["en"])
+
+    def test_video_prompt_enhancement_uses_selected_languages_and_pattern(self) -> None:
+        languages: list[Literal["ko", "en", "ja"]] = ["ko", "en"]
+        fields = {field: f"red 빨강 0s-5s @image1: !?" for field in video._VIDEO_PROMPT_FIELDS}
+        payload = video.VideoPromptEnhancementRequest(
+            prompt="사과가 움직인다",
+            mode="i2v",
+            duration=5,
+            prompt_output_languages=languages,
+        )
+        with patch.object(video, "_request_structured_object", return_value=fields) as request:
+            result = video._enhance_video_prompt(payload)
+
+        expected = video._assemble_video_prompt(fields, languages)
+        self.assertEqual(result.improved_prompt.contents, expected)
+        self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
+        self.assertEqual(request.call_args.kwargs["name"], "video_prompt_fields")
+        schema = request.call_args.kwargs["schema"]
+        self.assertEqual(set(schema["required"]), set(video._VIDEO_PROMPT_FIELDS))
+        self.assertEqual(schema["additionalProperties"], False)
+        self.assertEqual(schema["properties"]["style"]["pattern"], video._video_prompt_pattern(languages))
+        self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
+
+    def test_enabled_video_enhancement_adds_reference_roles_to_workflow_prompt(self) -> None:
+        labels = video._video_prompt_section_labels(["en"])
+        improved = "\n".join(f"{label}\nconcrete instruction 0s-5s @image1: !?" for label in labels)
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            prompt_enhancement_enabled=True,
+            improved_prompt=improved,
+            prompt_output_languages=["en"],
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        effective = video._effective_video_prompt("i2v", request)
+        self.assertIn("@image1: start-image reference", effective)
+        self.assertIn(improved, effective)
+
+    def test_duplicate_video_prompt_languages_are_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", prompt_output_languages=["en", "en"])
 
 
 if __name__ == "__main__":
