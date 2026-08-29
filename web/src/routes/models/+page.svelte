@@ -59,6 +59,13 @@
 		{ value: 'vae', label: 'VAE' },
 		{ value: 'embedding', label: '임베딩' }
 	];
+	const modelFolders: Record<ModelType, string> = {
+		checkpoint: 'diffusion_models',
+		lora: 'loras',
+		text_encoder: 'text_encoders',
+		vae: 'vae',
+		embedding: 'embeddings'
+	};
 	const statusLabels: Record<string, string> = {
 		queued: '대기 중',
 		downloading: '다운로드 중',
@@ -283,11 +290,6 @@
 					<input id="civitai-source" bind:value={source} placeholder="Civitai 모델 버전 ID 또는 링크" class="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
 					<button type="submit" disabled={lookupLoading} class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">{#if lookupLoading}<LoadingSpinner size="sm" label="조회 중" />{:else}<Download size={16} />모델 조회{/if}</button>
 				</form>
-				<label class="block space-y-2" for="civitai-subfolder">
-					<span class="text-sm font-medium">저장 하위폴더 <span class="font-normal text-muted-foreground">(선택)</span></span>
-					<input id="civitai-subfolder" bind:value={subfolder} maxlength="255" placeholder="예: character/anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
-					<span class="text-xs text-muted-foreground">선택한 모델 종류 폴더 아래에 저장합니다. 예: checkpoints/character/anime</span>
-				</label>
 			</section>
 
 			{#if lookup}
@@ -302,6 +304,11 @@
 							</button>
 						{/each}
 					</div>
+					<label class="block space-y-2" for="civitai-subfolder">
+						<span class="text-sm font-semibold">저장 하위폴더 <span class="font-normal text-muted-foreground">(선택)</span></span>
+						<input id="civitai-subfolder" bind:value={subfolder} maxlength="255" placeholder="예: character/anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
+						<span class="text-xs text-muted-foreground">선택한 모델 종류 폴더 아래에 저장합니다. 예: {modelFolders[modelType]}/character/anime</span>
+					</label>
 					<div class="flex justify-end"><button type="button" disabled={downloadLoading || selectedFileIndex === null} onclick={() => void startDownload()} class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">{#if downloadLoading}<LoadingSpinner size="sm" label="요청 중" />{:else}<FileDown size={16} />다운로드 시작{/if}</button></div>
 				</section>
 			{/if}

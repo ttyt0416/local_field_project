@@ -40,7 +40,7 @@ from .database import (
 router = APIRouter(prefix="/models", tags=["model downloads"])
 ModelType = Literal["checkpoint", "lora", "text_encoder", "vae", "embedding"]
 _MODEL_TARGETS: dict[ModelType, tuple[str, str]] = {
-    "checkpoint": ("체크포인트", "checkpoints"),
+    "checkpoint": ("체크포인트", "diffusion_models"),
     "lora": ("LoRA", "loras"),
     "text_encoder": ("텍스트 인코더", "text_encoders"),
     "vae": ("VAE", "vae"),
