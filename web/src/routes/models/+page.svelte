@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Download, FileDown, Folder, RefreshCw } from '@lucide/svelte';
+	import { Download, FileDown, Folder, RefreshCw, Trash2 } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { apiJson } from '$lib/utils/api';
+	import { apiDelete, apiJson } from '$lib/utils/api';
 
 	type ModelType = 'checkpoint' | 'lora' | 'text_encoder' | 'vae' | 'embedding';
 	type FileInfo = {
@@ -72,6 +72,7 @@
 	let downloadLoading = $state(false);
 	let jobs = $state<DownloadJob[]>([]);
 	let installed = $state<InstalledModel[]>([]);
+	let deleteLoading = $state<string | null>(null);
 	let error = $state('');
 	let toast = $state<ToastData | null>(null);
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -160,6 +161,25 @@
 			showToast('positive', '재시도 요청 완료', '모델 다운로드를 다시 시작했습니다.');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '다운로드를 다시 시도하지 못했습니다.';
+		}
+	}
+
+	async function deleteInstalledModel(model: InstalledModel) {
+		const key = `${model.model_type}:${model.filename}`;
+		if (deleteLoading === key || !window.confirm(`설치된 모델 '${model.filename}'을(를) 삭제하시겠습니까?`)) return;
+		deleteLoading = key;
+		error = '';
+		try {
+			const encodedFilename = model.filename.split('/').map(encodeURIComponent).join('/');
+			await apiDelete(`models/installed/${encodeURIComponent(model.model_type)}/${encodedFilename}`);
+			installed = installed.filter((item) => `${item.model_type}:${item.filename}` !== key);
+			showToast('positive', '모델 삭제 완료', `${model.filename}을(를) 삭제했습니다.`);
+		} catch (reason) {
+			const message = reason instanceof Error ? reason.message : '모델을 삭제하지 못했습니다.';
+			error = message;
+			showToast('negative', '모델 삭제 실패', message);
+		} finally {
+			deleteLoading = null;
 		}
 	}
 
@@ -252,7 +272,7 @@
 			<section class="space-y-3">
 				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">설치된 모델</Typography><span class="text-xs text-muted-foreground">{installed.length}개</span></div>
 				{#if installed.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">ComfyUI 모델 폴더에 설치된 모델이 없습니다.</div>
-				{:else}<div class="grid gap-3 md:grid-cols-2">{#each installed as model}<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3"><Folder size={18} class="shrink-0 text-primary" /><div class="min-w-0"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div></article>{/each}</div>{/if}
+				{:else}<div class="grid gap-3 md:grid-cols-2">{#each installed as model}<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3"><Folder size={18} class="shrink-0 text-primary" /><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div><button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null} onclick={() => void deleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button></article>{/each}</div>{/if}
 			</section>
 		</div>
 	</Layout>

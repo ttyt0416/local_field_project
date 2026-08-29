@@ -161,6 +161,45 @@ def installed_models(_: UserResponse = Depends(current_user)) -> list[InstalledM
     return sorted(result, key=lambda item: (item.model_type, item.filename.casefold()))
 
 
+@router.delete("/installed/{model_type}/{filename:path}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_installed_model(
+    model_type: ModelType,
+    filename: str,
+    _: UserResponse = Depends(current_user),
+) -> None:
+    target = _installed_model_path(model_type, filename)
+    if not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.")
+    try:
+        target.unlink()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 삭제할 수 없습니다.") from exc
+
+
+def _installed_model_path(model_type: ModelType, filename: str) -> Path:
+    root = Path(settings.comfyui_models_path).resolve()
+    directory = (root / _MODEL_TARGETS[model_type][1]).resolve()
+    if not filename.strip() or "\\" in filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="모델 파일 경로가 올바르지 않습니다.")
+    try:
+        directory.relative_to(root)
+        candidate = directory / filename
+        current = directory
+        for component in Path(filename).parts:
+            current /= component
+            if current.is_symlink():
+                raise ValueError("symbolic link")
+        target = candidate.resolve()
+        target.relative_to(directory)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="모델 파일 경로가 올바르지 않습니다.") from exc
+    if target == directory or target.suffix.casefold() not in _MODEL_EXTENSIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="삭제할 수 없는 모델 파일입니다.")
+    return candidate
+
+
 @router.get("/downloads", response_model=list[ModelDownloadResponse])
 def model_downloads(
     user: UserResponse = Depends(current_user),

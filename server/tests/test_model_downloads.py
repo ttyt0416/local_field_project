@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import uuid
 import unittest
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
+from unittest.mock import patch
 
+from fastapi import HTTPException
+
+from app.auth import UserResponse
+from app.configs.constants import settings
 from app.model_downloads import (
     CivitaiError,
     _file_matches,
+    _installed_model_path,
     _parse_version,
     _safe_filename,
     _select_file_index,
     ModelType,
+    delete_installed_model,
 )
 
 
@@ -72,6 +83,51 @@ class ModelDownloadsTest(unittest.TestCase):
             _safe_filename("model.zip")
         with self.assertRaises(CivitaiError):
             _safe_filename("../model.safetensors\n")
+
+    def test_installed_model_delete_stays_inside_model_directory(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            model_directory = root / "checkpoints"
+            model_directory.mkdir()
+            model = model_directory / "model.safetensors"
+            model.write_bytes(b"model")
+            outside = root / "outside.safetensors"
+            outside.write_bytes(b"outside")
+            link = model_directory / "link.safetensors"
+            link.symlink_to(outside)
+
+            with patch(
+                "app.model_downloads.settings",
+                replace(settings, comfyui_models_path=temporary_directory),
+            ):
+                delete_installed_model("checkpoint", "model.safetensors", user)
+                self.assertFalse(model.exists())
+                self.assertEqual(
+                    _installed_model_path("checkpoint", "nested/model.safetensors"),
+                    model_directory / "nested/model.safetensors",
+                )
+                with self.assertRaises(HTTPException) as traversal_error:
+                    _installed_model_path("checkpoint", "../outside.safetensors")
+                with self.assertRaises(HTTPException) as symlink_error:
+                    _installed_model_path("checkpoint", "link.safetensors")
+
+            linked_root = root / "linked-root"
+            linked_root.mkdir()
+            linked_model_directory = root / "linked-checkpoints"
+            linked_model_directory.mkdir()
+            (linked_root / "checkpoints").symlink_to(linked_model_directory, target_is_directory=True)
+            with patch(
+                "app.model_downloads.settings",
+                replace(settings, comfyui_models_path=str(linked_root)),
+            ):
+                with self.assertRaises(HTTPException) as linked_directory_error:
+                    _installed_model_path("checkpoint", "model.safetensors")
+
+            self.assertEqual(traversal_error.exception.status_code, 400)
+            self.assertEqual(symlink_error.exception.status_code, 400)
+            self.assertEqual(linked_directory_error.exception.status_code, 400)
+            self.assertTrue(outside.exists())
 
 
 if __name__ == "__main__":

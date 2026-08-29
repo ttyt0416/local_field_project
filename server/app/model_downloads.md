@@ -6,4 +6,4 @@
 
 서버 startup worker는 queued 작업을 claim하고 Civitai 파일을 `COMFYUI_MODELS_PATH` 아래의 `checkpoints`, `loras`, `text_encoders`, `vae`, `embeddings` 폴더에 `.part` 파일로 받는다. 중단 후에는 같은 `.part` 파일을 HTTP Range로 이어받고, Civitai SHA256이 있으면 검증한 뒤 `os.replace`로 최종 파일을 만든다. worker는 브라우저 연결과 무관하게 동작하며 상태와 진행 바이트는 `model_downloads`에 저장한다.
 
-`GET /models/installed`는 다섯 ComfyUI 모델 폴더의 현재 파일 목록을 반환하고, `GET /models/downloads`는 로그인한 사용자의 최근 download job을 반환한다. 실제 Civitai 파일 다운로드는 server worker가 수행하며, 이 구현 검증에서는 대용량 모델 파일을 받거나 ComfyUI inference를 실행하지 않는다.
+`GET /models/installed`는 다섯 ComfyUI 모델 폴더의 현재 파일 목록을 반환하고, `DELETE /models/installed/{model_type}/{filename}`는 허용된 모델 폴더 안의 설치 파일을 삭제한다. 삭제 endpoint는 로그인과 모델 확장자를 확인하고 경로 탈출을 차단한다. `GET /models/downloads`는 로그인한 사용자의 최근 download job을 반환한다. 실제 Civitai 파일 다운로드는 server worker가 수행하며, 이 구현 검증에서는 대용량 모델 파일을 받거나 ComfyUI inference를 실행하지 않는다.
