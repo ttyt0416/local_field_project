@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import json
 import re
 import secrets
@@ -25,6 +26,7 @@ from .configs.constants import settings
 from .danbooru import DanbooruError, search_danbooru_tags, validate_danbooru_tags
 from .database import (
     create_image_generation as create_image_generation_record,
+    generation_elapsed_seconds,
     get_image_generation,
     update_image_generation_status,
 )
@@ -86,6 +88,8 @@ class ImageGenerationStatus(BaseModel):
     status: str
     progress: float = Field(default=0, ge=0, le=100)
     queue_position: int | None = Field(default=None, ge=1)
+    created_at: datetime | None = None
+    elapsed_seconds: float = Field(default=0, ge=0)
     images: list[ImageOutput] = Field(default_factory=list)
 
 
@@ -95,6 +99,8 @@ class ImageGenerationAccepted(BaseModel):
     client_id: str
     generation_id: str
     progress: float = Field(default=0, ge=0, le=100)
+    created_at: datetime
+    elapsed_seconds: float = Field(default=0, ge=0)
 
 
 def _progress_key(prompt_id: str, user_id: uuid.UUID) -> str:
@@ -277,7 +283,7 @@ def create_image_generation(
     prompt_id = response.get("prompt_id")
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 생성 작업 ID를 반환하지 않았습니다.")
-    generation_id = create_image_generation_record(
+    generation_id, created_at = create_image_generation_record(
         user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
@@ -297,6 +303,8 @@ def create_image_generation(
         client_id=client_id,
         generation_id=str(generation_id),
         progress=0,
+        created_at=created_at,
+        elapsed_seconds=0,
     )
 
 
@@ -349,7 +357,13 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 return
             yield _sse_message(
                 "completed",
-                ImageGenerationStatus(prompt_id=prompt_id, status="completed", images=images).model_dump(),
+                ImageGenerationStatus(
+                    prompt_id=prompt_id,
+                    status="completed",
+                    images=images,
+                    created_at=generation["created_at"],
+                    elapsed_seconds=generation_elapsed_seconds(generation),
+                ).model_dump(mode="json"),
             )
             return
         if current_status == "failed":
@@ -360,6 +374,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                     "status": "failed",
                     "progress": 0,
                     "queue_position": None,
+                    **_image_timing(prompt_id, user_id, generation),
                 },
             )
             return
@@ -371,6 +386,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 "status": current_status,
                 "progress": progress_state["progress"],
                 "queue_position": progress_state["queue_position"] or _queue_position(prompt_id),
+                **_image_timing(prompt_id, user_id, generation),
             },
         )
 
@@ -385,6 +401,17 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 return
 
 
+def _image_timing(prompt_id: str, user_id: uuid.UUID, generation: dict[str, Any] | None = None) -> dict[str, Any]:
+    generation = generation or get_image_generation(prompt_id, user_id)
+    if generation is None:
+        return {"created_at": None, "elapsed_seconds": 0}
+    created_at = generation.get("created_at")
+    return {
+        "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
+        "elapsed_seconds": generation_elapsed_seconds(generation),
+    }
+
+
 def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGenerationStatus:
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
@@ -395,11 +422,13 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
             update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
         elif current_status == "failed":
             update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
+        timing = _image_timing(prompt_id, user_id)
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status=current_status,
             progress=progress_state["progress"],
             queue_position=progress_state["queue_position"] or _queue_position(prompt_id),
+            **timing,
         )
 
     raw_status = entry.get("status")
@@ -407,7 +436,12 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
         update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-        return ImageGenerationStatus(prompt_id=prompt_id, status="failed", progress=progress_state["progress"])
+        return ImageGenerationStatus(
+            prompt_id=prompt_id,
+            status="failed",
+            progress=progress_state["progress"],
+            **_image_timing(prompt_id, user_id),
+        )
     if comfy_status.get("completed") is True:
         raw_images = _raw_image_outputs(entry.get("outputs"))
         _sync_generation_output(prompt_id, user_id, raw_images)
@@ -416,12 +450,14 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
             status="completed",
             progress=100,
             images=_image_outputs(prompt_id, user_id, entry.get("outputs")),
+            **_image_timing(prompt_id, user_id),
         )
     update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
     return ImageGenerationStatus(
         prompt_id=prompt_id,
         status="processing",
         progress=progress_state["progress"],
+        **_image_timing(prompt_id, user_id),
     )
 
 

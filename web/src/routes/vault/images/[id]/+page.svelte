@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Copy, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { ArrowLeft, Copy, Download, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
@@ -14,6 +14,8 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
+	import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
+import { downloadMedia } from '$lib/utils/download';
 
 	type VaultImageDetail = {
 		id: string;
@@ -35,6 +37,7 @@
 		image_url: string | null;
 		created_at: string;
 		completed_at: string | null;
+		elapsed_seconds: number;
 		view_count: number;
 		is_favorite: boolean;
 	};
@@ -47,6 +50,7 @@
 	let deleteModalOpen = $state(false);
 	let deleting = $state(false);
 	let favoriteUpdating = $state(false);
+	let downloading = $state(false);
 
 	onMount(() => {
 		void loadDetail();
@@ -94,6 +98,18 @@
 			error = reason instanceof Error ? reason.message : '즐겨찾기를 변경하지 못했습니다.';
 		} finally {
 			favoriteUpdating = false;
+		}
+	}
+
+	async function downloadImage() {
+		if (!generation?.image_url || downloading) return;
+		downloading = true;
+		try {
+			await downloadMedia(generation.image_url, generation.filename ?? `local-field-image-${generation.id}.png`);
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '이미지를 다운로드하지 못했습니다.';
+		} finally {
+			downloading = false;
 		}
 	}
 
@@ -184,7 +200,7 @@
 				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div>
 						<Typography as="h1" variant="display">콘텐츠 상세</Typography>
-						<p class="mt-3 text-sm text-muted-foreground">조회 {generation.view_count}</p>
+						<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 조회 {generation.view_count}</p>
 					</div>
 				</div>
 			</section>
@@ -197,6 +213,15 @@
 						{:else}
 							<div class="flex min-h-[24rem] items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">이미지 결과가 아직 없습니다.</div>
 						{/if}
+						<IconOutlinedButton
+							ariaLabel="이미지 다운로드"
+							loading={downloading}
+							disabled={!generation.image_url}
+							class="absolute bottom-3 right-16 z-10 bg-card/90 shadow-lg"
+							onclick={() => void downloadImage()}
+						>
+							<Download size={18} strokeWidth={1.9} />
+						</IconOutlinedButton>
 						<IconOutlinedButton
 							variant="filled"
 							ariaLabel={generation.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}

@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from datetime import datetime, timezone
 import json
 from typing import Any
 import uuid
@@ -156,6 +157,46 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'image_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'elapsed_seconds'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0;
+            END IF;
+            UPDATE image_generations
+            SET elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(completed_at, CURRENT_TIMESTAMP) - created_at)))
+            WHERE elapsed_seconds = 0;
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'video_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'elapsed_seconds'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'fps'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN fps DOUBLE PRECISION NOT NULL DEFAULT 24;
+            END IF;
+            UPDATE video_generations
+            SET elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(completed_at, CURRENT_TIMESTAMP) - created_at)))
+            WHERE elapsed_seconds = 0;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -242,7 +283,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         view_count INTEGER NOT NULL DEFAULT 0,
         is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        completed_at TIMESTAMPTZ
+        completed_at TIMESTAMPTZ,
+        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
     )
     """,
     """
@@ -278,6 +320,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         width INTEGER NOT NULL,
         height INTEGER NOT NULL,
         length INTEGER NOT NULL,
+        fps DOUBLE PRECISION NOT NULL DEFAULT 24,
         seed BIGINT NOT NULL,
         input_file_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
         storage_file_id TEXT,
@@ -287,7 +330,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         view_count INTEGER NOT NULL DEFAULT 0,
         is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        completed_at TIMESTAMPTZ
+        completed_at TIMESTAMPTZ,
+        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
     )
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
@@ -404,7 +448,7 @@ def initialize_database() -> None:
 _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
     "loras, cfg, steps, width, height, seed, file_path, storage_file_id, filename, "
-    "subfolder, image_type, view_count, is_favorite, created_at, completed_at"
+    "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds"
 )
 
 
@@ -422,15 +466,16 @@ def create_image_generation(
     width: int,
     height: int,
     seed: int,
-) -> uuid.UUID:
+) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
-        connection.execute(
+        row = connection.execute(
             """
             INSERT INTO image_generations
                 (id, user_id, prompt_id, client_id, prompt, negative_prompt, checkpoint,
                  loras, cfg, steps, width, height, seed)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
             """,
             (
                 generation_id,
@@ -448,7 +493,7 @@ def create_image_generation(
                 seed,
             ),
         )
-    return generation_id
+    return row[0], row[1]
 
 
 def get_image_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
@@ -856,8 +901,8 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length, seed, "
-    "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, created_at, completed_at"
+    "id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length, fps, seed, "
+    "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds"
 )
 
 
@@ -871,16 +916,18 @@ def create_video_generation(
     width: int,
     height: int,
     length: int,
+    fps: float,
     seed: int,
     input_file_ids: list[str],
-) -> uuid.UUID:
+) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
-        connection.execute(
+        row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, mode, prompt, width, height, length, seed, input_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                (id, user_id, prompt_id, client_id, mode, prompt, width, height, length, fps, seed, input_file_ids)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            RETURNING id, created_at
             """,
             (
                 generation_id,
@@ -892,11 +939,12 @@ def create_video_generation(
                 width,
                 height,
                 length,
+                fps,
                 seed,
                 json.dumps(input_file_ids),
             ),
         )
-    return generation_id
+    return row[0], row[1]
 
 
 def get_video_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
@@ -1026,7 +1074,10 @@ def update_video_generation_status(
                 filename = COALESCE(%s, filename),
                 subfolder = COALESCE(%s::varchar, subfolder),
                 video_type = COALESCE(%s::varchar, video_type),
-                completed_at = CASE WHEN %s IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END
+                completed_at = CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
+                    CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                )))
             WHERE prompt_id = %s AND user_id = %s
             """,
             (
@@ -1035,6 +1086,7 @@ def update_video_generation_status(
                 filename,
                 subfolder if filename is not None else None,
                 video_type if filename is not None else None,
+                status,
                 status,
                 prompt_id,
                 user_id,
@@ -1148,10 +1200,13 @@ def update_image_generation_status(
                 """
                 UPDATE image_generations
                 SET status = %s,
-                    completed_at = CASE WHEN %s IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END
+                    completed_at = CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                    elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
+                        CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                    )))
                 WHERE prompt_id = %s AND user_id = %s
                 """,
-                (status, status, prompt_id, user_id),
+                (status, status, status, prompt_id, user_id),
             )
         else:
             connection.execute(
@@ -1163,10 +1218,13 @@ def update_image_generation_status(
                     filename = %s,
                     subfolder = %s,
                     image_type = %s,
-                    completed_at = CURRENT_TIMESTAMP
+                    completed_at = CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                    elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
+                        CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                    )))
                 WHERE prompt_id = %s AND user_id = %s
                 """,
-                (status, file_path, storage_file_id, filename, subfolder, image_type, prompt_id, user_id),
+                (status, file_path, storage_file_id, filename, subfolder, image_type, status, status, prompt_id, user_id),
             )
 
 
@@ -1174,6 +1232,17 @@ def _image_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return dict(zip(_IMAGE_GENERATION_FIELDS.split(", "), row, strict=True))
+
+
+def generation_elapsed_seconds(generation: dict[str, Any]) -> float:
+    elapsed = max(0.0, float(generation.get("elapsed_seconds") or 0))
+    if generation.get("status") in {"queued", "processing"}:
+        created_at = generation.get("created_at")
+        if isinstance(created_at, datetime):
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            elapsed = max(elapsed, (datetime.now(timezone.utc) - created_at).total_seconds())
+    return round(elapsed, 3)
 
 
 def record_auth_event(

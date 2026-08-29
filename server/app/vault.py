@@ -41,6 +41,7 @@ class VaultImageSummary(BaseModel):
     is_favorite: bool
     created_at: datetime
     completed_at: datetime | None
+    elapsed_seconds: float
 
 
 class VaultLora(BaseModel):
@@ -76,6 +77,7 @@ class VaultVideoSummary(BaseModel):
     id: UUID
     media_type: str
     mode: str
+    fps: float
     status: str
     prompt: str
     video_url: str | None
@@ -83,6 +85,7 @@ class VaultVideoSummary(BaseModel):
     is_favorite: bool
     created_at: datetime
     completed_at: datetime | None
+    elapsed_seconds: float
 
 
 class VaultVideoPage(BaseModel):
@@ -303,6 +306,7 @@ def _video_summary(generation: dict, user_id: UUID) -> VaultVideoSummary:
         id=generation["id"],
         media_type="video",
         mode=generation["mode"],
+        fps=generation["fps"],
         status=generation["status"],
         prompt=generation["prompt"],
         video_url=video_url,
@@ -310,6 +314,7 @@ def _video_summary(generation: dict, user_id: UUID) -> VaultVideoSummary:
         is_favorite=generation["is_favorite"],
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
+        elapsed_seconds=generation["elapsed_seconds"],
     )
 
 
@@ -325,6 +330,7 @@ def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:
         is_favorite=generation["is_favorite"],
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
+        elapsed_seconds=generation["elapsed_seconds"],
     )
 
 

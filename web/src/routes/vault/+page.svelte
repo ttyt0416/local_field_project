@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ChevronLeft, ChevronRight, Heart, Trash2, Video } from '@lucide/svelte';
+	import { ChevronLeft, ChevronRight, Download, Heart, Trash2, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
 	import VideoMedia from '../../../components/media/video.svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
@@ -16,6 +16,8 @@
 	import SearchBar from '../../../components/inputs/searchbar.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
+import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
+import { downloadMedia } from '$lib/utils/download';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
 
@@ -30,12 +32,14 @@
 		is_favorite: boolean;
 		created_at: string;
 		completed_at: string | null;
+		elapsed_seconds: number;
 	};
 
 	type VaultVideo = {
 		id: string;
 		media_type: string;
 		mode: 'i2v' | 'fl2v' | 'r2v';
+		fps: number;
 		status: string;
 		prompt: string;
 		video_url: string | null;
@@ -43,6 +47,7 @@
 		is_favorite: boolean;
 		created_at: string;
 		completed_at: string | null;
+		elapsed_seconds: number;
 	};
 
 	type FavoriteResponse = {
@@ -87,6 +92,7 @@
 	let selectedIds = $state<Set<string>>(new Set());
 	let favoriteUpdatingId = $state('');
 	let videoFavoriteUpdatingId = $state('');
+	let downloadingId = $state('');
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
 	let contentCount = $derived(imageCompletedCount);
 	let videoCount = $derived(videoCompletedCount);
@@ -256,6 +262,30 @@
 		}
 	}
 
+	async function downloadImage(image: VaultImage) {
+		if (!image.image_url || downloadingId) return;
+		downloadingId = image.id;
+		try {
+			await downloadMedia(image.image_url, `local-field-image-${image.id}.png`);
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '이미지를 다운로드하지 못했습니다.';
+		} finally {
+			downloadingId = '';
+		}
+	}
+
+	async function downloadVideo(video: VaultVideo) {
+		if (!video.video_url || downloadingId) return;
+		downloadingId = video.id;
+		try {
+			await downloadMedia(video.video_url, `local-field-video-${video.id}.mp4`);
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '영상을 다운로드하지 못했습니다.';
+		} finally {
+			downloadingId = '';
+		}
+	}
+
 	function requestDeleteVideo(video: VaultVideo) {
 		videoDeleteTarget = video;
 		videoDeleteModalOpen = true;
@@ -403,6 +433,15 @@
 											<Heart size={17} strokeWidth={1.9} fill={image.is_favorite ? 'currentColor' : 'none'} />
 										</IconOutlinedButton>
 										<IconOutlinedButton
+											ariaLabel="이미지 다운로드"
+											loading={downloadingId === image.id}
+											disabled={!image.image_url}
+											class="shadow-lg"
+											onclick={() => void downloadImage(image)}
+										>
+											<Download size={17} strokeWidth={1.9} />
+										</IconOutlinedButton>
+										<IconOutlinedButton
 											ariaLabel="콘텐츠 삭제"
 											loading={deletingId === image.id}
 											variant="destructive"
@@ -416,12 +455,12 @@
 								<div class="space-y-3 p-4">
 									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
 										<span>{image.status === 'completed' ? 'IMAGE' : `IMAGE · ${statusLabel(image.status)}`}</span>
-										<span>{new Date(image.created_at).toLocaleDateString('ko-KR')}</span>
+										<span>{formatKstDateTime(image.created_at)}</span>
 									</div>
 									<p class="line-clamp-2 text-sm leading-5 text-foreground">{image.prompt}</p>
 									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
 										<span class="truncate">{image.checkpoint}</span>
-										<span class="shrink-0">조회 {image.view_count}</span>
+										<span class="shrink-0">소요 {formatElapsedSeconds(image.elapsed_seconds)} · 조회 {image.view_count}</span>
 									</div>
 								</div>
 							</div>
@@ -451,9 +490,11 @@
 									{#if video.video_url}<VideoMedia source={video.video_url} sourceType="server" preview={false} muted={false} class="h-full" />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">영상 준비 중</div>{/if}
 								</div>
 								<div class="space-y-3 p-4">
-									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{videoModeLabel(video.mode)} · {statusLabel(video.status)}</span><span>{new Date(video.created_at).toLocaleDateString('ko-KR')}</span></div>
-									<p class="line-clamp-2 text-sm leading-5 text-foreground">{video.prompt}</p>
-									<div class="flex items-center justify-between gap-3"><span class="text-xs text-muted-foreground">조회 {video.view_count}</span><div class="flex gap-2"><IconOutlinedButton variant="filled" ariaLabel={video.is_favorite ? '영상 즐겨찾기 해제' : '영상 즐겨찾기 추가'} pressed={video.is_favorite} loading={videoFavoriteUpdatingId === video.id} class={video.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} onclick={() => void toggleFavoriteVideo(video)}><Heart size={17} strokeWidth={1.9} fill={video.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton><IconOutlinedButton ariaLabel="영상 콘텐츠 삭제" loading={videoDeletingId === video.id} variant="destructive" onclick={() => requestDeleteVideo(video)}><Trash2 size={17} strokeWidth={2} /></IconOutlinedButton></div></div>
+									<a href={`/vault/videos/${video.id}`} aria-label={`${video.prompt || videoModeLabel(video.mode)} 콘텐츠 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{videoModeLabel(video.mode)} · {statusLabel(video.status)}</span><span>{formatKstDateTime(video.created_at)}</span></div>
+										<p class="line-clamp-2 text-sm leading-5 text-foreground transition hover:text-primary">{video.prompt}</p>
+									</a>
+									<div class="flex items-center justify-between gap-3"><span class="text-xs text-muted-foreground">FPS {video.fps} · 소요 {formatElapsedSeconds(video.elapsed_seconds)} · 조회 {video.view_count}</span><div class="flex gap-2"><IconOutlinedButton ariaLabel="영상 다운로드" loading={downloadingId === video.id} disabled={!video.video_url} onclick={() => void downloadVideo(video)}><Download size={17} strokeWidth={1.9} /></IconOutlinedButton><IconOutlinedButton variant="filled" ariaLabel={video.is_favorite ? '영상 즐겨찾기 해제' : '영상 즐겨찾기 추가'} pressed={video.is_favorite} loading={videoFavoriteUpdatingId === video.id} class={video.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} onclick={() => void toggleFavoriteVideo(video)}><Heart size={17} strokeWidth={1.9} fill={video.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton><IconOutlinedButton ariaLabel="영상 콘텐츠 삭제" loading={videoDeletingId === video.id} variant="destructive" onclick={() => requestDeleteVideo(video)}><Trash2 size={17} strokeWidth={2} /></IconOutlinedButton></div></div>
 								</div>
 							</article>
 						{/each}

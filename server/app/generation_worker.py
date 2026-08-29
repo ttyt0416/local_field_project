@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -20,7 +21,7 @@ def reconcile_active_generations() -> None:
         previous_status = str(generation.get("status", "queued"))
         try:
             result = _history_generation_status(generation["prompt_id"], generation["user_id"])
-            _publish_if_changed("image", generation, previous_status, result.status, result.model_dump())
+            _publish_if_changed("image", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception:
             logger.exception("이미지 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("image", generation, previous_status)
@@ -29,7 +30,7 @@ def reconcile_active_generations() -> None:
         previous_status = str(generation.get("status", "queued"))
         try:
             result = _history_status(generation, generation["user_id"])
-            _publish_if_changed("video", generation, previous_status, result.status, result.model_dump())
+            _publish_if_changed("video", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception:
             logger.exception("동영상 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("video", generation, previous_status)
@@ -44,7 +45,10 @@ def _publish_if_changed(
 ) -> None:
     key = generation_key(kind, generation["user_id"], generation["prompt_id"])
     data = {"prompt_id": generation["prompt_id"], "status": current_status, "progress": 0.0, "queue_position": None, **data}
-    signature = (current_status, data.get("progress"), data.get("queue_position"))
+    created_at = generation.get("created_at")
+    if created_at is not None:
+        data["created_at"] = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
+    signature = (current_status, data.get("progress"), data.get("queue_position"), data.get("elapsed_seconds"))
     if _last_published_signatures.get(key) == signature:
         return
     _last_published_signatures[key] = signature
@@ -65,13 +69,16 @@ def _publish_terminal_if_changed(kind: str, generation: dict[str, Any], previous
         return
     key = generation_key(kind, generation["user_id"], generation["prompt_id"])
     progress = 100.0 if current["status"] == "completed" else generation_progress(generation["prompt_id"], generation["user_id"])["progress"]
+    created_at = current.get("created_at")
     data = {
         "prompt_id": generation["prompt_id"],
         "status": current["status"],
         "progress": progress,
         "queue_position": None,
+        "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
+        "elapsed_seconds": float(current.get("elapsed_seconds") or 0),
     }
-    signature = (current["status"], data["progress"], data["queue_position"])
+    signature = (current["status"], data["progress"], data["queue_position"], data["elapsed_seconds"])
     if _last_published_signatures.get(key) == signature:
         return
     _last_published_signatures[key] = signature

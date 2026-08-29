@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
 from .comfyui import generation_progress
-from .database import list_active_image_generations, list_active_video_generations
+from .database import generation_elapsed_seconds, list_active_image_generations, list_active_video_generations
 
 
 router = APIRouter(prefix="/generation", tags=["generation"])
@@ -27,6 +27,7 @@ class ActiveGeneration(BaseModel):
     progress: float = 0
     queue_position: int | None = None
     created_at: datetime
+    elapsed_seconds: float = 0
 
 
 @router.get("/active", response_model=list[ActiveGeneration])
@@ -36,6 +37,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
         return {
             "progress": progress["progress"],
             "queue_position": progress["queue_position"],
+            "elapsed_seconds": generation_elapsed_seconds(generation),
         }
 
     rows = [

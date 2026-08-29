@@ -17,6 +17,7 @@ export type PresetValues = {
 	steps?: number;
 	mode?: VideoMode;
 	duration?: number;
+	fps?: number;
 	seed?: string;
 	random_seed?: boolean;
 };

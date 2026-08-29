@@ -164,7 +164,7 @@
 						prompt_enhancement_enabled: '프롬프트 개선 설정',
 						improved_prompt: '프롬프트 개선 설정'
 					}
-				: { prompt: '프롬프트', mode: '생성 방식', size: '영상 크기', duration: '길이(초)', seed: 'Seed', random_seed: 'Seed' };
+				: { prompt: '프롬프트', mode: '생성 방식', size: '영상 크기', duration: '길이(초)', fps: 'FPS', seed: 'Seed', random_seed: 'Seed' };
 		const fields = new Set(preset.saved_fields);
 		if (preset.type === 't2i' && fields.has('aspect_ratio')) {
 			fields.delete('width');

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from datetime import datetime
 import json
 import mimetypes
 import re
@@ -36,6 +37,7 @@ from .comfyui import (
 from .database import (
     create_media_asset,
     create_video_generation,
+    generation_elapsed_seconds,
     get_reusable_media,
     get_video_generation,
     update_video_generation_status,
@@ -86,6 +88,7 @@ class VideoGenerationRequest(BaseModel):
     width: int = Field(default=1344, ge=32, le=1344)
     height: int = Field(default=768, ge=32, le=1344)
     duration: float = Field(default=5, ge=1, le=15)
+    fps: float = Field(default=24, ge=1, le=120)
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
     first_frame: VideoAsset | None = None
     last_frame: VideoAsset | None = None
@@ -122,6 +125,9 @@ class VideoGenerationAccepted(BaseModel):
     mode: str
     status: Literal["queued"]
     progress: float = Field(default=0, ge=0, le=100)
+    fps: float = Field(default=24, ge=1, le=120)
+    created_at: datetime
+    elapsed_seconds: float = Field(default=0, ge=0)
 
 
 class VideoOutput(BaseModel):
@@ -137,6 +143,9 @@ class VideoGenerationStatus(BaseModel):
     status: str
     progress: float = Field(default=0, ge=0, le=100)
     queue_position: int | None = Field(default=None, ge=1)
+    fps: float = Field(default=24, ge=1, le=120)
+    created_at: datetime | None = None
+    elapsed_seconds: float = Field(default=0, ge=0)
     video: VideoOutput | None = None
 
 
@@ -186,7 +195,7 @@ async def create_video(
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 영상 생성 작업 ID를 반환하지 않았습니다.")
     input_file_ids = list(dict.fromkeys(asset.file_id for asset in resolved.values()))
-    generation_id = create_video_generation(
+    generation_id, created_at = create_video_generation(
         user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
@@ -194,7 +203,8 @@ async def create_video(
         prompt=effective_prompt,
         width=request.width,
         height=request.height,
-        length=_frame_length(request.duration),
+        length=_frame_length(request.duration, request.fps),
+        fps=request.fps,
         seed=seed,
         input_file_ids=input_file_ids,
     )
@@ -205,6 +215,9 @@ async def create_video(
         mode=mode,
         status="queued",
         progress=0,
+        fps=request.fps,
+        created_at=created_at,
+        elapsed_seconds=0,
     )
 
 
@@ -261,7 +274,13 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                 return
             yield _sse_message(
                 "completed",
-                VideoGenerationStatus(prompt_id=prompt_id, mode=mode, status="completed", video=video).model_dump(),
+                VideoGenerationStatus(
+                    prompt_id=prompt_id,
+                    mode=mode,
+                    status="completed",
+                    video=video,
+                    **_video_timing(generation, user_id),
+                ).model_dump(mode="json"),
             )
             return
         if current_status == "failed":
@@ -273,6 +292,7 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                     "status": "failed",
                     "progress": 0,
                     "queue_position": None,
+                    **_video_timing(generation, user_id),
                 },
             )
             return
@@ -285,6 +305,7 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                 "status": current_status,
                 "progress": progress_state["progress"],
                 "queue_position": progress_state["queue_position"] or _queue_position(prompt_id),
+                **_video_timing(generation, user_id),
             },
         )
 
@@ -592,7 +613,9 @@ def _build_prompt(
             if node.get("class_type") in {"MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"}:
                 inputs["width"] = _multiple_of_32(request.width)
                 inputs["height"] = _multiple_of_32(request.height)
-                inputs["length"] = _frame_length(request.duration)
+                inputs["length"] = _frame_length(request.duration, request.fps)
+            if node.get("class_type") == "CreateVideo":
+                inputs["fps"] = request.fps
     if mode == "i2v":
         prompt["10"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
     elif mode == "fl2v":
@@ -672,6 +695,16 @@ def _upload_to_comfy(resolved: dict[str, _ResolvedAsset], asset: VideoAsset | No
     return name
 
 
+def _video_timing(generation: dict[str, Any], user_id: uuid.UUID) -> dict[str, Any]:
+    current = get_video_generation(generation["prompt_id"], user_id) or generation
+    created_at = current.get("created_at")
+    return {
+        "fps": float(current.get("fps") or 24),
+        "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
+        "elapsed_seconds": generation_elapsed_seconds(current),
+    }
+
+
 def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGenerationStatus:
     prompt_id = generation["prompt_id"]
     history = _request_json("GET", f"/history/{prompt_id}")
@@ -689,6 +722,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             status=current_status,
             progress=progress_state["progress"],
             queue_position=progress_state["queue_position"] or _queue_position(prompt_id),
+            **_video_timing(generation, user_id),
         )
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
@@ -700,6 +734,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             mode=generation["mode"],
             status="failed",
             progress=progress_state["progress"],
+            **_video_timing(generation, user_id),
         )
     if comfy_status.get("completed") is True:
         _sync_video_output(generation, user_id, entry.get("outputs"))
@@ -710,6 +745,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             status="completed",
             progress=100,
             video=_video_output(refreshed, user_id),
+            **_video_timing(refreshed, user_id),
         )
     update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
     return VideoGenerationStatus(
@@ -717,6 +753,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
         mode=generation["mode"],
         status="processing",
         progress=progress_state["progress"],
+        **_video_timing(generation, user_id),
     )
 
 
@@ -778,8 +815,8 @@ def _raw_video_outputs(outputs: Any) -> list[dict[str, Any]]:
     return results
 
 
-def _frame_length(duration: float) -> int:
-    frames = max(5, round(duration * 24))
+def _frame_length(duration: float, fps: float = 24) -> int:
+    frames = max(5, round(duration * fps))
     return frames + (5 - frames % 17) % 17
 
 

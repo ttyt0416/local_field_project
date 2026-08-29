@@ -14,6 +14,7 @@ export type GenerationJob = {
 	status: GenerationJobStatus;
 	progress: number;
 	queuePosition: number | null;
+	elapsedSeconds: number;
 	imageUrl?: string;
 	videoUrl?: string;
 	error?: string;
@@ -30,6 +31,7 @@ type ActiveGenerationResponse = {
 	progress: number;
 	queue_position: number | null;
 	created_at: string;
+	elapsed_seconds: number;
 };
 
 const terminalStatuses = new Set<GenerationJobStatus>(['completed', 'failed']);
@@ -48,6 +50,8 @@ class GenerationJobStore {
 	private waiters = new Map<string, Set<() => void>>();
 	private initialized = false;
 	private initialization?: Promise<void>;
+	private clock?: ReturnType<typeof setInterval>;
+	now = $state(Date.now());
 
 	get list() {
 		return Object.values(this.jobs).sort((left, right) => right.createdAt - left.createdAt);
@@ -55,12 +59,14 @@ class GenerationJobStore {
 
 	async initialize() {
 		if (!browser || this.initialized) return;
+		this.startClock();
 		if (this.initialization) return this.initialization;
 		this.initialization = this.restoreActiveJobs();
 		return this.initialization;
 	}
 
-	track(input: Omit<GenerationJob, 'key' | 'status' | 'progress' | 'queuePosition' | 'createdAt'>) {
+	track(input: Omit<GenerationJob, 'key' | 'status' | 'progress' | 'queuePosition' | 'createdAt' | 'elapsedSeconds'> & { createdAt?: number; elapsedSeconds?: number }) {
+		this.startClock();
 		const key = `${input.kind}:${input.promptId}`;
 		this.jobs[key] = {
 			...input,
@@ -68,7 +74,8 @@ class GenerationJobStore {
 			status: 'queued',
 			progress: 0,
 			queuePosition: null,
-			createdAt: Date.now()
+			createdAt: input.createdAt ?? Date.now(),
+			elapsedSeconds: input.elapsedSeconds ?? 0
 		};
 		void this.connect(key);
 		return key;
@@ -99,7 +106,8 @@ class GenerationJobStore {
 					status: active.status,
 					progress: active.progress,
 					queuePosition: active.queue_position,
-					createdAt: Date.parse(active.created_at) || Date.now()
+					createdAt: Date.parse(active.created_at) || Date.now(),
+					elapsedSeconds: active.elapsed_seconds
 				};
 				void this.connect(key);
 			}
@@ -155,6 +163,8 @@ class GenerationJobStore {
 		const changes: Partial<GenerationJob> = {};
 		if (status) changes.status = status;
 		if (typeof data.progress === 'number') changes.progress = data.progress;
+		if (typeof data.elapsed_seconds === 'number') changes.elapsedSeconds = data.elapsed_seconds;
+		if (typeof data.created_at === 'string') changes.createdAt = Date.parse(data.created_at) || changes.createdAt;
 		if ('queue_position' in data) changes.queuePosition = typeof data.queue_position === 'number' ? data.queue_position : null;
 		if (eventName === 'completed') {
 			const image = Array.isArray(data.images) ? (data.images[0] as { url?: unknown } | undefined) : undefined;
@@ -180,6 +190,16 @@ class GenerationJobStore {
 			for (const resolve of this.waiters.get(key) ?? []) resolve();
 			this.waiters.delete(key);
 		}
+	}
+
+	private startClock() {
+		if (!browser || this.clock) return;
+		this.clock = setInterval(() => (this.now = Date.now()), 1000);
+	}
+
+	elapsedSeconds(job: GenerationJob, now = this.now) {
+		if (isTerminal(job.status)) return job.elapsedSeconds;
+		return Math.max(job.elapsedSeconds, (now - job.createdAt) / 1000);
 	}
 }
 

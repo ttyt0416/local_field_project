@@ -40,6 +40,7 @@ class PresetValues(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=100)
     mode: PresetVideoMode | None = None
     duration: float | None = Field(default=None, ge=1, le=15)
+    fps: float | None = Field(default=None, ge=1, le=120)
     seed: str | None = Field(default=None, min_length=1, max_length=19, pattern=r"^[0-9]+$")
     random_seed: bool | None = None
 

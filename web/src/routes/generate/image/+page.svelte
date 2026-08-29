@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { FolderOpen, ImagePlus, Plus, Save, Sparkles, X } from '@lucide/svelte';
+	import { ArrowLeftRight, FolderOpen, ImagePlus, Plus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
@@ -17,6 +17,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
+	import { formatElapsedSeconds } from '$lib/utils/generation';
 
 	type ImageOptions = {
 		checkpoints: string[];
@@ -117,6 +118,7 @@
 	let generationStatus = $state('');
 	let progress = $state(0);
 	let queuePosition = $state<number | null>(null);
+	let elapsedSeconds = $state(0);
 	let promptId = $state('');
 	let imageUrl = $state('');
 	let generationId = $state('');
@@ -352,12 +354,17 @@
 	});
 
 	$effect(() => {
+		const now = generationJobStore.now;
 		const job = imageJobKey ? generationJobStore.jobs[imageJobKey] : undefined;
-		if (!job) return;
+		if (!job) {
+			elapsedSeconds = 0;
+			return;
+		}
 		generationStatus = job.status;
 		progress = job.progress;
 		queuePosition = job.queuePosition;
 		generationId = job.generationId;
+		elapsedSeconds = generationJobStore.elapsedSeconds(job, now);
 		imageUrl = job.imageUrl ?? '';
 		if (job.status === 'completed') successMessage = '이미지 생성이 완료되었습니다.';
 		if (job.status === 'failed') generationError = job.error ?? '이미지 생성에 실패했습니다.';
@@ -426,7 +433,7 @@
 		generating = true;
 		generationStatus = 'queued';
 		try {
-			const queued = await apiJson<{ prompt_id: string; client_id: string; generation_id: string }>('generation/image', {
+			const queued = await apiJson<{ prompt_id: string; client_id: string; generation_id: string; created_at: string; elapsed_seconds: number }>('generation/image', {
 				method: 'POST',
 				json: {
 					prompt: prompt.trim(),
@@ -448,7 +455,9 @@
 				kind: 'image',
 				promptId: queued.prompt_id,
 				clientId: queued.client_id,
-				generationId: queued.generation_id
+				generationId: queued.generation_id,
+				createdAt: Date.parse(queued.created_at),
+				elapsedSeconds: queued.elapsed_seconds
 			});
 			await generationJobStore.waitForTerminal(imageJobKey);
 		} catch (error) {
@@ -504,6 +513,7 @@
 		generationStatus = '';
 		progress = 0;
 		queuePosition = null;
+		elapsedSeconds = 0;
 		promptId = '';
 		imageUrl = '';
 		generationId = '';
@@ -513,6 +523,11 @@
 
 	function getErrorMessage(error: unknown) {
 		return error instanceof Error ? error.message : '요청을 처리하지 못했습니다.';
+	}
+
+	function swapDimensions() {
+		[width, height] = [height, width];
+		aspectRatio = 'custom';
 	}
 </script>
 
@@ -540,6 +555,7 @@
 									상태: {statusLabel(generationStatus)}
 									{#if generationStatus === 'queued' || generationStatus === 'processing'} · {Math.round(progress)}%{/if}
 									{#if generationStatus === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}
+									{#if generationStatus === 'queued' || generationStatus === 'processing'} · 경과 {formatElapsedSeconds(elapsedSeconds)}{:else} · 소요 {formatElapsedSeconds(elapsedSeconds)}{/if}
 								</Typography>
 							{/if}
 						</div>
@@ -553,6 +569,7 @@
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]">
 								<LoadingSpinner size="lg" label="이미지 생성 중" />
 								<p class="text-sm text-muted-foreground">이미지를 생성하고 있습니다.</p>
+								<p class="text-2xl font-semibold tabular-nums text-primary">{formatElapsedSeconds(elapsedSeconds)}</p>
 							</div>
 						{:else}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-3 px-6 text-center sm:min-h-[34rem]">
@@ -663,6 +680,12 @@
 
 						<Select id="aspect-ratio" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} />
 
+						<div class="flex items-center justify-between gap-3">
+							<span class="text-sm font-medium">이미지 크기</span>
+							<IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}>
+								<ArrowLeftRight size={16} strokeWidth={1.9} />
+							</IconOutlinedButton>
+						</div>
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="width">
 								<span class="text-sm font-medium">가로</span>

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -34,6 +35,7 @@ class VideoGenerationStatusTest(unittest.TestCase):
         query, parameters = connection.calls[0]
         self.assertIn("subfolder = COALESCE(%s::varchar, subfolder)", query)
         self.assertIn("video_type = COALESCE(%s::varchar, video_type)", query)
+        self.assertIn("elapsed_seconds = GREATEST", query)
         self.assertEqual(parameters[3:5], (None, None))
 
     def test_completed_media_metadata_is_written(self) -> None:
@@ -52,6 +54,16 @@ class VideoGenerationStatusTest(unittest.TestCase):
 
         _, parameters = connection.calls[0]
         self.assertEqual(parameters[3:5], ("renders", "output"))
+
+    def test_active_elapsed_seconds_is_derived_from_created_at(self) -> None:
+        elapsed = database.generation_elapsed_seconds(
+            {
+                "status": "processing",
+                "created_at": datetime.now(timezone.utc) - timedelta(seconds=2),
+                "elapsed_seconds": 0,
+            }
+        )
+        self.assertGreaterEqual(elapsed, 2)
 
 
 if __name__ == "__main__":

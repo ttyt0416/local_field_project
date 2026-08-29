@@ -48,6 +48,29 @@ class VideoContractTest(unittest.TestCase):
                 )
                 self.assertEqual(generator["inputs"]["prompt"], request.prompt)
 
+    def test_fps_defaults_to_24_and_reaches_video_workflow(self) -> None:
+        self.assertEqual(video.VideoGenerationRequest(prompt="move").fps, 24)
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            duration=3,
+            fps=30,
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            prompt, _ = video._build_prompt("i2v", request, resolved)
+
+        generator = next(node for node in prompt.values() if node["class_type"] == "MiniMaxH3ImageToVideo")
+        create_video = next(node for node in prompt.values() if node["class_type"] == "CreateVideo")
+        self.assertEqual(generator["inputs"]["length"], video._frame_length(3, 30))
+        self.assertEqual(create_video["inputs"]["fps"], 30)
+
+    def test_fps_validation_rejects_values_outside_supported_range(self) -> None:
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", fps=0)
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", fps=121)
+
     def test_mode_is_explicit_when_resolving_assets(self) -> None:
         request = video.VideoGenerationRequest(
             prompt="move",

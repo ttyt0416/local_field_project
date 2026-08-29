@@ -6,14 +6,15 @@
 	import { apiJson } from '$lib/utils/api';
 	import type { Preset, PresetValues, VideoMode } from '$lib/types/presets';
 
-	type PresetField = 'prompt' | 'mode' | 'size' | 'duration' | 'seed';
+	type PresetField = 'prompt' | 'mode' | 'size' | 'duration' | 'fps' | 'seed';
 	type Props = {
 		open?: boolean;
 		preset: Preset | null;
+		initialValues?: PresetValues;
 		onSaved: (preset: Preset) => void;
 	};
 
-	let { open = $bindable(false), preset, onSaved }: Props = $props();
+	let { open = $bindable(false), preset, initialValues = {}, onSaved }: Props = $props();
 
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const fieldOptions: { key: PresetField; label: string }[] = [
@@ -21,6 +22,7 @@
 		{ key: 'mode', label: '생성 방식' },
 		{ key: 'size', label: '영상 크기' },
 		{ key: 'duration', label: '길이(초)' },
+		{ key: 'fps', label: 'FPS' },
 		{ key: 'seed', label: 'Seed' }
 	];
 	const videoModeOptions: { value: VideoMode; label: string }[] = [
@@ -28,7 +30,7 @@
 		{ value: 'fl2v', label: 'FL2V' },
 		{ value: 'r2v', label: 'R2V' }
 	];
-	const allFields: Record<PresetField, boolean> = { prompt: true, mode: true, size: true, duration: true, seed: true };
+	const allFields: Record<PresetField, boolean> = { prompt: true, mode: true, size: true, duration: true, fps: true, seed: true };
 
 	let editingId = $state<string | null>(null);
 	let presetName = $state('');
@@ -37,6 +39,7 @@
 	let width = $state(1344);
 	let height = $state(768);
 	let duration = $state(5);
+	let fps = $state(24);
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let selectedFields = $state<Record<PresetField, boolean>>({ ...allFields });
@@ -45,7 +48,7 @@
 
 	$effect(() => {
 		if (!open) return;
-		const values = preset?.values ?? {};
+		const values = preset?.values ?? initialValues;
 		const fields = new Set(preset?.saved_fields ?? Object.keys(allFields));
 		const hasSize = fields.has('size') || fields.has('width') || fields.has('height');
 		const hasSeed = fields.has('seed') || fields.has('random_seed');
@@ -56,6 +59,7 @@
 		width = values.width ?? 1344;
 		height = values.height ?? 768;
 		duration = values.duration ?? 5;
+		fps = values.fps ?? 24;
 		seed = values.seed ?? '';
 		randomSeed = values.random_seed ?? !values.seed;
 		selectedFields = {
@@ -63,6 +67,7 @@
 			mode: fields.has('mode'),
 			size: hasSize,
 			duration: fields.has('duration'),
+			fps: fields.has('fps'),
 			seed: hasSeed
 		};
 		error = '';
@@ -81,6 +86,7 @@
 			values.height = height;
 		}
 		if (selectedFields.duration) values.duration = duration;
+		if (selectedFields.fps) values.fps = fps;
 		if (selectedFields.seed) {
 			values.random_seed = randomSeed;
 			if (!randomSeed && seed.trim()) values.seed = seed.trim();
@@ -118,6 +124,7 @@
 		{#if selectedFields.mode}<Select id="video-preset-mode" label="생성 방식" options={videoModeOptions} bind:value={videoMode} />{/if}
 		{#if selectedFields.size}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-width"><span class="text-sm font-medium">가로</span><input id="video-preset-width" type="number" min="32" max="1344" step="32" bind:value={width} class={numberInputClass} /></label><label class="block space-y-2" for="video-preset-height"><span class="text-sm font-medium">세로</span><input id="video-preset-height" type="number" min="32" max="1344" step="32" bind:value={height} class={numberInputClass} /></label></div>{/if}
 		{#if selectedFields.duration}<label class="block space-y-2" for="video-preset-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-preset-duration" type="number" min="1" max="15" step="0.1" bind:value={duration} class={numberInputClass} /></label>{/if}
+		{#if selectedFields.fps}<label class="block space-y-2" for="video-preset-fps"><span class="text-sm font-medium">FPS</span><input id="video-preset-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-seed"><span class="text-sm font-medium">Seed</span><input id="video-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="video-preset-random-seed"><input id="video-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>

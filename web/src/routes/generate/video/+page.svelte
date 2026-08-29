@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { AudioLines, ChevronLeft, ChevronRight, Database, HardDrive, Image as ImageIcon, Sparkles, Video } from '@lucide/svelte';
+	import { ArrowLeftRight, AudioLines, ChevronLeft, ChevronRight, Database, HardDrive, Image as ImageIcon, Save, Sparkles, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
 
 	import Modal from '../../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
+	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
+	import VideoPresetModal from '../../../../components/presets/video-preset-modal.svelte';
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import SearchBar from '../../../../components/inputs/searchbar.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
@@ -17,6 +19,8 @@
 	import { videoGenerationStore, type VideoLibraryAsset, type VideoMode } from '$lib/stores/video-generation.svelte';
 	import { apiForm, apiJson } from '$lib/utils/api';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
+	import { formatElapsedSeconds } from '$lib/utils/generation';
+	import type { Preset, PresetValues } from '$lib/types/presets';
 
 	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
 	type SelectionTarget = 'first' | 'last' | 'images' | 'videos' | 'audios';
@@ -54,6 +58,7 @@
 	let width = $state(1344);
 	let height = $state(768);
 	let duration = $state(5);
+	let fps = $state(24);
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let firstFile = $state<File | null>(null);
@@ -71,9 +76,12 @@
 	let status = $state('');
 	let progress = $state(0);
 	let queuePosition = $state<number | null>(null);
+	let elapsedSeconds = $state(0);
 	let videoUrl = $state('');
 	let error = $state('');
 	let success = $state('');
+	let videoPresetOpen = $state(false);
+	let videoPresetInitialValues = $state<PresetValues>({});
 	let active = true;
 	let videoJobKey = $state('');
 	let selectionOpen = $state(false);
@@ -87,6 +95,7 @@
 	let storedTotalPages = $state(0);
 	let storedSelectedIds = $state<string[]>([]);
 	let storedSelectedAssets = $state<StoredMediaAsset[]>([]);
+	let sizeApplying = $state('');
 	let storedRequestId = 0;
 	let selectionKind = $derived(
 		selectionTarget === 'videos' ? 'video' : selectionTarget === 'audios' ? 'audio' : 'image'
@@ -113,11 +122,16 @@
 	});
 
 	$effect(() => {
+		const now = generationJobStore.now;
 		const job = videoJobKey ? generationJobStore.jobs[videoJobKey] : undefined;
-		if (!job) return;
+		if (!job) {
+			elapsedSeconds = 0;
+			return;
+		}
 		status = job.status;
 		progress = job.progress;
 		queuePosition = job.queuePosition;
+		elapsedSeconds = generationJobStore.elapsedSeconds(job, now);
 		videoUrl = job.videoUrl ?? '';
 		if (job.status === 'completed') success = '영상 생성이 완료되었습니다.';
 		if (job.status === 'failed') error = job.error ?? '영상 생성에 실패했습니다.';
@@ -190,6 +204,50 @@
 
 	function imageSourceType(url: string): 'external' | 'server' {
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
+	}
+
+	function readMediaDimensions(source: File | string, kind: 'image' | 'video') {
+		return new Promise<{ width: number; height: number }>((resolve, reject) => {
+			const objectUrl = source instanceof File ? URL.createObjectURL(source) : '';
+			const url = objectUrl || (typeof source === 'string' ? source : '');
+			const element = kind === 'video' ? document.createElement('video') : new Image();
+			const cleanup = () => {
+				if (objectUrl) URL.revokeObjectURL(objectUrl);
+			};
+			const succeed = (width: number, height: number) => {
+				cleanup();
+				if (width > 0 && height > 0) resolve({ width, height });
+				else reject(new Error('invalid dimensions'));
+			};
+			element.onerror = () => {
+				cleanup();
+				reject(new Error('media metadata unavailable'));
+			};
+			if (kind === 'video') {
+				const video = element as HTMLVideoElement;
+				video.preload = 'metadata';
+				video.onloadedmetadata = () => succeed(video.videoWidth, video.videoHeight);
+			} else {
+				const image = element as HTMLImageElement;
+				image.onload = () => succeed(image.naturalWidth, image.naturalHeight);
+			}
+			element.src = url;
+		});
+	}
+
+	async function applyMediaSize(key: string, source: File | string | null, kind: 'image' | 'video') {
+		if (!source || sizeApplying) return;
+		sizeApplying = key;
+		error = '';
+		try {
+			const dimensions = await readMediaDimensions(source, kind);
+			width = dimensions.width;
+			height = dimensions.height;
+		} catch {
+			error = '선택한 콘텐츠의 크기를 읽지 못했습니다.';
+		} finally {
+			sizeApplying = '';
+		}
 	}
 
 	function openSelection(target: SelectionTarget) {
@@ -402,6 +460,7 @@
 				width: Number(width),
 				height: Number(height),
 				duration: Number(duration),
+				fps: Number(fps),
 				seed: randomSeed ? null : seed.trim() || null
 			};
 			if (mode === 'i2v') payload.first_frame = assetRef('image', firstFile, selectedFirst, newFiles, form);
@@ -426,13 +485,15 @@
 			form.append('payload', JSON.stringify(payload));
 			generating = true;
 			uploading = newFiles.length > 0;
-			const accepted = await apiForm<{ prompt_id: string; client_id: string; generation_id: string }>(`generation/video/${mode}`, form, { timeout: 120_000 });
+			const accepted = await apiForm<{ prompt_id: string; client_id: string; generation_id: string; created_at: string; elapsed_seconds: number }>(`generation/video/${mode}`, form, { timeout: 120_000 });
 			videoJobKey = generationJobStore.track({
 				kind: 'video',
 				promptId: accepted.prompt_id,
 				clientId: accepted.client_id,
 				generationId: accepted.generation_id,
-				mode
+				mode,
+				createdAt: Date.parse(accepted.created_at),
+				elapsedSeconds: accepted.elapsed_seconds
 			});
 			await generationJobStore.waitForTerminal(videoJobKey);
 		} catch (reason) {
@@ -454,11 +515,34 @@
 		status = '';
 		progress = 0;
 		queuePosition = null;
+		elapsedSeconds = 0;
 		videoUrl = '';
 		error = '';
 		success = '';
 		videoJobKey = '';
 		generating = false;
+	}
+
+	function openVideoPresetSave() {
+		videoPresetInitialValues = {
+			prompt: prompt.trim(),
+			mode,
+			width: Number(width),
+			height: Number(height),
+			duration: Number(duration),
+			fps: Number(fps),
+			random_seed: randomSeed,
+			...(randomSeed || !seed.trim() ? {} : { seed: seed.trim() })
+		};
+		videoPresetOpen = true;
+	}
+
+	function handleVideoPresetSaved(preset: Preset) {
+		success = `'${preset.name}' 프리셋을 저장했습니다.`;
+	}
+
+	function swapDimensions() {
+		[width, height] = [height, width];
 	}
 </script>
 
@@ -481,7 +565,7 @@
 					<div class="flex items-center justify-between gap-4">
 						<div>
 							<div id="video-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
-							{#if status}<Typography as="p" variant="muted" class="mt-1">상태: {statusLabel(status)}{#if status === 'queued' || status === 'processing'} · {Math.round(progress)}%{/if}{#if status === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}</Typography>{/if}
+							{#if status}<Typography as="p" variant="muted" class="mt-1">상태: {statusLabel(status)}{#if status === 'queued' || status === 'processing'} · {Math.round(progress)}% · 경과 {formatElapsedSeconds(elapsedSeconds)}{:else} · 소요 {formatElapsedSeconds(elapsedSeconds)}{/if}{#if status === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}</Typography>{/if}
 						</div>
 						<Video size={22} class="text-primary" strokeWidth={1.8} />
 					</div>
@@ -489,7 +573,7 @@
 						{#if videoUrl}
 							<VideoMedia source={videoUrl} sourceType="server" preview={false} muted={false} class="min-h-[24rem] sm:min-h-[34rem]" />
 						{:else if generating}
-							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]"><LoadingSpinner size="lg" label={uploading ? '파일 업로드 중' : '영상 생성 중'} /><p class="text-sm text-muted-foreground">{uploading ? '파일을 업로드를 진행하고 있습니다.' : '영상 생성중입니다.'}</p>{#if !uploading}<p class="text-2xl font-semibold tabular-nums text-primary">{Math.round(progress)}%</p>{/if}</div>
+							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]"><LoadingSpinner size="lg" label={uploading ? '파일 업로드 중' : '영상 생성 중'} /><p class="text-sm text-muted-foreground">{uploading ? '파일을 업로드를 진행하고 있습니다.' : '영상 생성중입니다.'}</p>{#if !uploading}<p class="text-2xl font-semibold tabular-nums text-primary">{Math.round(progress)}%</p>{/if}<p class="text-lg font-semibold tabular-nums text-primary">경과 {formatElapsedSeconds(elapsedSeconds)}</p></div>
 					{:else}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-3 px-6 text-center sm:min-h-[34rem]"><div class="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Video size={26} strokeWidth={1.7} /></div><p class="text-sm font-medium">아직 생성된 영상이 없습니다.</p><p class="max-w-sm text-xs leading-5 text-muted-foreground">콘텐츠를 선택하고 프롬프트를 입력한 뒤 생성 버튼을 눌러 주세요.</p></div>
 						{/if}
@@ -497,7 +581,12 @@
 				</section>
 
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-settings-title">
-					<div id="video-settings-title"><Typography as="h2" variant="h2">동영상 설정</Typography></div>
+					<div class="flex items-center justify-between gap-4">
+						<div id="video-settings-title"><Typography as="h2" variant="h2">동영상 설정</Typography></div>
+						<IconOutlinedButton ariaLabel="동영상 프리셋 저장" disabled={generating} onclick={openVideoPresetSave}>
+							<Save size={17} strokeWidth={1.8} />
+						</IconOutlinedButton>
+					</div>
 					<div class="mt-5 grid grid-cols-3 rounded-xl border border-border p-1" role="tablist" aria-label="동영상 생성 방식">
 						{#each modes as item}
 							<button type="button" role="tab" aria-selected={mode === item.value} onclick={() => selectMode(item.value)} class={`rounded-lg px-2 py-2 text-sm font-semibold transition ${mode === item.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>
@@ -561,6 +650,7 @@
 												<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 시작 이미지" class="h-full" />
 											{/if}
 											<p class="border-t border-border px-3 py-2 text-xs font-medium">시작 이미지</p>
+											<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>크기 적용</OutlinedButton>
 										</div>
 									</div>
 								{/if}
@@ -578,6 +668,7 @@
 													<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 첫 프레임" class="h-full" />
 												{/if}
 												<p class="border-t border-border px-3 py-2 text-xs font-medium">첫 프레임</p>
+												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'fl2v-first'} disabled={Boolean(sizeApplying) && sizeApplying !== 'fl2v-first'} onclick={() => void applyMediaSize('fl2v-first', firstFile ?? selectedFirst?.url ?? null, 'image')}>크기 적용</OutlinedButton>
 											</div>
 										{/if}
 									</div>
@@ -591,6 +682,7 @@
 													<ImageMedia source={selectedLast.url} sourceType={imageSourceType(selectedLast.url)} alt="선택한 마지막 프레임" class="h-full" />
 												{/if}
 												<p class="border-t border-border px-3 py-2 text-xs font-medium">마지막 프레임</p>
+												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'fl2v-last'} disabled={Boolean(sizeApplying) && sizeApplying !== 'fl2v-last'} onclick={() => void applyMediaSize('fl2v-last', lastFile ?? selectedLast?.url ?? null, 'image')}>크기 적용</OutlinedButton>
 											</div>
 										{/if}
 									</div>
@@ -610,12 +702,14 @@
 														<div class="flex min-h-32 items-center justify-center"><ImageIcon size={30} class="text-primary" /></div>
 													{/if}
 													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 이미지 {index + 1}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-${asset.file_id}`} disabled={!asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-image-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-image-${asset.file_id}`, asset.url, 'image')}>크기 적용</OutlinedButton>
 												</div>
 											{/each}
 											{#each referenceImageFiles as file, index}
 												<div class="overflow-hidden rounded-xl border border-border bg-muted">
 													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-full" />
 													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 이미지 {selectedReferenceImages.length + index + 1}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-file-${index}`} disabled={Boolean(sizeApplying) && sizeApplying !== `reference-image-file-${index}`} onclick={() => void applyMediaSize(`reference-image-file-${index}`, file, 'image')}>크기 적용</OutlinedButton>
 												</div>
 											{/each}
 										</div>
@@ -634,12 +728,14 @@
 														<div class="flex min-h-32 items-center justify-center"><Video size={30} class="text-primary" /></div>
 													{/if}
 													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 동영상 {index + 1}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-${asset.file_id}`} disabled={!asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-video-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-video-${asset.file_id}`, asset.url, 'video')}>크기 적용</OutlinedButton>
 												</div>
 											{/each}
 											{#each referenceVideoFiles as file, index}
 												<div class="overflow-hidden rounded-xl border border-border bg-muted">
 													<VideoMedia source={file} preview={false} muted={true} class="h-full" />
 													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 동영상 {selectedReferenceVideos.length + index + 1}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-file-${index}`} disabled={Boolean(sizeApplying) && sizeApplying !== `reference-video-file-${index}`} onclick={() => void applyMediaSize(`reference-video-file-${index}`, file, 'video')}>크기 적용</OutlinedButton>
 												</div>
 											{/each}
 										</div>
@@ -669,9 +765,10 @@
 							</div>
 						{/if}
 
+						<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">영상 크기</span><IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min="32" max="1344" step="32" bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min="32" max="1344" step="32" bind:value={height} class={inputClass} /></label></div>
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" min="1" max="15" step="0.1" bind:value={duration} oninput={() => (improvedPrompt = '')} class={inputClass} /></label><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label></div>
-						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" min="1" max="15" step="0.1" bind:value={duration} oninput={() => (improvedPrompt = '')} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
 						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || enhancingPrompt} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
 					</form>
@@ -679,6 +776,8 @@
 			</div>
 		</div>
 	</Layout>
+
+	<VideoPresetModal bind:open={videoPresetOpen} preset={null} initialValues={videoPresetInitialValues} onSaved={handleVideoPresetSaved} />
 
 	<Modal bind:open={selectionOpen} title={selectionTitle} description="기기 저장소 또는 저장된 콘텐츠에서 선택해 주세요.">
 		<div class="space-y-5">
