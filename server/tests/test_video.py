@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app import video
 from app.auth import UserResponse
+from app.comfyui import cancel_comfy_generation
 from pydantic import ValidationError
 
 
@@ -14,7 +15,28 @@ class VideoContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.user = UserResponse(id=uuid4(), username="tester")
 
-    def test_each_mode_uses_its_own_workflow_and_dynamic_save_video_format(self) -> None:
+    def test_reference_markers_are_normalized_to_minimax_contract(self) -> None:
+        self.assertEqual(
+            video._normalize_video_reference_markers("[Image1] @video2 [Audio 3]"),
+            "<Picture 1> <Video 2> <Audio 3>",
+        )
+
+    def test_cancel_running_comfy_prompt_uses_targeted_interrupt(self) -> None:
+        with (
+            patch("app.comfyui._request_json", return_value={"queue_running": [["item", "prompt-1"]], "queue_pending": []}),
+            patch("app.comfyui._request_action") as request_action,
+        ):
+            self.assertTrue(cancel_comfy_generation("prompt-1"))
+        request_action.assert_called_once_with("POST", "/interrupt", {"prompt_id": "prompt-1"})
+
+    def test_cancel_pending_comfy_prompt_deletes_only_target(self) -> None:
+        with (
+            patch("app.comfyui._request_json", return_value={"queue_running": [], "queue_pending": [["item", "prompt-2"]]}),
+            patch("app.comfyui._request_action") as request_action,
+        ):
+            self.assertTrue(cancel_comfy_generation("prompt-2"))
+        request_action.assert_called_once_with("POST", "/queue", {"delete": ["prompt-2"]})
+
         requests = {
             "i2v": video.VideoGenerationRequest(
                 prompt="move",
@@ -215,7 +237,10 @@ class VideoContractTest(unittest.TestCase):
         with patch.object(video, "_request_structured_object", return_value=fields) as request:
             result = video._enhance_video_prompt(payload)
 
-        expected = video._assemble_video_prompt(fields, languages)
+        expected = video._assemble_video_prompt(
+            {field: video._normalize_video_reference_markers(value) for field, value in fields.items()},
+            languages,
+        )
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_fields")
@@ -236,8 +261,9 @@ class VideoContractTest(unittest.TestCase):
             first_frame=video.VideoAsset(kind="image", file_index=0),
         )
         effective = video._effective_video_prompt("i2v", request)
-        self.assertIn("@image1: start-image reference", effective)
-        self.assertIn(improved, effective)
+        self.assertIn("<Picture 1>: start-image reference", effective)
+        normalized_improved = video._normalize_video_reference_markers(improved)
+        self.assertIn(normalized_improved, effective)
 
     def test_duplicate_video_prompt_languages_are_rejected(self) -> None:
         with self.assertRaises(ValidationError):

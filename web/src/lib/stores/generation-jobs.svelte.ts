@@ -3,7 +3,7 @@ import { SERVER_URL } from '$lib/configs/constants';
 import { apiJson, streamSse } from '$lib/utils/api';
 
 export type GenerationJobKind = 'image' | 'video';
-export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 export type GenerationJob = {
 	key: string;
 	kind: GenerationJobKind;
@@ -34,7 +34,7 @@ type ActiveGenerationResponse = {
 	elapsed_seconds: number;
 };
 
-const terminalStatuses = new Set<GenerationJobStatus>(['completed', 'failed']);
+const terminalStatuses = new Set<GenerationJobStatus>(['completed', 'failed', 'cancelled']);
 
 function isTerminal(status: GenerationJobStatus) {
 	return terminalStatuses.has(status);
@@ -179,7 +179,16 @@ class GenerationJobStore {
 	}
 
 	private status(value: unknown): GenerationJobStatus | undefined {
-		return value === 'queued' || value === 'processing' || value === 'completed' || value === 'failed' ? value : undefined;
+		return value === 'queued' || value === 'processing' || value === 'completed' || value === 'failed' || value === 'cancelled' ? value : undefined;
+	}
+
+	async cancel(key: string) {
+		const job = this.jobs[key];
+		if (!job || job.kind !== 'image' && job.kind !== 'video' || isTerminal(job.status)) return;
+		const path = job.kind === 'image' ? `generation/image/${job.promptId}/cancel` : `generation/video/${job.mode}/${job.promptId}/cancel`;
+		await apiJson(path, { method: 'POST' });
+		this.update(key, { status: 'cancelled', queuePosition: null, error: undefined });
+		this.streams.get(key)?.abort();
 	}
 
 	private update(key: string, changes: Partial<GenerationJob>) {

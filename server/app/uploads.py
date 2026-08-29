@@ -39,18 +39,21 @@ def reusable_media(
     media_kind: Literal["image", "audio", "video"] | None = None,
     page: int = Query(default=1, ge=1),
     user: UserResponse = Depends(current_user),
+    source: Literal["uploaded", "generated"] | None = None,
 ) -> MediaAssetPage:
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     result: list[MediaAssetResponse] = []
-    assets, total_count = list_reusable_media(
-        user.id,
-        search=search,
-        sort=sort,
-        include_generated=include_generated,
-        media_kind=media_kind,
-        page=page,
-    )
+    media_filters = {
+        "search": search,
+        "sort": sort,
+        "include_generated": include_generated,
+        "media_kind": media_kind,
+        "page": page,
+    }
+    if source is not None:
+        media_filters["source_type"] = source
+    assets, total_count = list_reusable_media(user.id, **media_filters)
     for asset in assets:
         url = None
         try:

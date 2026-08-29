@@ -52,7 +52,7 @@ def _publish_if_changed(
     if _last_published_signatures.get(key) == signature:
         return
     _last_published_signatures[key] = signature
-    event = current_status if current_status in {"completed", "failed"} else "status"
+    event = current_status if current_status in {"completed", "failed", "cancelled"} else "status"
     generation_event_broker.publish(
         key=key,
         event=event,
@@ -65,7 +65,7 @@ def _publish_terminal_if_changed(kind: str, generation: dict[str, Any], previous
         current = get_image_generation(generation["prompt_id"], generation["user_id"])
     else:
         current = get_video_generation(generation["prompt_id"], generation["user_id"])
-    if current is None or current["status"] == previous_status or current["status"] not in {"completed", "failed"}:
+    if current is None or current["status"] == previous_status or current["status"] not in {"completed", "failed", "cancelled"}:
         return
     key = generation_key(kind, generation["user_id"], generation["prompt_id"])
     progress = 100.0 if current["status"] == "completed" else generation_progress(generation["prompt_id"], generation["user_id"])["progress"]

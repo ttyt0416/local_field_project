@@ -340,6 +340,42 @@ def image_generation_status(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
+@router.post("/{prompt_id}/cancel", response_model=ImageGenerationStatus)
+def cancel_image_generation(
+    prompt_id: str,
+    user: UserResponse = Depends(current_user),
+) -> ImageGenerationStatus:
+    generation = _require_owned_generation(prompt_id, user.id)
+    if generation["status"] == "cancelled":
+        return _cancelled_image_status(generation, user.id)
+    if generation["status"] not in {"queued", "processing"}:
+        return _history_generation_status(prompt_id, user.id)
+    try:
+        dispatched = cancel_comfy_generation(prompt_id)
+        if not dispatched:
+            current = _history_generation_status(prompt_id, user.id)
+            if current.status in {"completed", "failed", "cancelled"}:
+                return current
+            raise HTTPException(status_code=409, detail="이미 처리 중인 작업이라 취소할 수 없습니다.")
+    except _ComfyUIError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    update_image_generation_status(prompt_id=prompt_id, user_id=user.id, status="cancelled")
+    cancelled = get_image_generation(prompt_id, user.id) or generation
+    data = {
+        "prompt_id": prompt_id,
+        "status": "cancelled",
+        "progress": generation_progress(prompt_id, user.id)["progress"],
+        "queue_position": None,
+        **_image_timing(prompt_id, user.id, cancelled),
+    }
+    generation_event_broker.publish(
+        key=generation_key("image", user.id, prompt_id),
+        event="cancelled",
+        data=data,
+    )
+    return ImageGenerationStatus(**data)
+
+
 async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uuid.UUID):
     key = generation_key("image", user_id, prompt_id)
     async with generation_event_broker.subscribe(key) as events:
@@ -378,6 +414,9 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 },
             )
             return
+        if current_status == "cancelled":
+            yield _sse_message("cancelled", _cancelled_image_status(generation, user_id).model_dump(mode="json"))
+            return
         progress_state = generation_progress(prompt_id, user_id)
         yield _sse_message(
             "status",
@@ -397,7 +436,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 yield ": keep-alive\n\n"
                 continue
             yield _sse_message(message["event"], message["data"])
-            if message["event"] in {"completed", "failed", "error"}:
+            if message["event"] in {"completed", "failed", "cancelled", "error"}:
                 return
 
 
@@ -412,7 +451,20 @@ def _image_timing(prompt_id: str, user_id: uuid.UUID, generation: dict[str, Any]
     }
 
 
+def _cancelled_image_status(generation: dict[str, Any], user_id: uuid.UUID) -> ImageGenerationStatus:
+    return ImageGenerationStatus(
+        prompt_id=generation["prompt_id"],
+        status="cancelled",
+        progress=generation_progress(generation["prompt_id"], user_id)["progress"],
+        queue_position=None,
+        **_image_timing(generation["prompt_id"], user_id, generation),
+    )
+
+
 def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGenerationStatus:
+    generation = get_image_generation(prompt_id, user_id)
+    if generation is not None and generation.get("status") == "cancelled":
+        return _cancelled_image_status(generation, user_id)
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
     progress_state = generation_progress(prompt_id, user_id)
@@ -762,6 +814,36 @@ def _request_json(method: str, path: str, payload: dict[str, Any] | None = None)
     if not isinstance(decoded, dict):
         raise _ComfyUIError("ComfyUI 응답 형식이 올바르지 않습니다.")
     return decoded
+
+
+def _request_action(method: str, path: str, payload: dict[str, Any] | None = None) -> None:
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = UrlRequest(
+        _comfy_url(path),
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=_COMFYUI_TIMEOUT_SECONDS):
+            return
+    except UrlHTTPError as exc:
+        raise _ComfyUIError(f"ComfyUI 작업 요청이 실패했습니다. (HTTP {exc.code})") from exc
+    except (URLError, TimeoutError) as exc:
+        raise _ComfyUIError("ComfyUI 작업 요청에 연결할 수 없습니다.") from exc
+
+
+def cancel_comfy_generation(prompt_id: str) -> bool:
+    queue = _request_json("GET", "/queue")
+    running = queue.get("queue_running", [])
+    if any(isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id for item in running):
+        _request_action("POST", "/interrupt", {"prompt_id": prompt_id})
+        return True
+    pending = queue.get("queue_pending", [])
+    if any(isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id for item in pending):
+        _request_action("POST", "/queue", {"delete": [prompt_id]})
+        return True
+    return False
 
 
 def _request_bytes(path: str) -> tuple[bytes, str | None]:

@@ -28,6 +28,23 @@ class UploadsRouteTest(unittest.TestCase):
             media_kind="image",
             page=2,
         )
+    def test_list_passes_source_filter_to_database(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        with (
+            patch.object(uploads, "storage_enabled", return_value=True),
+            patch.object(uploads, "list_reusable_media", return_value=([], 0)) as list_assets,
+        ):
+            uploads.reusable_media("", "latest", True, "video", 1, user, "generated")
+
+        list_assets.assert_called_once_with(
+            user.id,
+            search="",
+            sort="latest",
+            include_generated=True,
+            media_kind="video",
+            page=1,
+            source_type="generated",
+        )
 
 
 if __name__ == "__main__":

@@ -10,13 +10,15 @@
 		value?: T;
 		ariaLabel?: string;
 		class?: string;
-	};
+		onselect?: (value: T) => void | boolean;
+};
 
 	let {
 		items,
 		value = $bindable(items[0]?.value),
 		ariaLabel = '탭',
-		class: className = ''
+		class: className = '',
+		onselect
 	}: Props = $props();
 </script>
 
@@ -28,7 +30,10 @@
 			role="tab"
 			aria-selected={value === item.value}
 			disabled={item.disabled}
-			onclick={() => (value = item.value)}
+			onclick={() => {
+				const accepted = onselect?.(item.value);
+				if (accepted !== false) value = item.value;
+			}}
 		>
 			{item.label}
 		</button>

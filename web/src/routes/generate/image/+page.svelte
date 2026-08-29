@@ -114,6 +114,7 @@
 	let promptEnhancementError = $state('');
 	let successMessage = $state('');
 	let generating = $state(false);
+	let cancelling = $state(false);
 	let enhancingPrompt = $state(false);
 	let generationStatus = $state('');
 	let progress = $state(0);
@@ -123,6 +124,7 @@
 	let imageUrl = $state('');
 	let generationId = $state('');
 	let imageJobKey = $state('');
+	let announcedTerminal = $state('');
 	let presets = $state<Preset[]>([]);
 	let presetsLoading = $state(false);
 	let savingPreset = $state(false);
@@ -366,8 +368,15 @@
 		generationId = job.generationId;
 		elapsedSeconds = generationJobStore.elapsedSeconds(job, now);
 		imageUrl = job.imageUrl ?? '';
-		if (job.status === 'completed') successMessage = '이미지 생성이 완료되었습니다.';
-		if (job.status === 'failed') generationError = job.error ?? '이미지 생성에 실패했습니다.';
+		const terminalKey = `${imageJobKey}:${job.status}`;
+		if (job.status === 'completed' && announcedTerminal !== terminalKey) {
+			successMessage = '이미지 생성이 완료되었습니다.';
+			announcedTerminal = terminalKey;
+		}
+		if (job.status === 'failed' && announcedTerminal !== terminalKey) {
+			generationError = job.error ?? '이미지 생성에 실패했습니다.';
+			announcedTerminal = terminalKey;
+		}
 	});
 
 	async function initialize() {
@@ -401,6 +410,7 @@
 
 	async function generate() {
 		imageJobKey = '';
+		announcedTerminal = '';
 		promptId = '';
 		generationError = '';
 		successMessage = '';
@@ -469,6 +479,19 @@
 		}
 	}
 
+	async function cancelGeneration() {
+		if (!imageJobKey || !generating || cancelling) return;
+		cancelling = true;
+		generationError = '';
+		try {
+			await generationJobStore.cancel(imageJobKey);
+		} catch (error) {
+			generationError = getErrorMessage(error);
+		} finally {
+			cancelling = false;
+		}
+	}
+
 	async function enhancePrompt() {
 		promptEnhancementError = '';
 		if (!prompt.trim()) {
@@ -503,7 +526,8 @@
 			queued: '대기 중',
 			processing: '생성 중',
 			completed: '완료',
-			failed: '실패'
+			failed: '실패',
+			cancelled: '취소됨'
 		}[status] ?? status;
 	}
 
@@ -518,7 +542,9 @@
 		imageUrl = '';
 		generationId = '';
 		imageJobKey = '';
+		announcedTerminal = '';
 		generating = false;
+		cancelling = false;
 	}
 
 	function getErrorMessage(error: unknown) {
@@ -581,6 +607,12 @@
 							</div>
 						{/if}
 					</div>
+					{#if generating && imageJobKey}
+						<OutlinedButton class="mt-4 w-full" loading={cancelling} disabled={cancelling} onclick={() => void cancelGeneration()}>
+							<X size={16} strokeWidth={1.9} />
+							<span>{cancelling ? '이미지 생성 취소 중' : '이미지 생성 취소'}</span>
+						</OutlinedButton>
+					{/if}
 					{#if imageUrl && generationId}
 						<a href={`/vault/images/${generationId}`} class="mt-4 inline-flex text-sm font-semibold text-primary hover:underline">
 							생성 상세 보기

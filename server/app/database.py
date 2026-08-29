@@ -675,6 +675,7 @@ def list_reusable_media(
     sort: str = "latest",
     include_generated: bool = False,
     media_kind: str | None = None,
+    source_type: str | None = None,
     page: int = 1,
 ) -> tuple[list[dict[str, Any]], int]:
     order_by = {
@@ -722,6 +723,10 @@ def list_reusable_media(
     if media_kind:
         filters.append("media_kind = %s")
         parameters.append(media_kind)
+    if source_type == "uploaded":
+        filters.append("source_type NOT IN ('image_generation', 'video_generation')")
+    elif source_type == "generated":
+        filters.append("source_type IN ('image_generation', 'video_generation')")
     page_size = 10
     offset = (page - 1) * page_size
     query_from = f"FROM ({' UNION ALL '.join(sources)}) AS assets WHERE {' AND '.join(filters)}"
@@ -1078,9 +1083,9 @@ def update_video_generation_status(
                 filename = COALESCE(%s, filename),
                 subfolder = COALESCE(%s::varchar, subfolder),
                 video_type = COALESCE(%s::varchar, video_type),
-                completed_at = CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
-                    CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                    CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                 )))
             WHERE prompt_id = %s AND user_id = %s
             """,
@@ -1204,9 +1209,9 @@ def update_image_generation_status(
                 """
                 UPDATE image_generations
                 SET status = %s,
-                    completed_at = CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                    completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
                     elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
-                        CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                        CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                     )))
                 WHERE prompt_id = %s AND user_id = %s
                 """,
@@ -1222,9 +1227,9 @@ def update_image_generation_status(
                     filename = %s,
                     subfolder = %s,
                     image_type = %s,
-                    completed_at = CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                    completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
                     elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
-                        CASE WHEN %s IN ('completed', 'failed') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                        CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                     )))
                 WHERE prompt_id = %s AND user_id = %s
                 """,

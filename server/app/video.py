@@ -27,6 +27,7 @@ from .comfyui import (
     PromptEnhancementResponse,
     _ComfyUIError,
     _VLLMError,
+    cancel_comfy_generation,
     _queue_position,
     _comfy_url,
     generation_progress,
@@ -149,6 +150,16 @@ class VideoGenerationStatus(BaseModel):
     video: VideoOutput | None = None
 
 
+_REFERENCE_MARKER_REPLACEMENTS = (
+    (re.compile(r"\[\s*(?:image|picture)\s*(\d+)\s*\]", re.IGNORECASE), r"<Picture \1>"),
+    (re.compile(r"@\s*image\s*(\d+)", re.IGNORECASE), r"<Picture \1>"),
+    (re.compile(r"\[\s*video\s*(\d+)\s*\]", re.IGNORECASE), r"<Video \1>"),
+    (re.compile(r"@\s*video\s*(\d+)", re.IGNORECASE), r"<Video \1>"),
+    (re.compile(r"\[\s*audio\s*(\d+)\s*\]", re.IGNORECASE), r"<Audio \1>"),
+    (re.compile(r"@\s*audio\s*(\d+)", re.IGNORECASE), r"<Audio \1>"),
+)
+
+
 class _ResolvedAsset:
     def __init__(self, *, file_id: str, filename: str, content: bytes, media_type: str, kind: str):
         self.file_id = file_id
@@ -236,6 +247,46 @@ def video_status(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
+@router.post("/{mode}/{prompt_id}/cancel", response_model=VideoGenerationStatus)
+def cancel_video_generation(
+    mode: Literal["i2v", "fl2v", "r2v"],
+    prompt_id: str,
+    user: UserResponse = Depends(current_user),
+) -> VideoGenerationStatus:
+    generation = get_video_generation(prompt_id, user.id)
+    if generation is None or generation["mode"] != mode:
+        raise HTTPException(status_code=404, detail="영상 생성 결과를 찾을 수 없습니다.")
+    if generation["status"] == "cancelled":
+        return _cancelled_status(generation, user.id)
+    if generation["status"] not in {"queued", "processing"}:
+        return _history_status(generation, user.id)
+    try:
+        dispatched = cancel_comfy_generation(prompt_id)
+        if not dispatched:
+            current = _history_status(generation, user.id)
+            if current.status in {"completed", "failed", "cancelled"}:
+                return current
+            raise HTTPException(status_code=409, detail="이미 처리 중인 작업이라 취소할 수 없습니다.")
+    except _ComfyUIError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    update_video_generation_status(prompt_id=prompt_id, user_id=user.id, status="cancelled")
+    cancelled = get_video_generation(prompt_id, user.id) or generation
+    data = {
+        "prompt_id": prompt_id,
+        "mode": mode,
+        "status": "cancelled",
+        "progress": generation_progress(prompt_id, user.id)["progress"],
+        "queue_position": None,
+        **_video_timing(cancelled, user.id),
+    }
+    generation_event_broker.publish(
+        key=generation_key("video", user.id, prompt_id),
+        event="cancelled",
+        data=data,
+    )
+    return VideoGenerationStatus(**data)
+
+
 @router.get("/{mode}/{prompt_id}/events")
 async def video_generation_events(
     mode: Literal["i2v", "fl2v", "r2v"],
@@ -296,6 +347,9 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                 },
             )
             return
+        if current_status == "cancelled":
+            yield _sse_message("cancelled", _cancelled_status(generation, user_id).model_dump(mode="json"))
+            return
         progress_state = generation_progress(prompt_id, user_id)
         yield _sse_message(
             "status",
@@ -316,7 +370,7 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                 yield ": keep-alive\n\n"
                 continue
             yield _sse_message(message["event"], message["data"])
-            if message["event"] in {"completed", "failed", "error"}:
+            if message["event"] in {"completed", "failed", "cancelled", "error"}:
                 return
 
 
@@ -448,7 +502,7 @@ def _video_prompt_section_labels(languages: Sequence[str]) -> tuple[str, ...]:
 
 
 def _validate_video_prompt_contents(contents: str, languages: Sequence[str]) -> str:
-    contents = contents.strip()
+    contents = _normalize_video_reference_markers(contents.strip())
     if not re.fullmatch(_video_prompt_pattern(languages), contents):
         raise _VLLMError("동영상 프롬프트에 선택하지 않은 언어 또는 허용되지 않은 문자가 포함되어 있습니다.")
     labels = _video_prompt_section_labels(languages)
@@ -506,10 +560,17 @@ def _validate_video_prompt_fields(fields: dict[str, Any], pattern: str) -> dict[
     validated: dict[str, str] = {}
     for field in _VIDEO_PROMPT_FIELDS:
         value = fields[field]
-        if not isinstance(value, str) or not value.strip() or not re.fullmatch(pattern, value.strip()):
+        value = _normalize_video_reference_markers(value.strip()) if isinstance(value, str) else value
+        if not isinstance(value, str) or not value or not re.fullmatch(pattern, value):
             raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드에 허용되지 않은 값이 있습니다.")
         validated[field] = value.strip()
     return validated
+
+
+def _normalize_video_reference_markers(contents: str) -> str:
+    for pattern, replacement in _REFERENCE_MARKER_REPLACEMENTS:
+        contents = pattern.sub(replacement, contents)
+    return contents
 
 
 def _assemble_video_prompt(fields: dict[str, str], languages: Sequence[str]) -> str:
@@ -556,20 +617,20 @@ def _video_reference_prompt(mode: str, request: VideoGenerationRequest) -> str:
         }
     lines = [heading]
     if mode == "i2v":
-        lines.append(f"@image1: {descriptions['i2v_first']}")
+        lines.append(f"<Picture 1>: {descriptions['i2v_first']}")
     elif mode == "fl2v":
         lines.extend(
             [
-                f"@image1: {descriptions['fl2v_first']}",
-                f"@image2: {descriptions['fl2v_last']}",
+                f"<Picture 1>: {descriptions['fl2v_first']}",
+                f"<Picture 2>: {descriptions['fl2v_last']}",
             ]
         )
     else:
         lines.extend(
             [
-                *(f"@image{index}: {descriptions['image']}" for index, _ in enumerate(request.reference_images, start=1)),
-                *(f"@video{index}: {descriptions['video']}" for index, _ in enumerate(request.reference_videos, start=1)),
-                *(f"@audio{index}: {descriptions['audio']}" for index, _ in enumerate(request.reference_audios, start=1)),
+                *(f"<Picture {index}>: {descriptions['image']}" for index, _ in enumerate(request.reference_images, start=1)),
+                *(f"<Video {index}>: {descriptions['video']}" for index, _ in enumerate(request.reference_videos, start=1)),
+                *(f"<Audio {index}>: {descriptions['audio']}" for index, _ in enumerate(request.reference_audios, start=1)),
             ]
         )
     return "\n".join(lines)
@@ -705,8 +766,21 @@ def _video_timing(generation: dict[str, Any], user_id: uuid.UUID) -> dict[str, A
     }
 
 
+def _cancelled_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGenerationStatus:
+    return VideoGenerationStatus(
+        prompt_id=generation["prompt_id"],
+        mode=generation["mode"],
+        status="cancelled",
+        progress=generation_progress(generation["prompt_id"], user_id)["progress"],
+        queue_position=None,
+        **_video_timing(generation, user_id),
+    )
+
+
 def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGenerationStatus:
     prompt_id = generation["prompt_id"]
+    if generation.get("status") == "cancelled":
+        return _cancelled_status(generation, user_id)
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
     progress_state = generation_progress(prompt_id, user_id)

@@ -14,12 +14,17 @@
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import SearchBar from '../../../components/inputs/searchbar.svelte';
+	import Tab from '../../../components/tabs/tab.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
 import { downloadMedia } from '$lib/utils/download';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
+	const vaultMediaTabs = [
+		{ value: 'images' as const, label: '이미지' },
+		{ value: 'videos' as const, label: '동영상' }
+	];
 
 	type VaultImage = {
 		id: string;
@@ -147,6 +152,11 @@ import { downloadMedia } from '$lib/utils/download';
 	function handleSearchInput() {
 		if (searchTimer) clearTimeout(searchTimer);
 		searchTimer = setTimeout(() => void loadVault(1), 300);
+	}
+
+	function selectVaultMediaTab(nextTab: 'images' | 'videos') {
+		const query = favoritesOnly ? `?favorites=true&tab=${nextTab}` : `?tab=${nextTab}`;
+		void goto(`/vault${query}`);
 	}
 
 	function changePage(nextPage: number) {
@@ -332,10 +342,7 @@ import { downloadMedia } from '$lib/utils/download';
 <Layout>
 	<div class="space-y-8">
 		<Typography as="h1" variant="display">{favoritesOnly ? '즐겨찾기' : '보관함'}</Typography>
-		<div class="flex gap-2 border-b border-border" role="tablist" aria-label="보관함 콘텐츠 종류">
-			<a href={favoritesOnly ? '/vault?favorites=true&tab=images' : '/vault?tab=images'} role="tab" aria-selected={mediaTab === 'images'} class={`border-b-2 px-3 py-2 text-sm font-semibold transition ${mediaTab === 'images' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>이미지</a>
-			<a href={favoritesOnly ? '/vault?favorites=true&tab=videos' : '/vault?tab=videos'} role="tab" aria-selected={mediaTab === 'videos'} class={`border-b-2 px-3 py-2 text-sm font-semibold transition ${mediaTab === 'videos' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>동영상</a>
-		</div>
+		<Tab items={vaultMediaTabs} bind:value={mediaTab} ariaLabel="보관함 콘텐츠 종류" onselect={selectVaultMediaTab} />
 
 		<div class="flex flex-col gap-3 sm:flex-row">
 			<SearchBar bind:value={searchQuery} class="min-w-0 flex-1" oninput={handleSearchInput} />
