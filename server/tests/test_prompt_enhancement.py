@@ -3,7 +3,15 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from app.comfyui import ImageGenerationRequest, _MAX_SEED, _build_prompt, _effective_positive_prompt, _enhance_prompt
+from app.comfyui import (
+    ImageGenerationRequest,
+    _MAX_SEED,
+    _build_prompt,
+    _effective_positive_prompt,
+    _enhance_prompt,
+    _request_structured_content,
+)
+from app.prompts import IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT, IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT
 
 
 class PromptEnhancementTest(unittest.TestCase):
@@ -40,12 +48,25 @@ class PromptEnhancementTest(unittest.TestCase):
     def test_enhancement_does_not_prefix_original_prompt(self) -> None:
         with (
             patch("app.comfyui.search_danbooru_tags", return_value=["solo", "still_life"]),
-            patch("app.comfyui._request_structured_content", side_effect=["soft studio lighting", "solo, still_life"]),
+            patch("app.comfyui._request_structured_content", side_effect=["soft studio lighting", "solo, still_life"]) as request,
             patch("app.comfyui.validate_danbooru_tags", return_value=["solo", "still_life"]),
         ):
             result = _enhance_prompt("a red apple")
 
         self.assertEqual(result.improved_prompt.contents, "solo, still_life, soft studio lighting")
+        self.assertEqual([call.kwargs["temperature"] for call in request.call_args_list], [0.8, 0.8])
+        self.assertNotIn("English", IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT)
+        self.assertNotIn("English", IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT)
+
+    def test_structured_output_uses_the_allowed_character_pattern(self) -> None:
+        with patch(
+            "app.comfyui._request_vllm_json",
+            return_value={"choices": [{"finish_reason": "stop", "message": {"content": '{"contents":"a red apple"}'}}]},
+        ) as request:
+            _request_structured_content(system_prompt="system", user_prompt="user", max_tokens=64, temperature=0.8)
+
+        contents = request.call_args.args[0]["response_format"]["json_schema"]["schema"]["properties"]["contents"]
+        self.assertEqual(contents["pattern"], r"^[A-Za-z0-9 ,'-]+$")
 
 
 if __name__ == "__main__":

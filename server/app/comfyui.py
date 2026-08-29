@@ -566,7 +566,7 @@ def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
         system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
         user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
         max_tokens=768,
-        temperature=0.4,
+        temperature=0.8,
     )
     raw_tags = _request_structured_content(
         system_prompt=IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
@@ -575,7 +575,7 @@ def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
             candidate_tags=", ".join(candidate_tags),
         ),
         max_tokens=256,
-        temperature=0.2,
+        temperature=0.8,
     )
     valid_tags = validate_danbooru_tags(raw_tags)
     if not valid_tags:
@@ -612,7 +612,12 @@ def _request_structured_content(
                     "schema": {
                         "type": "object",
                         "properties": {
-                            "contents": {"type": "string", "minLength": 1, "maxLength": 5000}
+                            "contents": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 5000,
+                                "pattern": r"^[A-Za-z0-9 ,'-]+$",
+                            }
                         },
                         "required": ["contents"],
                         "additionalProperties": False,

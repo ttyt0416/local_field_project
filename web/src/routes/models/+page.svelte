@@ -223,7 +223,6 @@
 					<input id="civitai-source" bind:value={source} placeholder="Civitai 모델 버전 ID 또는 링크" class="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
 					<button type="submit" disabled={lookupLoading} class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">{#if lookupLoading}<LoadingSpinner size="sm" label="조회 중" />{:else}<Download size={16} />모델 조회{/if}</button>
 				</form>
-				<p class="text-xs leading-5 text-muted-foreground">공개 Civitai 링크 또는 version ID를 입력하세요. 실제 파일은 서버가 백그라운드에서 다운로드합니다.</p>
 			</section>
 
 			{#if lookup}
