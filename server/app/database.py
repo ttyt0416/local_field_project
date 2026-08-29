@@ -878,6 +878,26 @@ def retry_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str
     return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
+def get_media_asset(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_MEDIA_FIELDS} FROM media_assets WHERE storage_file_id = %s AND user_id = %s",
+            (file_id, user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(_MEDIA_FIELDS.split(", "), row, strict=True))
+
+
+def delete_media_asset(file_id: str, user_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "DELETE FROM media_assets WHERE storage_file_id = %s AND user_id = %s RETURNING storage_file_id",
+            (file_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
 def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(

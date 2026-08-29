@@ -1,12 +1,17 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
-from .database import list_reusable_media
-from .storage import StorageError, enabled as storage_enabled, read_url as storage_read_url
+from .database import delete_media_asset, get_media_asset, list_reusable_media
+from .storage import (
+    StorageError,
+    delete_file as storage_delete_file,
+    enabled as storage_enabled,
+    read_url as storage_read_url,
+)
 
 
 router = APIRouter(prefix="/uploads", tags=["media library"])
@@ -29,6 +34,25 @@ class MediaAssetPage(BaseModel):
     page_size: int
     total_count: int
     total_pages: int
+
+
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_upload(
+    file_id: str,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    asset = get_media_asset(file_id, user.id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="업로드 콘텐츠를 찾을 수 없습니다.")
+    if not storage_enabled():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+    try:
+        storage_delete_file(file_id=file_id, owner_id=str(user.id))
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    if not delete_media_asset(file_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="업로드 콘텐츠를 찾을 수 없습니다.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("", response_model=MediaAssetPage)

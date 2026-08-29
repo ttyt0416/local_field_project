@@ -45,6 +45,31 @@ class UploadsRouteTest(unittest.TestCase):
             page=1,
             source_type="generated",
         )
+    def test_delete_removes_owned_storage_file_and_database_asset(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        with (
+            patch.object(uploads, "get_media_asset", return_value={"file_id": "file-1"}),
+            patch.object(uploads, "storage_enabled", return_value=True),
+            patch.object(uploads, "storage_delete_file") as delete_storage,
+            patch.object(uploads, "delete_media_asset", return_value=True) as delete_database,
+        ):
+            response = uploads.delete_upload("file-1", user)
+
+        self.assertEqual(response.status_code, 204)
+        delete_storage.assert_called_once_with(file_id="file-1", owner_id=str(user.id))
+        delete_database.assert_called_once_with("file-1", user.id)
+
+    def test_delete_rejects_missing_owned_asset_before_storage_call(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        with (
+            patch.object(uploads, "get_media_asset", return_value=None),
+            patch.object(uploads, "storage_delete_file") as delete_storage,
+        ):
+            with self.assertRaises(uploads.HTTPException) as raised:
+                uploads.delete_upload("other-file", user)
+
+        self.assertEqual(raised.exception.status_code, 404)
+        delete_storage.assert_not_called()
 
 
 if __name__ == "__main__":

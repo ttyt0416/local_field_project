@@ -1,17 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { AudioLines, ChevronLeft, ChevronRight, Image as ImageIcon, Video } from '@lucide/svelte';
+	import { AudioLines, ChevronLeft, ChevronRight, Image as ImageIcon, Trash2, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
+	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
+	import Modal from '../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
+	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
+	import SearchBar from '../../../components/inputs/searchbar.svelte';
+	import Tab from '../../../components/tabs/tab.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import VideoMedia from '../../../components/media/video.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { videoGenerationStore, type VideoLibraryAsset } from '$lib/stores/video-generation.svelte';
-	import { apiJson } from '$lib/utils/api';
+	import { apiDelete, apiJson } from '$lib/utils/api';
 
 	type MediaAsset = VideoLibraryAsset & { source_type: string; created_at: string; content_type: string };
 	type MediaAssetPage = {
@@ -22,11 +27,27 @@
 		total_pages: number;
 	};
 	type Filter = 'all' | 'image' | 'audio' | 'video';
+	type Sort = 'latest' | 'oldest' | 'name';
+
+	const uploadTabs: { value: Filter; label: string }[] = [
+		{ value: 'all', label: '전체' },
+		{ value: 'image', label: '이미지' },
+		{ value: 'audio', label: '오디오' },
+		{ value: 'video', label: '동영상' }
+	];
+
+	const sortOptions = [
+		{ value: 'latest', label: '최신순' },
+		{ value: 'oldest', label: '오래된순' },
+		{ value: 'name', label: '이름순' }
+	] as const;
 
 	let ready = $state(false);
 	let loading = $state(true);
 	let assets = $state<MediaAsset[]>([]);
 	let filter = $state<Filter>('all');
+	let sort = $state<Sort>('latest');
+	let searchQuery = $state('');
 	let currentPage = $state(1);
 	let totalPages = $state(0);
 	let totalCount = $state(0);
@@ -34,6 +55,11 @@
 	let r2vVideoCount = $state(0);
 	let r2vAudioCount = $state(0);
 	let error = $state('');
+	let success = $state('');
+	let deleteTarget = $state<MediaAsset | null>(null);
+	let deleteModalOpen = $state(false);
+	let deletingId = $state('');
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
 	let filteredAssets = $derived(assets);
 
 	onMount(() => {
@@ -48,7 +74,9 @@
 		}
 		loading = true;
 		try {
-			const params = new URLSearchParams({ page: String(requestedPage) });
+			const params = new URLSearchParams({ page: String(requestedPage), sort });
+			const query = searchQuery.trim();
+			if (query) params.set('search', query);
 			if (filter !== 'all') params.set('media_kind', filter);
 			const result = await apiJson<MediaAssetPage>(`uploads?${params.toString()}`);
 			assets = result.items;
@@ -69,9 +97,48 @@
 		void loadAssets(1);
 	}
 
+	function handleSearchInput() {
+		if (searchTimer) clearTimeout(searchTimer);
+		searchTimer = setTimeout(() => void loadAssets(1), 300);
+	}
+
+	function changeSort() {
+		void loadAssets(1);
+	}
+
 	function changePage(nextPage: number) {
 		if (nextPage < 1 || nextPage > totalPages) return;
 		void loadAssets(nextPage);
+	}
+
+	function requestDelete(asset: MediaAsset) {
+		deleteTarget = asset;
+		deleteModalOpen = true;
+		error = '';
+	}
+
+	function closeDeleteModal() {
+		if (deletingId) return;
+		deleteModalOpen = false;
+		deleteTarget = null;
+	}
+
+	async function deleteAsset() {
+		const target = deleteTarget;
+		if (!target || deletingId) return;
+		deletingId = target.file_id;
+		try {
+			await apiDelete(`uploads/${encodeURIComponent(target.file_id)}`);
+			deleteModalOpen = false;
+			deleteTarget = null;
+			success = `'${target.filename}' 콘텐츠를 삭제했습니다.`;
+			const nextPage = assets.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage;
+			await loadAssets(nextPage);
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '업로드 콘텐츠를 삭제하지 못했습니다.';
+		} finally {
+			deletingId = '';
+		}
 	}
 
 	function useAsset(asset: MediaAsset, target: 'i2v' | 'fl2v-first' | 'fl2v-last' | 'r2v-image' | 'r2v-video' | 'r2v-audio') {
@@ -115,10 +182,22 @@
 	<Layout>
 		<div class="space-y-6">
 			<div class="flex flex-wrap items-end justify-between gap-4"><div><Typography as="h1" variant="display">업로드 콘텐츠</Typography></div></div>
-			<div class="flex flex-wrap gap-2" role="tablist" aria-label="콘텐츠 종류">
-				{#each [{ value: 'all', label: '전체' }, { value: 'image', label: '이미지' }, { value: 'audio', label: '오디오' }, { value: 'video', label: '동영상' }] as item}
-					<button type="button" role="tab" aria-selected={filter === item.value} onclick={() => changeFilter(item.value as Filter)} class={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${filter === item.value ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>
-				{/each}
+			<Tab items={uploadTabs} bind:value={filter} ariaLabel="업로드 콘텐츠 종류" onselect={changeFilter} />
+			<div class="flex flex-col gap-3 sm:flex-row">
+				<SearchBar bind:value={searchQuery} placeholder="파일 이름으로 검색" label="업로드 콘텐츠 이름 검색" class="min-w-0 flex-1" oninput={handleSearchInput} />
+				<div class="sm:w-48">
+					<label for="uploads-sort" class="sr-only">업로드 콘텐츠 정렬</label>
+					<select
+						id="uploads-sort"
+						bind:value={sort}
+						onchange={changeSort}
+						class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+					>
+						{#each sortOptions as option}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+				</div>
 			</div>
 			{#if r2vImageCount + r2vVideoCount + r2vAudioCount > 0}
 				<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
@@ -129,7 +208,7 @@
 
 			{#if loading}<section class="flex min-h-[24rem] items-center justify-center"><LoadingSpinner size="lg" label="콘텐츠를 불러오는 중" /></section>
 			{:else if filteredAssets.length === 0}<section class="rounded-2xl border border-dashed border-border bg-card/70 p-10 text-center"><Typography as="h2" variant="h2">업로드한 콘텐츠가 없습니다.</Typography><Typography as="p" variant="muted" class="mx-auto mt-2 max-w-md">동영상 생성에서 기기 콘텐츠를 선택하면 생성 요청 시 이곳에 저장됩니다. 생성 결과는 보관함에서 확인할 수 있습니다.</Typography></section>
-			{:else}<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{#each filteredAssets as asset (asset.file_id)}<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"><div class="aspect-video bg-muted">{#if asset.url && asset.media_kind === 'image'}<ImageMedia source={asset.url} sourceType={sourceType(asset.url)} alt={asset.filename} class="h-full" />{:else if asset.url && asset.media_kind === 'video'}<VideoMedia source={asset.url} sourceType="server" preview={false} muted={false} class="h-full" />{:else if asset.url && asset.media_kind === 'audio'}<div class="flex h-full flex-col items-center justify-center gap-4 p-6"><AudioLines size={36} class="text-primary" /><audio src={asset.url} controls class="w-full"></audio></div>{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">미리보기를 사용할 수 없습니다.</div>{/if}</div><div class="space-y-3 p-4"><div class="flex items-center gap-2 text-xs text-muted-foreground">{#if asset.media_kind === 'image'}<ImageIcon size={14} />{:else if asset.media_kind === 'audio'}<AudioLines size={14} />{:else}<Video size={14} />{/if}<span>{sourceLabel(asset)}</span><span>·</span><span>{new Date(asset.created_at).toLocaleDateString('ko-KR')}</span></div><p class="truncate text-sm font-medium" title={asset.filename}>{asset.filename}</p>{#if asset.media_kind === 'image'}<div class="grid grid-cols-2 gap-2"><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'i2v')}>I2V 시작</OutlinedButton><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'r2v-image')}>R2V 추가</OutlinedButton></div><div class="grid grid-cols-2 gap-2"><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'fl2v-first')}>FL2V 첫 프레임</OutlinedButton><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'fl2v-last')}>FL2V 마지막</OutlinedButton></div>{:else if asset.media_kind === 'video'}<OutlinedButton class="w-full px-2 text-xs" onclick={() => useAsset(asset, 'r2v-video')}>R2V 동영상 추가</OutlinedButton>{:else}<OutlinedButton class="w-full px-2 text-xs" onclick={() => useAsset(asset, 'r2v-audio')}>R2V 오디오 추가</OutlinedButton>{/if}</div></article>{/each}</div>{/if}
+			{:else}<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{#each filteredAssets as asset (asset.file_id)}<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"><div class="aspect-video bg-muted">{#if asset.url && asset.media_kind === 'image'}<ImageMedia source={asset.url} sourceType={sourceType(asset.url)} alt={asset.filename} class="h-full" />{:else if asset.url && asset.media_kind === 'video'}<VideoMedia source={asset.url} sourceType="server" preview={false} muted={false} class="h-full" />{:else if asset.url && asset.media_kind === 'audio'}<div class="flex h-full flex-col items-center justify-center gap-4 p-6"><AudioLines size={36} class="text-primary" /><audio src={asset.url} controls class="w-full"></audio></div>{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">미리보기를 사용할 수 없습니다.</div>{/if}</div><div class="space-y-3 p-4"><div class="flex items-center gap-2 text-xs text-muted-foreground">{#if asset.media_kind === 'image'}<ImageIcon size={14} />{:else if asset.media_kind === 'audio'}<AudioLines size={14} />{:else}<Video size={14} />{/if}<span>{sourceLabel(asset)}</span><span>·</span><span>{new Date(asset.created_at).toLocaleDateString('ko-KR')}</span></div><div class="flex items-center justify-between gap-2"><p class="min-w-0 truncate text-sm font-medium" title={asset.filename}>{asset.filename}</p><IconOutlinedButton variant="destructive" ariaLabel={`${asset.filename} 삭제`} onclick={() => requestDelete(asset)}><Trash2 size={16} strokeWidth={1.9} /></IconOutlinedButton></div>{#if asset.media_kind === 'image'}<div class="grid grid-cols-2 gap-2"><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'i2v')}>I2V 시작</OutlinedButton><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'r2v-image')}>R2V 추가</OutlinedButton></div><div class="grid grid-cols-2 gap-2"><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'fl2v-first')}>FL2V 첫 프레임</OutlinedButton><OutlinedButton class="px-2 text-xs" onclick={() => useAsset(asset, 'fl2v-last')}>FL2V 마지막</OutlinedButton></div>{:else if asset.media_kind === 'video'}<OutlinedButton class="w-full px-2 text-xs" onclick={() => useAsset(asset, 'r2v-video')}>R2V 동영상 추가</OutlinedButton>{:else}<OutlinedButton class="w-full px-2 text-xs" onclick={() => useAsset(asset, 'r2v-audio')}>R2V 오디오 추가</OutlinedButton>{/if}</div></article>{/each}</div>{/if}
 			{#if totalPages > 1}
 				<nav class="flex items-center justify-center gap-4 pt-2" aria-label="업로드 콘텐츠 페이지 이동">
 					<button type="button" aria-label="이전 업로드 콘텐츠 페이지" disabled={currentPage <= 1} onclick={() => changePage(currentPage - 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={18} /></button>
@@ -139,5 +218,28 @@
 			{/if}
 		</div>
 	</Layout>
-	{#if error}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="업로드 콘텐츠 불러오기 실패" message={error} onclose={() => (error = '')} /></div>{/if}
+
+	<Modal
+		bind:open={deleteModalOpen}
+		title="업로드 콘텐츠를 삭제하시겠습니까?"
+		description="삭제한 콘텐츠와 파일은 복구할 수 없습니다."
+		closeOnBackdrop={!deletingId}
+		onclose={closeDeleteModal}
+	>
+		<p class="text-sm leading-6 text-muted-foreground">'{deleteTarget?.filename}' 콘텐츠와 파일 스토리지 원본을 함께 삭제합니다.</p>
+		{#snippet footer()}
+			<OutlinedButton disabled={Boolean(deletingId)} onclick={closeDeleteModal}>취소</OutlinedButton>
+			<PrimaryButton loading={Boolean(deletingId)} variant="destructive" onclick={() => void deleteAsset()}>
+				<Trash2 size={16} strokeWidth={2} />
+				<span>삭제</span>
+			</PrimaryButton>
+		{/snippet}
+	</Modal>
+
+	{#if error}
+		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="업로드 콘텐츠 처리 실패" message={error} onclose={() => (error = '')} /></div>
+	{/if}
+	{#if success}
+		<div class="fixed right-4 top-4 z-50"><Toast state="positive" title="업로드 콘텐츠" message={success} onclose={() => (success = '')} /></div>
+	{/if}
 {/if}
