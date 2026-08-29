@@ -492,7 +492,9 @@ def create_image_generation(
                 height,
                 seed,
             ),
-        )
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("image generation insert did not return a row")
     return row[0], row[1]
 
 
@@ -943,7 +945,9 @@ def create_video_generation(
                 seed,
                 json.dumps(input_file_ids),
             ),
-        )
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("video generation insert did not return a row")
     return row[0], row[1]
 
 

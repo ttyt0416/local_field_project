@@ -16,11 +16,74 @@ class FakeConnection:
     def __exit__(self, *_: object) -> bool:
         return False
 
-    def execute(self, query: str, parameters: tuple[object, ...]) -> None:
+    def execute(self, query: str, parameters: tuple[object, ...]) -> object:
         self.calls.append((query, parameters))
 
 
+class ReturningCursor:
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self.row = row
+
+    def fetchone(self) -> tuple[object, ...]:
+        return self.row
+
+
+class ReturningConnection(FakeConnection):
+    def __init__(self, row: tuple[object, ...]) -> None:
+        super().__init__()
+        self.row = row
+
+    def execute(self, query: str, parameters: tuple[object, ...]) -> ReturningCursor:
+        self.calls.append((query, parameters))
+        return ReturningCursor(self.row)
+
+
 class VideoGenerationStatusTest(unittest.TestCase):
+    def test_create_image_generation_reads_returning_cursor(self) -> None:
+        generation_id = uuid4()
+        created_at = datetime.now(timezone.utc)
+        connection = ReturningConnection((generation_id, created_at))
+
+        with patch.object(database, "get_connection", return_value=connection):
+            result = database.create_image_generation(
+                user_id=uuid4(),
+                prompt_id="image-prompt",
+                client_id="image-client",
+                prompt="prompt",
+                negative_prompt="",
+                checkpoint="checkpoint",
+                loras=[],
+                cfg=7,
+                steps=20,
+                width=512,
+                height=512,
+                seed=1,
+            )
+
+        self.assertEqual(result, (generation_id, created_at))
+
+    def test_create_video_generation_reads_returning_cursor(self) -> None:
+        generation_id = uuid4()
+        created_at = datetime.now(timezone.utc)
+        connection = ReturningConnection((generation_id, created_at))
+
+        with patch.object(database, "get_connection", return_value=connection):
+            result = database.create_video_generation(
+                user_id=uuid4(),
+                prompt_id="video-prompt",
+                client_id="video-client",
+                mode="r2v",
+                prompt="prompt",
+                width=512,
+                height=512,
+                length=120,
+                fps=24,
+                seed=1,
+                input_file_ids=[],
+            )
+
+        self.assertEqual(result, (generation_id, created_at))
+
     def test_nullable_media_metadata_is_typed_and_preserved(self) -> None:
         connection = FakeConnection()
         user_id = uuid4()
