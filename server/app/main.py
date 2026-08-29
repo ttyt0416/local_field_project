@@ -13,6 +13,7 @@ from .configs.constants import APP_TITLE, APP_VERSION, HEALTH_STATUS, settings
 from .database import initialize_database, record_api_call, record_api_error, record_web_event
 from .generation_worker import run_generation_reconciler
 from .generations import router as generations_router
+from .model_downloads import router as model_downloads_router, run_model_download_worker
 from .presets import router as presets_router
 from .uploads import router as uploads_router
 from .vault import router as vault_router
@@ -24,11 +25,12 @@ async def lifespan(_: FastAPI):
     initialize_database()
     stop_event = asyncio.Event()
     reconciler = asyncio.create_task(run_generation_reconciler(stop_event))
+    model_downloader = asyncio.create_task(run_model_download_worker(stop_event))
     try:
         yield
     finally:
         stop_event.set()
-        await reconciler
+        await asyncio.gather(reconciler, model_downloader)
 
 
 app = FastAPI(title=APP_TITLE, version=APP_VERSION, lifespan=lifespan)
@@ -134,6 +136,7 @@ async def health() -> dict[str, str]:
 app.include_router(auth_router)
 app.include_router(comfyui_router)
 app.include_router(generations_router)
+app.include_router(model_downloads_router)
 app.include_router(presets_router)
 app.include_router(uploads_router)
 app.include_router(vault_router)

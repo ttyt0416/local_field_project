@@ -7,3 +7,5 @@
 `video_generations`는 I2V·FL2V·R2V mode, ComfyUI 작업 ID, 입력 Storage file ID 목록, 결과 Storage file ID, 상태, 조회수와 favorite 상태를 저장한다. 기존 테이블에는 시작 시 migration statement가 필요한 조회수·favorite 컬럼을 기본값과 함께 추가한다.
 
 `presets`는 사용자별 설정 모음이다. `type`으로 프리셋 종류를 구분하고 현재는 `t2i`를 사용하며, 같은 이름도 여러 개 저장할 수 있고 UUID로 수정·삭제 대상을 구분한다. `is_default`는 사용자와 프리셋 타입 조합별로 최대 1개만 허용한다.
+
+`model_downloads`는 Civitai 모델 download job의 version ID, 모델 타입, 파일명, target path, 상태, 진행 바이트와 오류만 저장한다. Civitai token과 signed download URL은 저장하지 않는다. 사용자별 version·타입·파일 active job은 unique index로 중복을 막으며, failed job은 retry API로 다시 queued 상태가 된다. startup worker는 `downloading` job을 `queued`로 되돌리고, `.part` 파일과 HTTP Range를 이용해 재시도한다.

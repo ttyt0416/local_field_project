@@ -292,6 +292,30 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
     """
+    CREATE TABLE IF NOT EXISTS model_downloads (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        version_id BIGINT NOT NULL,
+        model_type VARCHAR(32) NOT NULL,
+        file_index INTEGER NOT NULL DEFAULT 0,
+        filename VARCHAR(255) NOT NULL,
+        target_path TEXT NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'queued',
+        downloaded_bytes BIGINT NOT NULL DEFAULT 0,
+        total_bytes BIGINT,
+        error_message TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS model_downloads_status_created_idx ON model_downloads(status, created_at)",
+    "CREATE INDEX IF NOT EXISTS model_downloads_user_created_idx ON model_downloads(user_id, created_at DESC)",
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS model_downloads_active_unique_idx
+    ON model_downloads(user_id, version_id, model_type, file_index)
+    WHERE status IN ('queued', 'downloading')
+    """,
+    """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
         method VARCHAR(16) NOT NULL,
@@ -549,6 +573,7 @@ def delete_image_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID
 
 _MEDIA_FIELDS = "id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type, created_at"
 _REUSABLE_MEDIA_FIELDS = "file_id, filename, content_type, media_kind, source_type, created_at"
+_MODEL_DOWNLOAD_FIELDS = "id, user_id, version_id, model_type, file_index, filename, target_path, status, downloaded_bytes, total_bytes, error_message, created_at, completed_at"
 
 
 def create_media_asset(
@@ -648,6 +673,119 @@ def list_reusable_media(
             parameters,
         ).fetchall()
     return [dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True)) for row in rows]
+
+
+def create_model_download(
+    *,
+    user_id: uuid.UUID,
+    version_id: int,
+    model_type: str,
+    file_index: int,
+    filename: str,
+    target_path: str,
+) -> dict[str, Any] | None:
+    download_id = uuid.uuid4()
+    try:
+        with get_connection() as connection:
+            row = connection.execute(
+                f"""
+                INSERT INTO model_downloads (id, user_id, version_id, model_type, file_index, filename, target_path)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING {_MODEL_DOWNLOAD_FIELDS}
+                """,
+                (download_id, user_id, version_id, model_type, file_index, filename, target_path),
+            ).fetchone()
+    except psycopg.Error as exc:
+        if getattr(exc, "sqlstate", None) == "23505":
+            return None
+        raise
+    return dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
+
+
+def get_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE id = %s AND user_id = %s",
+            (download_id, user_id),
+        ).fetchone()
+    return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
+
+
+def list_model_downloads(user_id: uuid.UUID, limit: int = 20) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
+            (user_id, limit),
+        ).fetchall()
+    return [dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True)) for row in rows]
+
+
+def reset_model_downloads() -> None:
+    with get_connection() as connection:
+        connection.execute("UPDATE model_downloads SET status = 'queued' WHERE status = 'downloading'")
+
+
+def claim_model_download() -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE model_downloads
+            SET status = 'downloading', error_message = NULL
+            WHERE id = (
+                SELECT id FROM model_downloads
+                WHERE status = 'queued'
+                ORDER BY created_at
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {_MODEL_DOWNLOAD_FIELDS}
+            """
+        ).fetchone()
+    return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
+
+
+def update_model_download_progress(download_id: uuid.UUID, downloaded_bytes: int, total_bytes: int | None) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE model_downloads SET downloaded_bytes = %s, total_bytes = %s WHERE id = %s",
+            (downloaded_bytes, total_bytes, download_id),
+        )
+
+
+def complete_model_download(download_id: uuid.UUID, downloaded_bytes: int, total_bytes: int | None) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE model_downloads
+            SET status = 'completed', downloaded_bytes = %s, total_bytes = %s,
+                error_message = NULL, completed_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (downloaded_bytes, total_bytes, download_id),
+        )
+
+
+def fail_model_download(download_id: uuid.UUID, error_message: str) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE model_downloads SET status = 'failed', error_message = %s WHERE id = %s",
+            (error_message[:1000], download_id),
+        )
+
+
+def retry_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE model_downloads
+            SET status = 'queued', downloaded_bytes = 0, total_bytes = NULL,
+                error_message = NULL, completed_at = NULL
+            WHERE id = %s AND user_id = %s AND status = 'failed'
+            RETURNING {_MODEL_DOWNLOAD_FIELDS}
+            """,
+            (download_id, user_id),
+        ).fetchone()
+    return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
 def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:

@@ -2,6 +2,7 @@
 	import {
 		Archive,
 		Bookmark,
+		Download,
 		Heart,
 		ImagePlus,
 		Library,
@@ -96,6 +97,14 @@
 		>
 			<Library size={18} strokeWidth={1.8} />
 			<span>업로드 콘텐츠</span>
+		</a>
+		<a
+			href="/models"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Download size={18} strokeWidth={1.8} />
+			<span>civitai 다운로드</span>
 		</a>
 		<a
 			href="/presets"

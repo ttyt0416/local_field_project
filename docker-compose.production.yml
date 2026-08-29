@@ -43,10 +43,13 @@ services:
     build: ./server
     env_file:
       - ./server/.env.production
+      - /home/yoon/.civita.env
     environment:
       EMBEDDING_URL: http://embedding:30005
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - /home/yoon/ComfyUI/models:/comfyui-models
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

@@ -1,0 +1,513 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import re
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal, cast
+from urllib.error import HTTPError as UrlHTTPError
+from urllib.error import URLError
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request as UrlRequest
+from urllib.request import build_opener
+from urllib.request import urlopen
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+
+from .auth import UserResponse, current_user
+from .configs.constants import settings
+from .database import (
+    claim_model_download,
+    complete_model_download,
+    create_model_download,
+    fail_model_download,
+    list_model_downloads,
+    reset_model_downloads,
+    retry_model_download,
+    update_model_download_progress,
+)
+
+
+router = APIRouter(prefix="/models", tags=["model downloads"])
+ModelType = Literal["checkpoint", "lora", "text_encoder", "vae", "embedding"]
+_MODEL_TARGETS: dict[ModelType, tuple[str, str]] = {
+    "checkpoint": ("체크포인트", "checkpoints"),
+    "lora": ("LoRA", "loras"),
+    "text_encoder": ("텍스트 인코더", "text_encoders"),
+    "vae": ("VAE", "vae"),
+    "embedding": ("임베딩", "embeddings"),
+}
+_MODEL_EXTENSIONS = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft"}
+_CIVITAI_API_BASE = "https://civitai.com/api/v1"
+_CIVITAI_HOST = "civitai.com"
+_DOWNLOAD_REDIRECT_CODES = {301, 302, 303, 307, 308}
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+_DOWNLOAD_PROGRESS_INTERVAL = 1.0
+_DOWNLOAD_MAX_REDIRECTS = 5
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler)
+
+
+class CivitaiError(RuntimeError):
+    def __init__(self, message: str, status_code: int = status.HTTP_502_BAD_GATEWAY) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class CivitaiFile:
+    name: str
+    file_type: str
+    download_url: str
+    size_bytes: int | None
+    sha256: str | None
+    primary: bool
+
+
+@dataclass(frozen=True)
+class CivitaiVersion:
+    version_id: int
+    model_id: int | None
+    model_name: str
+    model_type: str
+    version_name: str
+    base_model: str | None
+    files: tuple[CivitaiFile, ...]
+
+
+class CivitaiFileResponse(BaseModel):
+    index: int
+    name: str
+    file_type: str
+    size_bytes: int | None
+    sha256: str | None
+    primary: bool
+
+
+class CivitaiLookupResponse(BaseModel):
+    version_id: int
+    model_id: int | None
+    model_name: str
+    model_type: str
+    version_name: str
+    base_model: str | None
+    files: list[CivitaiFileResponse]
+    selected_file_index: int
+
+
+class ModelDownloadRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=2048)
+    model_type: ModelType
+    file_index: int | None = Field(default=None, ge=0)
+
+
+class ModelDownloadResponse(BaseModel):
+    id: str
+    version_id: int
+    model_type: ModelType
+    filename: str
+    status: str
+    downloaded_bytes: int
+    total_bytes: int | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class InstalledModelResponse(BaseModel):
+    model_type: ModelType
+    filename: str
+    size_bytes: int
+    modified_at: datetime
+
+
+@router.get("/installed", response_model=list[InstalledModelResponse])
+def installed_models(_: UserResponse = Depends(current_user)) -> list[InstalledModelResponse]:
+    root = Path(settings.comfyui_models_path)
+    result: list[InstalledModelResponse] = []
+    for model_type, target in _MODEL_TARGETS.items():
+        folder_name = target[1]
+        directory = root / folder_name
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*"):
+            if not path.is_file() or path.suffix.casefold() not in _MODEL_EXTENSIONS:
+                continue
+            try:
+                file_stat = path.stat()
+            except OSError:
+                continue
+            result.append(
+                InstalledModelResponse(
+                    model_type=model_type,
+                    filename=str(path.relative_to(directory)),
+                    size_bytes=file_stat.st_size,
+                    modified_at=datetime.fromtimestamp(file_stat.st_mtime, timezone.utc),
+                )
+            )
+    return sorted(result, key=lambda item: (item.model_type, item.filename.casefold()))
+
+
+@router.get("/downloads", response_model=list[ModelDownloadResponse])
+def model_downloads(
+    user: UserResponse = Depends(current_user),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[ModelDownloadResponse]:
+    return [_download_response(row) for row in list_model_downloads(user.id, limit)]
+
+
+@router.post("/downloads/{download_id}/retry", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
+def retry_download(download_id: uuid.UUID, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
+    row = retry_model_download(download_id, user.id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
+    return _download_response(row)
+
+
+@router.get("/civitai/lookup", response_model=CivitaiLookupResponse)
+def lookup_civitai_model(
+    source: str = Query(min_length=1, max_length=2048),
+    model_type: ModelType = "checkpoint",
+    file_index: int | None = Query(default=None, ge=0),
+    _: UserResponse = Depends(current_user),
+) -> CivitaiLookupResponse:
+    try:
+        version = _fetch_version(_parse_version_id(source))
+        selected_index = _select_file_index(version, model_type, file_index)
+    except CivitaiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return _lookup_response(version, selected_index)
+
+
+@router.post("/civitai/download", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
+def download_civitai_model(
+    payload: ModelDownloadRequest,
+    user: UserResponse = Depends(current_user),
+) -> ModelDownloadResponse:
+    if not settings.civitai_token.strip():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Civitai 토큰이 설정되지 않았습니다.")
+    root = Path(settings.comfyui_models_path)
+    if not root.is_dir():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더를 찾을 수 없습니다.")
+    try:
+        version = _fetch_version(_parse_version_id(payload.source))
+        selected_index = _select_file_index(version, payload.model_type, payload.file_index)
+        selected_file = version.files[selected_index]
+        filename = _safe_filename(selected_file.name)
+    except CivitaiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    target_directory = root / _MODEL_TARGETS[payload.model_type][1]
+    try:
+        target_directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더에 쓸 수 없습니다.") from exc
+    target_path = target_directory / filename
+    if target_path.exists():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
+    row = create_model_download(
+        user_id=user.id,
+        version_id=version.version_id,
+        model_type=payload.model_type,
+        file_index=selected_index,
+        filename=filename,
+        target_path=str(target_path),
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 모델 다운로드가 이미 대기 중입니다.")
+    return _download_response(row)
+
+
+def _download_response(row: dict[str, Any]) -> ModelDownloadResponse:
+    return ModelDownloadResponse(
+        id=str(row["id"]),
+        version_id=row["version_id"],
+        model_type=row["model_type"],
+        filename=row["filename"],
+        status=row["status"],
+        downloaded_bytes=row["downloaded_bytes"],
+        total_bytes=row["total_bytes"],
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+        completed_at=row["completed_at"],
+    )
+
+
+def _lookup_response(version: CivitaiVersion, selected_index: int) -> CivitaiLookupResponse:
+    return CivitaiLookupResponse(
+        version_id=version.version_id,
+        model_id=version.model_id,
+        model_name=version.model_name,
+        model_type=version.model_type,
+        version_name=version.version_name,
+        base_model=version.base_model,
+        files=[
+            CivitaiFileResponse(
+                index=index,
+                name=file.name,
+                file_type=file.file_type,
+                size_bytes=file.size_bytes,
+                sha256=file.sha256,
+                primary=file.primary,
+            )
+            for index, file in enumerate(version.files)
+        ],
+        selected_file_index=selected_index,
+    )
+
+
+def _parse_version_id(source: str) -> int:
+    value = source.strip()
+    if value.isdigit():
+        version_id = int(value)
+    else:
+        parsed = urlparse(value if "://" in value else f"https://{value}")
+        query_value = parse_qs(parsed.query).get("modelVersionId", [""])[0]
+        match = re.search(r"/(?:model-versions|api/download/models)/(\d+)(?:/|$)", parsed.path)
+        raw_id = query_value or (match.group(1) if match else "")
+        if not raw_id.isdigit():
+            raise CivitaiError("Civitai 모델 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+        version_id = int(raw_id)
+    if version_id < 1:
+        raise CivitaiError("올바른 Civitai 모델 버전 ID를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    return version_id
+
+
+def _fetch_version(version_id: int) -> CivitaiVersion:
+    request = UrlRequest(
+        f"{_CIVITAI_API_BASE}/model-versions/{version_id}",
+        headers={"Accept": "application/json", "User-Agent": "LocalField/0.1"},
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read())
+    except UrlHTTPError as exc:
+        if exc.code == 404:
+            raise CivitaiError("Civitai 모델 버전을 찾을 수 없습니다.", status.HTTP_404_NOT_FOUND) from exc
+        if exc.code in {401, 403}:
+            raise CivitaiError("Civitai API 요청 권한이 없습니다.", status.HTTP_502_BAD_GATEWAY) from exc
+        raise CivitaiError("Civitai 모델 정보를 조회하지 못했습니다.") from exc
+    except (URLError, TimeoutError, ValueError) as exc:
+        raise CivitaiError("Civitai에 연결할 수 없습니다.") from exc
+    if not isinstance(payload, dict):
+        raise CivitaiError("Civitai 모델 정보 형식이 올바르지 않습니다.")
+    return _parse_version(payload, version_id)
+
+
+def _parse_version(payload: dict[str, Any], version_id: int) -> CivitaiVersion:
+    raw_model = payload.get("model")
+    model: dict[str, Any] = raw_model if isinstance(raw_model, dict) else {}
+    raw_files_value = payload.get("files")
+    raw_files: list[Any] = raw_files_value if isinstance(raw_files_value, list) else []
+    files: list[CivitaiFile] = []
+    for raw_file in raw_files:
+        if not isinstance(raw_file, dict):
+            continue
+        name = raw_file.get("name")
+        download_url = raw_file.get("downloadUrl")
+        if not isinstance(name, str) or not isinstance(download_url, str):
+            continue
+        raw_hashes_value = raw_file.get("hashes")
+        raw_hashes: dict[str, Any] = raw_hashes_value if isinstance(raw_hashes_value, dict) else {}
+        size_bytes = _size_bytes(raw_file.get("sizeKB"))
+        files.append(
+            CivitaiFile(
+                name=name,
+                file_type=str(raw_file.get("type") or "Model"),
+                download_url=download_url,
+                size_bytes=size_bytes,
+                sha256=_string_or_none(raw_hashes.get("SHA256")),
+                primary=bool(raw_file.get("primary")),
+            )
+        )
+    if not files:
+        raise CivitaiError("다운로드 가능한 Civitai 파일을 찾지 못했습니다.")
+    return CivitaiVersion(
+        version_id=version_id,
+        model_id=int(model["id"]) if isinstance(model.get("id"), int) else None,
+        model_name=str(model.get("name") or "알 수 없는 모델"),
+        model_type=str(model.get("type") or "Other"),
+        version_name=str(payload.get("name") or "알 수 없는 버전"),
+        base_model=_string_or_none(payload.get("baseModel")),
+        files=tuple(files),
+    )
+
+
+def _select_file_index(version: CivitaiVersion, model_type: ModelType, file_index: int | None) -> int:
+    if file_index is not None:
+        if file_index >= len(version.files):
+            raise CivitaiError("선택한 Civitai 파일을 찾을 수 없습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+        indexes = [file_index]
+    else:
+        indexes = [index for index, file in enumerate(version.files) if file.primary]
+        indexes.extend(index for index in range(len(version.files)) if index not in indexes)
+    for index in indexes:
+        if _file_matches(version, version.files[index], model_type):
+            return index
+    label = _MODEL_TARGETS[model_type][0]
+    raise CivitaiError(f"선택한 Civitai 버전에서 {label} 파일을 찾지 못했습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+
+def _file_matches(version: CivitaiVersion, file: CivitaiFile, model_type: ModelType) -> bool:
+    version_type = _normalized_label(version.model_type)
+    file_type = _normalized_label(file.file_type)
+    if model_type == "checkpoint":
+        return version_type == "checkpoint"
+    if model_type == "lora":
+        return version_type in {"lora", "locon", "dora"}
+    if model_type == "text_encoder":
+        return version_type == "textencoder" or file_type == "textencoder" or (
+            version_type in {"other", "checkpoint"} and "textencoder" in _normalized_label(file.name)
+        )
+    if model_type == "vae":
+        return version_type == "vae" or file_type == "vae"
+    return version_type == "textualinversion"
+
+
+def _normalized_label(value: str) -> str:
+    return re.sub(r"[\s_-]+", "", value.casefold())
+
+
+def _safe_filename(raw_name: str) -> str:
+    candidate = unquote(raw_name.replace("\\", "/").rsplit("/", 1)[-1])
+    if any(ord(char) < 32 for char in candidate):
+        raise CivitaiError("Civitai 파일 이름이 올바르지 않습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    filename = candidate.strip()
+    if not filename or filename in {".", ".."}:
+        raise CivitaiError("Civitai 파일 이름이 올바르지 않습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    suffix = Path(filename).suffix.casefold()
+    if suffix not in _MODEL_EXTENSIONS:
+        raise CivitaiError("ComfyUI에서 지원하지 않는 모델 파일 형식입니다.", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    if len(filename) > 255:
+        filename = f"{Path(filename).stem[:255 - len(suffix)]}{Path(filename).suffix}"
+    return filename
+
+
+def _size_bytes(value: Any) -> int | None:
+    try:
+        size = int(float(value) * 1024)
+    except (TypeError, ValueError):
+        return None
+    return size if size > 0 else None
+
+
+def _string_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _open_download(url: str, token: str, resume_from: int):
+    current_url = url
+    for hop in range(_DOWNLOAD_MAX_REDIRECTS + 1):
+        parsed = urlparse(current_url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise CivitaiError("Civitai 다운로드 주소가 안전하지 않습니다.")
+        if hop == 0 and parsed.hostname.casefold() != _CIVITAI_HOST:
+            raise CivitaiError("Civitai 다운로드 주소가 올바르지 않습니다.")
+        headers = {"User-Agent": "LocalField/0.1"}
+        if parsed.hostname.casefold() == _CIVITAI_HOST:
+            headers["Authorization"] = f"Bearer {token}"
+        if resume_from:
+            headers["Range"] = f"bytes={resume_from}-"
+        request = UrlRequest(current_url, headers=headers)
+        try:
+            return _NO_REDIRECT_OPENER.open(request, timeout=60)
+        except UrlHTTPError as exc:
+            if exc.code not in _DOWNLOAD_REDIRECT_CODES:
+                if exc.code in {401, 403}:
+                    raise CivitaiError("Civitai 다운로드 권한이 없습니다.") from exc
+                raise CivitaiError("Civitai 파일 다운로드에 실패했습니다.") from exc
+            location = exc.headers.get("Location")
+            exc.close()
+            if not location:
+                raise CivitaiError("Civitai 다운로드 경로를 확인할 수 없습니다.") from exc
+            current_url = urljoin(current_url, location)
+    raise CivitaiError("Civitai 다운로드 리디렉션이 너무 많습니다.")
+
+
+def _process_model_download(job: dict[str, Any]) -> None:
+    if not settings.civitai_token.strip():
+        raise CivitaiError("Civitai 토큰이 설정되지 않았습니다.")
+    version = _fetch_version(int(job["version_id"]))
+    model_type = cast(ModelType, job["model_type"])
+    selected_index = _select_file_index(version, model_type, int(job["file_index"]))
+    selected_file = version.files[selected_index]
+    target = Path(job["target_path"])
+    if target.exists():
+        raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(f".{target.name}.part")
+    resume_from = partial.stat().st_size if partial.is_file() else 0
+    response = _open_download(selected_file.download_url, settings.civitai_token.strip(), resume_from)
+    response_status = getattr(response, "status", 200)
+    append = resume_from > 0 and response_status == 206
+    downloaded = resume_from if append else 0
+    content_length = _header_int(response, "Content-Length")
+    total_bytes = (downloaded + content_length) if append and content_length is not None else content_length
+    if total_bytes is None:
+        total_bytes = selected_file.size_bytes
+    update_model_download_progress(job["id"], downloaded, total_bytes)
+    mode = "ab" if append else "wb"
+    last_progress = time.monotonic()
+    with response, partial.open(mode) as destination:
+        while True:
+            chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            destination.write(chunk)
+            downloaded += len(chunk)
+            now = time.monotonic()
+            if now - last_progress >= _DOWNLOAD_PROGRESS_INTERVAL:
+                update_model_download_progress(job["id"], downloaded, total_bytes)
+                last_progress = now
+    actual_bytes = partial.stat().st_size
+    if selected_file.sha256:
+        digest = hashlib.sha256()
+        with partial.open("rb") as source:
+            for chunk in iter(lambda: source.read(_DOWNLOAD_CHUNK_BYTES), b""):
+                digest.update(chunk)
+        if digest.hexdigest().casefold() != selected_file.sha256.casefold():
+            partial.unlink(missing_ok=True)
+            raise CivitaiError("다운로드한 모델의 SHA256 검증에 실패했습니다.")
+    if target.exists():
+        raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
+    os.replace(partial, target)
+    complete_model_download(job["id"], actual_bytes, total_bytes or actual_bytes)
+
+
+def _header_int(response: Any, name: str) -> int | None:
+    value = response.headers.get(name)
+    try:
+        parsed = int(value) if value is not None else None
+    except ValueError:
+        return None
+    return parsed if parsed is not None and parsed >= 0 else None
+
+
+async def run_model_download_worker(stop_event: asyncio.Event) -> None:
+    await asyncio.to_thread(reset_model_downloads)
+    while not stop_event.is_set():
+        job = await asyncio.to_thread(claim_model_download)
+        if job is not None:
+            try:
+                await asyncio.to_thread(_process_model_download, job)
+            except CivitaiError as exc:
+                await asyncio.to_thread(fail_model_download, job["id"], str(exc))
+            except (OSError, URLError, TimeoutError, ValueError):
+                await asyncio.to_thread(fail_model_download, job["id"], "Civitai 파일 다운로드에 실패했습니다.")
+            continue
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            pass
