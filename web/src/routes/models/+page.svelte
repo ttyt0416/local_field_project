@@ -5,8 +5,10 @@
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
+	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
+	import Modal from '../../../components/modals/modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 
@@ -34,7 +36,7 @@
 		version_id: number;
 		model_type: ModelType;
 		filename: string;
-		status: 'queued' | 'downloading' | 'completed' | 'failed' | string;
+		status: 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled' | string;
 		downloaded_bytes: number;
 		total_bytes: number | null;
 		error_message: string | null;
@@ -60,7 +62,8 @@
 		queued: '대기 중',
 		downloading: '다운로드 중',
 		completed: '완료',
-		failed: '실패'
+		failed: '실패',
+		cancelled: '중단됨'
 	};
 
 	let ready = $state(false);
@@ -72,7 +75,10 @@
 	let downloadLoading = $state(false);
 	let jobs = $state<DownloadJob[]>([]);
 	let installed = $state<InstalledModel[]>([]);
+	let deleteTarget = $state<InstalledModel | null>(null);
+	let deleteModalOpen = $state(false);
 	let deleteLoading = $state<string | null>(null);
+	let cancelLoadingId = $state('');
 	let error = $state('');
 	let toast = $state<ToastData | null>(null);
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -164,15 +170,47 @@
 		}
 	}
 
-	async function deleteInstalledModel(model: InstalledModel) {
+	async function cancelJob(downloadId: string) {
+		if (cancelLoadingId) return;
+		cancelLoadingId = downloadId;
+		error = '';
+		try {
+			const job = await apiJson<DownloadJob>(`models/downloads/${downloadId}/cancel`, { method: 'POST' });
+			jobs = jobs.map((item) => (item.id === job.id ? job : item));
+			showToast('positive', '다운로드 중단 완료', '다운로드를 중단하고 임시 파일을 삭제했습니다.');
+		} catch (reason) {
+			const message = reason instanceof Error ? reason.message : '다운로드를 중단하지 못했습니다.';
+			error = message;
+			showToast('negative', '다운로드 중단 실패', message);
+		} finally {
+			cancelLoadingId = '';
+		}
+	}
+
+	function requestDeleteInstalledModel(model: InstalledModel) {
+		if (deleteLoading !== null) return;
+		deleteTarget = model;
+		deleteModalOpen = true;
+	}
+
+	function cancelDelete() {
+		if (deleteLoading !== null) return;
+		deleteModalOpen = false;
+		deleteTarget = null;
+	}
+
+	async function deleteInstalledModel() {
+		const model = deleteTarget;
+		if (!model) return;
 		const key = `${model.model_type}:${model.filename}`;
-		if (deleteLoading === key || !window.confirm(`설치된 모델 '${model.filename}'을(를) 삭제하시겠습니까?`)) return;
 		deleteLoading = key;
 		error = '';
 		try {
 			const encodedFilename = model.filename.split('/').map(encodeURIComponent).join('/');
 			await apiDelete(`models/installed/${encodeURIComponent(model.model_type)}/${encodedFilename}`);
 			installed = installed.filter((item) => `${item.model_type}:${item.filename}` !== key);
+			deleteModalOpen = false;
+			deleteTarget = null;
 			showToast('positive', '모델 삭제 완료', `${model.filename}을(를) 삭제했습니다.`);
 		} catch (reason) {
 			const message = reason instanceof Error ? reason.message : '모델을 삭제하지 못했습니다.';
@@ -266,15 +304,28 @@
 			<section class="space-y-3">
 				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">다운로드 상태</Typography></div>
 				{#if jobs.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">요청한 모델 다운로드가 없습니다.</div>
-				{:else}<div class="space-y-3">{#each jobs as job (job.id)}<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="truncate text-sm font-semibold" title={job.filename}>{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div><span class={`rounded-full px-2.5 py-1 text-xs font-semibold ${job.status === 'completed' ? 'bg-success/10 text-success' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}`}>{statusLabels[job.status] ?? job.status}</span></div>{#if job.status === 'queued' || job.status === 'downloading'}<div class="h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>{:else if job.status === 'failed'}<div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs text-destructive">{job.error_message ?? '다운로드에 실패했습니다.'}</p><button type="button" class="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted" onclick={() => void retryJob(job.id)}>다시 시도</button></div>{:else}<p class="text-xs text-success">{formatSize(job.total_bytes ?? job.downloaded_bytes)} · ComfyUI 모델 폴더에 저장됨</p>{/if}</article>{/each}</div>{/if}
+				{:else}<div class="space-y-3">{#each jobs as job (job.id)}<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="truncate text-sm font-semibold" title={job.filename}>{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div><span class={`rounded-full px-2.5 py-1 text-xs font-semibold ${job.status === 'completed' ? 'bg-success/10 text-success' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : job.status === 'cancelled' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>{statusLabels[job.status] ?? job.status}</span></div>{#if job.status === 'queued' || job.status === 'downloading'}<div class="flex items-center gap-3"><div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><button type="button" disabled={cancelLoadingId !== ''} onclick={() => void cancelJob(job.id)} class="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">{#if cancelLoadingId === job.id}<LoadingSpinner size="sm" label="중단 중" />{:else}중단{/if}</button></div><p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>{:else if job.status === 'failed' || job.status === 'cancelled'}<div class="flex flex-wrap items-center justify-between gap-3"><p class={`text-xs ${job.status === 'cancelled' ? 'text-muted-foreground' : 'text-destructive'}`}>{job.status === 'cancelled' ? '다운로드가 중단되었습니다. 임시 파일은 삭제되었습니다.' : job.error_message ?? '다운로드에 실패했습니다.'}</p><button type="button" class="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted" onclick={() => void retryJob(job.id)}>다시 시도</button></div>{:else}<p class="text-xs text-success">{formatSize(job.total_bytes ?? job.downloaded_bytes)} · ComfyUI 모델 폴더에 저장됨</p>{/if}</article>{/each}</div>{/if}
 			</section>
 
 			<section class="space-y-3">
 				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">설치된 모델</Typography><span class="text-xs text-muted-foreground">{installed.length}개</span></div>
 				{#if installed.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">ComfyUI 모델 폴더에 설치된 모델이 없습니다.</div>
-				{:else}<div class="grid gap-3 md:grid-cols-2">{#each installed as model}<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3"><Folder size={18} class="shrink-0 text-primary" /><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div><button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null} onclick={() => void deleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button></article>{/each}</div>{/if}
+				{:else}<div class="grid gap-3 md:grid-cols-2">{#each installed as model}<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3"><Folder size={18} class="shrink-0 text-primary" /><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div><button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null} onclick={() => requestDeleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button></article>{/each}</div>{/if}
 			</section>
 		</div>
 	</Layout>
 	{#if toast}<div class="fixed right-4 top-4 z-50"><Toast state={toast.state} title={toast.title} message={toast.message} onclose={() => (toast = null)} /></div>{/if}
+{/if}
+
+{#if deleteTarget}
+	<Modal bind:open={deleteModalOpen} title="설치된 모델을 삭제하시겠습니까?" description="삭제한 모델 파일은 복구할 수 없습니다." closeOnBackdrop={!deleteLoading} onclose={cancelDelete}>
+		<p class="text-sm leading-6 text-muted-foreground"><strong class="font-semibold text-foreground">{deleteTarget.filename}</strong> 파일을 ComfyUI 모델 폴더에서 삭제합니다.</p>
+		{#snippet footer()}
+			<OutlinedButton disabled={deleteLoading !== null} onclick={cancelDelete}>취소</OutlinedButton>
+			<PrimaryButton loading={deleteLoading !== null} variant="destructive" onclick={() => void deleteInstalledModel()}>
+				<Trash2 size={16} strokeWidth={2} />
+				<span>삭제</span>
+			</PrimaryButton>
+		{/snippet}
+	</Modal>
 {/if}

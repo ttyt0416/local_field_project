@@ -24,10 +24,12 @@ from pydantic import BaseModel, Field
 from .auth import UserResponse, current_user
 from .configs.constants import settings
 from .database import (
+    cancel_model_download,
     claim_model_download,
     complete_model_download,
     create_model_download,
     fail_model_download,
+    is_model_download_active,
     list_model_downloads,
     reset_model_downloads,
     retry_model_download,
@@ -65,6 +67,10 @@ class CivitaiError(RuntimeError):
     def __init__(self, message: str, status_code: int = status.HTTP_502_BAD_GATEWAY) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class _ModelDownloadCancelled(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -213,6 +219,18 @@ def retry_download(download_id: uuid.UUID, user: UserResponse = Depends(current_
     row = retry_model_download(download_id, user.id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
+    return _download_response(row)
+
+
+@router.post("/downloads/{download_id}/cancel", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
+def cancel_download(download_id: uuid.UUID, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
+    row = cancel_model_download(download_id, user.id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="중단할 수 있는 다운로드를 찾을 수 없습니다.")
+    try:
+        _partial_path(row["target_path"]).unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="다운로드 임시 파일을 삭제하지 못했습니다.") from exc
     return _download_response(row)
 
 
@@ -486,43 +504,66 @@ def _process_model_download(job: dict[str, Any]) -> None:
     if target.exists():
         raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
     target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(f".{target.name}.part")
-    resume_from = partial.stat().st_size if partial.is_file() else 0
-    response = _open_download(selected_file.download_url, settings.civitai_token.strip(), resume_from)
-    response_status = getattr(response, "status", 200)
-    append = resume_from > 0 and response_status == 206
-    downloaded = resume_from if append else 0
-    content_length = _header_int(response, "Content-Length")
-    total_bytes = (downloaded + content_length) if append and content_length is not None else content_length
-    if total_bytes is None:
-        total_bytes = selected_file.size_bytes
-    update_model_download_progress(job["id"], downloaded, total_bytes)
-    mode = "ab" if append else "wb"
-    last_progress = time.monotonic()
-    with response, partial.open(mode) as destination:
-        while True:
-            chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
-            if not chunk:
-                break
-            destination.write(chunk)
-            downloaded += len(chunk)
-            now = time.monotonic()
-            if now - last_progress >= _DOWNLOAD_PROGRESS_INTERVAL:
-                update_model_download_progress(job["id"], downloaded, total_bytes)
-                last_progress = now
-    actual_bytes = partial.stat().st_size
-    if selected_file.sha256:
-        digest = hashlib.sha256()
-        with partial.open("rb") as source:
-            for chunk in iter(lambda: source.read(_DOWNLOAD_CHUNK_BYTES), b""):
-                digest.update(chunk)
-        if digest.hexdigest().casefold() != selected_file.sha256.casefold():
-            partial.unlink(missing_ok=True)
-            raise CivitaiError("다운로드한 모델의 SHA256 검증에 실패했습니다.")
-    if target.exists():
-        raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
-    os.replace(partial, target)
-    complete_model_download(job["id"], actual_bytes, total_bytes or actual_bytes)
+    partial = _partial_path(target)
+    try:
+        _ensure_model_download_active(job["id"])
+        resume_from = partial.stat().st_size if partial.is_file() else 0
+        with _open_download(selected_file.download_url, settings.civitai_token.strip(), resume_from) as response:
+            _ensure_model_download_active(job["id"])
+            response_status = getattr(response, "status", 200)
+            append = resume_from > 0 and response_status == 206
+            downloaded = resume_from if append else 0
+            content_length = _header_int(response, "Content-Length")
+            total_bytes = (downloaded + content_length) if append and content_length is not None else content_length
+            if total_bytes is None:
+                total_bytes = selected_file.size_bytes
+            if not update_model_download_progress(job["id"], downloaded, total_bytes):
+                raise _ModelDownloadCancelled()
+            mode = "ab" if append else "wb"
+            last_progress = time.monotonic()
+            with partial.open(mode) as destination:
+                while True:
+                    chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    destination.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.monotonic()
+                    if now - last_progress >= _DOWNLOAD_PROGRESS_INTERVAL:
+                        if not update_model_download_progress(job["id"], downloaded, total_bytes):
+                            raise _ModelDownloadCancelled()
+                        last_progress = now
+        _ensure_model_download_active(job["id"])
+        actual_bytes = partial.stat().st_size
+        if selected_file.sha256:
+            digest = hashlib.sha256()
+            with partial.open("rb") as source:
+                for chunk in iter(lambda: source.read(_DOWNLOAD_CHUNK_BYTES), b""):
+                    digest.update(chunk)
+            _ensure_model_download_active(job["id"])
+            if digest.hexdigest().casefold() != selected_file.sha256.casefold():
+                partial.unlink(missing_ok=True)
+                raise CivitaiError("다운로드한 모델의 SHA256 검증에 실패했습니다.")
+        _ensure_model_download_active(job["id"])
+        if target.exists():
+            raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
+        os.replace(partial, target)
+        if not complete_model_download(job["id"], actual_bytes, total_bytes or actual_bytes):
+            target.unlink(missing_ok=True)
+            raise _ModelDownloadCancelled()
+    except _ModelDownloadCancelled:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+def _ensure_model_download_active(download_id: uuid.UUID) -> None:
+    if not is_model_download_active(download_id):
+        raise _ModelDownloadCancelled()
+
+
+def _partial_path(target_path: str | Path) -> Path:
+    target = Path(target_path)
+    return target.with_name(f".{target.name}.part")
 
 
 def _header_int(response: Any, name: str) -> int | None:
@@ -541,6 +582,8 @@ async def run_model_download_worker(stop_event: asyncio.Event) -> None:
         if job is not None:
             try:
                 await asyncio.to_thread(_process_model_download, job)
+            except _ModelDownloadCancelled:
+                continue
             except CivitaiError as exc:
                 await asyncio.to_thread(fail_model_download, job["id"], str(exc))
             except (OSError, URLError, TimeoutError, ValueError):

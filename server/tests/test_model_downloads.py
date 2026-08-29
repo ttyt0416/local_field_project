@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 import unittest
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
@@ -14,12 +15,17 @@ from app.auth import UserResponse
 from app.configs.constants import settings
 from app.model_downloads import (
     CivitaiError,
+    CivitaiFile,
+    CivitaiVersion,
+    _ModelDownloadCancelled,
     _file_matches,
     _installed_model_path,
     _parse_version,
+    _process_model_download,
     _safe_filename,
     _select_file_index,
     ModelType,
+    cancel_download,
     delete_installed_model,
 )
 
@@ -128,6 +134,83 @@ class ModelDownloadsTest(unittest.TestCase):
             self.assertEqual(symlink_error.exception.status_code, 400)
             self.assertEqual(linked_directory_error.exception.status_code, 400)
             self.assertTrue(outside.exists())
+
+    def test_cancelled_download_deletes_partial_file(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            target = root / "checkpoints" / "model.safetensors"
+            target.parent.mkdir()
+            partial = target.with_name(f".{target.name}.part")
+            partial.write_bytes(b"partial")
+            version = CivitaiVersion(
+                version_id=1,
+                model_id=None,
+                model_name="Example",
+                model_type="Checkpoint",
+                version_name="v1",
+                base_model=None,
+                files=(
+                    CivitaiFile(
+                        name="model.safetensors",
+                        file_type="Model",
+                        download_url="https://civitai.com/file",
+                        size_bytes=7,
+                        sha256=None,
+                        primary=True,
+                    ),
+                ),
+            )
+            job = {"id": uuid.uuid4(), "version_id": 1, "model_type": "checkpoint", "file_index": 0, "target_path": str(target)}
+
+            class DownloadResponse:
+                status = 200
+                headers: dict[str, str] = {}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return None
+
+            with (
+                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory, civitai_token="token")),
+                patch("app.model_downloads._fetch_version", return_value=version),
+                patch("app.model_downloads._open_download", return_value=DownloadResponse()),
+                patch("app.model_downloads.is_model_download_active", return_value=True),
+                patch("app.model_downloads.update_model_download_progress", return_value=False),
+            ):
+                with self.assertRaises(_ModelDownloadCancelled):
+                    _process_model_download(job)
+
+            self.assertFalse(partial.exists())
+            self.assertFalse(target.exists())
+
+    def test_cancel_endpoint_deletes_partial_file_before_returning(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        with TemporaryDirectory() as temporary_directory:
+            target = Path(temporary_directory) / "checkpoints" / "model.safetensors"
+            partial = target.with_name(f".{target.name}.part")
+            partial.parent.mkdir()
+            partial.write_bytes(b"partial")
+            row = {
+                "id": uuid.uuid4(),
+                "user_id": user.id,
+                "version_id": 1,
+                "model_type": "checkpoint",
+                "filename": target.name,
+                "target_path": str(target),
+                "status": "cancelled",
+                "downloaded_bytes": 7,
+                "total_bytes": 7,
+                "error_message": "다운로드가 중단되었습니다.",
+                "created_at": datetime.now(timezone.utc),
+                "completed_at": None,
+            }
+            with patch("app.model_downloads.cancel_model_download", return_value=row):
+                response = cancel_download(row["id"], user)
+
+            self.assertEqual(response.status, "cancelled")
+            self.assertFalse(partial.exists())
 
 
 if __name__ == "__main__":

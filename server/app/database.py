@@ -744,33 +744,59 @@ def claim_model_download() -> dict[str, Any] | None:
     return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
-def update_model_download_progress(download_id: uuid.UUID, downloaded_bytes: int, total_bytes: int | None) -> None:
+def update_model_download_progress(download_id: uuid.UUID, downloaded_bytes: int, total_bytes: int | None) -> bool:
     with get_connection() as connection:
-        connection.execute(
-            "UPDATE model_downloads SET downloaded_bytes = %s, total_bytes = %s WHERE id = %s",
+        row = connection.execute(
+            "UPDATE model_downloads SET downloaded_bytes = %s, total_bytes = %s WHERE id = %s AND status = 'downloading' RETURNING id",
             (downloaded_bytes, total_bytes, download_id),
-        )
+        ).fetchone()
+    return row is not None
 
 
-def complete_model_download(download_id: uuid.UUID, downloaded_bytes: int, total_bytes: int | None) -> None:
+def complete_model_download(download_id: uuid.UUID, downloaded_bytes: int, total_bytes: int | None) -> bool:
     with get_connection() as connection:
-        connection.execute(
+        row = connection.execute(
             """
             UPDATE model_downloads
             SET status = 'completed', downloaded_bytes = %s, total_bytes = %s,
                 error_message = NULL, completed_at = CURRENT_TIMESTAMP
-            WHERE id = %s
+            WHERE id = %s AND status = 'downloading'
+            RETURNING id
             """,
             (downloaded_bytes, total_bytes, download_id),
-        )
+        ).fetchone()
+    return row is not None
+
+
+def is_model_download_active(download_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT 1 FROM model_downloads WHERE id = %s AND status = 'downloading'",
+            (download_id,),
+        ).fetchone()
+    return row is not None
 
 
 def fail_model_download(download_id: uuid.UUID, error_message: str) -> None:
     with get_connection() as connection:
         connection.execute(
-            "UPDATE model_downloads SET status = 'failed', error_message = %s WHERE id = %s",
+            "UPDATE model_downloads SET status = 'failed', error_message = %s WHERE id = %s AND status = 'downloading'",
             (error_message[:1000], download_id),
         )
+
+
+def cancel_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE model_downloads
+            SET status = 'cancelled', error_message = '다운로드가 중단되었습니다.'
+            WHERE id = %s AND user_id = %s AND status IN ('queued', 'downloading')
+            RETURNING {_MODEL_DOWNLOAD_FIELDS}
+            """,
+            (download_id, user_id),
+        ).fetchone()
+    return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
 def retry_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
@@ -780,7 +806,7 @@ def retry_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str
             UPDATE model_downloads
             SET status = 'queued', downloaded_bytes = 0, total_bytes = NULL,
                 error_message = NULL, completed_at = NULL
-            WHERE id = %s AND user_id = %s AND status = 'failed'
+            WHERE id = %s AND user_id = %s AND status IN ('failed', 'cancelled')
             RETURNING {_MODEL_DOWNLOAD_FIELDS}
             """,
             (download_id, user_id),
