@@ -27,6 +27,7 @@ from .storage import StorageError, delete_file as storage_delete_file, enabled a
 
 
 router = APIRouter(prefix="/vault", tags=["vault"])
+VAULT_PAGE_SIZE = 10
 
 
 class VaultImageSummary(BaseModel):
@@ -62,6 +63,15 @@ class VaultImageDetail(VaultImageSummary):
     image_type: str
 
 
+class VaultImagePage(BaseModel):
+    items: list[VaultImageSummary]
+    page: int
+    page_size: int
+    total_count: int
+    completed_count: int
+    total_pages: int
+
+
 class VaultVideoSummary(BaseModel):
     id: UUID
     media_type: str
@@ -73,6 +83,15 @@ class VaultVideoSummary(BaseModel):
     is_favorite: bool
     created_at: datetime
     completed_at: datetime | None
+
+
+class VaultVideoPage(BaseModel):
+    items: list[VaultVideoSummary]
+    page: int
+    page_size: int
+    total_count: int
+    completed_count: int
+    total_pages: int
 
 
 class FavoriteRequest(BaseModel):
@@ -91,32 +110,54 @@ class BulkDeleteResponse(BaseModel):
     deleted_count: int
 
 
-@router.get("/videos", response_model=list[VaultVideoSummary])
+@router.get("/videos", response_model=VaultVideoPage)
 def vault_videos(
     search: str = Query(default="", max_length=500),
     sort: Literal["latest", "oldest", "most_viewed"] = "latest",
     favorites_only: bool = False,
+    page: int = Query(default=1, ge=1),
     user: UserResponse = Depends(current_user),
-) -> list[VaultVideoSummary]:
-    return [_video_summary(row, user.id) for row in list_video_generations(user.id, search=search, sort=sort, favorites_only=favorites_only)]
+) -> VaultVideoPage:
+    rows, total_count, completed_count = list_video_generations(
+        user.id,
+        search=search,
+        sort=sort,
+        favorites_only=favorites_only,
+        page=page,
+    )
+    return VaultVideoPage(
+        items=[_video_summary(row, user.id) for row in rows],
+        page=page,
+        page_size=VAULT_PAGE_SIZE,
+        total_count=total_count,
+        completed_count=completed_count,
+        total_pages=(total_count + VAULT_PAGE_SIZE - 1) // VAULT_PAGE_SIZE,
+    )
 
 
-@router.get("/images", response_model=list[VaultImageSummary])
+@router.get("/images", response_model=VaultImagePage)
 def vault_images(
     search: str = Query(default="", max_length=500),
     sort: Literal["latest", "oldest", "most_viewed"] = "latest",
     favorites_only: bool = False,
+    page: int = Query(default=1, ge=1),
     user: UserResponse = Depends(current_user),
-) -> list[VaultImageSummary]:
-    return [
-        _summary(row, user.id)
-        for row in list_image_generations(
-            user.id,
-            search=search,
-            sort=sort,
-            favorites_only=favorites_only,
-        )
-    ]
+) -> VaultImagePage:
+    rows, total_count, completed_count = list_image_generations(
+        user.id,
+        search=search,
+        sort=sort,
+        favorites_only=favorites_only,
+        page=page,
+    )
+    return VaultImagePage(
+        items=[_summary(row, user.id) for row in rows],
+        page=page,
+        page_size=VAULT_PAGE_SIZE,
+        total_count=total_count,
+        completed_count=completed_count,
+        total_pages=(total_count + VAULT_PAGE_SIZE - 1) // VAULT_PAGE_SIZE,
+    )
 
 
 @router.get("/videos/{generation_id}", response_model=VaultVideoSummary)

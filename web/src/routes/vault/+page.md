@@ -1,6 +1,6 @@
 # Vault 이미지 목록 표시
 
-Vault API는 Storage signed URL이 있는 이미지에는 외부 이미지 URL을, Local Field가 반환한 상대 경로에는 인증 Blob 로드를 사용한다. 목록은 최신순·오래된순·많이 본 순으로 정렬할 수 있고, SearchBar는 저장된 긍정 프롬프트를 서버에서 검색한다.
+Vault API는 Storage signed URL이 있는 이미지에는 외부 이미지 URL을, Local Field가 반환한 상대 경로에는 인증 Blob 로드를 사용한다. 목록은 최신순·오래된순·많이 본 순으로 정렬할 수 있고, SearchBar는 저장된 긍정 프롬프트를 서버에서 검색한다. 이미지·동영상 목록은 필터 적용 후 page size 10으로 표시하며, `page`와 전체 `total_pages`를 API에서 받아 ChevronLeft·ChevronRight 버튼으로 이동한다.
 
 보관함의 화면 순서는 제목, SearchBar와 정렬 선택, 콘텐츠 수, 이미지 목록이다. 초기 로딩 중에도 Layout·제목·검색·정렬을 유지하고 이미지 목록 영역만 `LoadingSpinner`로 표시한다. 제목 영역에는 별도 컨테이너·아이콘·설명·로그아웃 버튼을 두지 않는다. 보관함의 수와 빈 상태 문구는 `생성된 콘텐츠`, 즐겨찾기 화면에서는 `즐겨찾기 콘텐츠`를 사용하며 완료된 생성 결과만 센다. 완료 카드의 타입 표시는 `IMAGE`다.
 

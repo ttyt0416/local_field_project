@@ -11,16 +11,37 @@ class VaultRouteTest(unittest.TestCase):
     def setUp(self) -> None:
         self.user = UserResponse(id=uuid4(), username="tester")
 
-    def test_list_passes_search_sort_and_favorites_to_database(self) -> None:
-        with patch.object(vault, "list_image_generations", return_value=[]) as list_images:
-            result = vault.vault_images("portrait", "most_viewed", True, self.user)
+    def test_list_passes_search_sort_favorites_and_page_to_database(self) -> None:
+        with patch.object(vault, "list_image_generations", return_value=([], 21, 17)) as list_images:
+            result = vault.vault_images("portrait", "most_viewed", True, 2, self.user)
 
-        self.assertEqual(result, [])
+        self.assertEqual(result.items, [])
+        self.assertEqual(result.page, 2)
+        self.assertEqual(result.page_size, 10)
+        self.assertEqual(result.total_count, 21)
+        self.assertEqual(result.completed_count, 17)
+        self.assertEqual(result.total_pages, 3)
         list_images.assert_called_once_with(
             self.user.id,
             search="portrait",
             sort="most_viewed",
             favorites_only=True,
+            page=2,
+        )
+
+    def test_video_list_passes_page_to_database(self) -> None:
+        with patch.object(vault, "list_video_generations", return_value=([], 0, 0)) as list_videos:
+            result = vault.vault_videos("", "latest", False, 1, self.user)
+
+        self.assertEqual(result.items, [])
+        self.assertEqual(result.page_size, 10)
+        self.assertEqual(result.total_pages, 0)
+        list_videos.assert_called_once_with(
+            self.user.id,
+            search="",
+            sort="latest",
+            favorites_only=False,
+            page=1,
         )
 
     def test_detail_uses_view_count_increment(self) -> None:

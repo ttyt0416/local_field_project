@@ -1,6 +1,6 @@
 # 업로드 콘텐츠 API
 
-`GET /uploads`는 로그인한 사용자가 업로드한 이미지·동영상·오디오 콘텐츠만 반환한다. 생성 이미지·동영상은 보관함에서 확인하며 기본 업로드 목록에는 포함하지 않는다. 결과는 사용자 소유권으로 제한하고 Storage signed URL을 미리 발급한다.
+`GET /uploads`는 로그인한 사용자가 업로드한 이미지·동영상·오디오 콘텐츠만 반환한다. 생성 이미지·동영상은 보관함에서 확인하며 기본 업로드 목록에는 포함하지 않는다. 결과는 사용자 소유권으로 제한하고 Storage signed URL을 미리 발급한다. `page`는 1부터 시작하고 page size는 10으로 고정하며, 응답은 `items`, `page`, `page_size`, `total_count`, `total_pages`를 포함한다.
 
 동영상 생성 선택 모달은 `include_generated=true`를 함께 보내 업로드 콘텐츠와 생성 이미지·동영상을 하나의 선택 목록으로 조회할 수 있다. `search`, `sort`(`latest`·`oldest`·`name`), `media_kind` 쿼리로 모달의 검색·정렬·입력 종류 필터를 서버에서 처리한다.
 

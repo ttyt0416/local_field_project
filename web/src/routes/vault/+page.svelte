@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Heart, Trash2, Video } from '@lucide/svelte';
+	import { ChevronLeft, ChevronRight, Heart, Trash2, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
 	import VideoMedia from '../../../components/media/video.svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
@@ -49,6 +49,15 @@
 		is_favorite: boolean;
 	};
 
+	type VaultPage<T> = {
+		items: T[];
+		page: number;
+		page_size: number;
+		total_count: number;
+		completed_count: number;
+		total_pages: number;
+	};
+
 	type BulkDeleteResponse = {
 		deleted_count: number;
 	};
@@ -60,6 +69,12 @@
 	let searchQuery = $state('');
 	let sort = $state<Sort>('latest');
 	let favoritesOnly = $state(page.url.searchParams.get('favorites') === 'true');
+	let imagePage = $state(1);
+	let videoPage = $state(1);
+	let imageTotalPages = $state(0);
+	let videoTotalPages = $state(0);
+	let imageCompletedCount = $state(0);
+	let videoCompletedCount = $state(0);
 	let error = $state('');
 	let deleteTarget = $state<VaultImage | null>(null);
 	let videoDeleteTarget = $state<VaultVideo | null>(null);
@@ -73,8 +88,8 @@
 	let favoriteUpdatingId = $state('');
 	let videoFavoriteUpdatingId = $state('');
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
-	let contentCount = $derived(images.filter((image) => image.status === 'completed').length);
-	let videoCount = $derived(videos.filter((video) => video.status === 'completed').length);
+	let contentCount = $derived(imageCompletedCount);
+	let videoCount = $derived(videoCompletedCount);
 	let selectedCount = $derived(selectedIds.size);
 	let allVisibleSelected = $derived(images.length > 0 && images.every((image) => selectedIds.has(image.id)));
 
@@ -88,25 +103,33 @@
 		if (nextFavoritesOnly === favoritesOnly && nextMediaTab === mediaTab) return;
 		favoritesOnly = nextFavoritesOnly;
 		mediaTab = nextMediaTab;
-		if (ready) void loadVault();
+		if (ready) void loadVault(1);
 	});
 
-	async function loadVault() {
+	async function loadVault(requestedPage = mediaTab === 'images' ? imagePage : videoPage) {
 		await authStore.initialize();
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
 			return;
 		}
 		try {
-			const params = new URLSearchParams({ sort });
+			const params = new URLSearchParams({ sort, page: String(requestedPage) });
 			const query = searchQuery.trim();
 			if (query) params.set('search', query);
 			if (favoritesOnly) params.set('favorites_only', 'true');
 			if (mediaTab === 'images') {
-				images = await apiJson<VaultImage[]>(`vault/images?${params.toString()}`);
+				const result = await apiJson<VaultPage<VaultImage>>(`vault/images?${params.toString()}`);
+				images = result.items;
+				imagePage = result.page;
+				imageTotalPages = result.total_pages;
+				imageCompletedCount = result.completed_count;
 				selectedIds = new Set();
 			} else {
-				videos = await apiJson<VaultVideo[]>(`vault/videos?${params.toString()}`);
+				const result = await apiJson<VaultPage<VaultVideo>>(`vault/videos?${params.toString()}`);
+				videos = result.items;
+				videoPage = result.page;
+				videoTotalPages = result.total_pages;
+				videoCompletedCount = result.completed_count;
 			}
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '보관함을 불러오지 못했습니다.';
@@ -117,7 +140,13 @@
 
 	function handleSearchInput() {
 		if (searchTimer) clearTimeout(searchTimer);
-		searchTimer = setTimeout(() => void loadVault(), 300);
+		searchTimer = setTimeout(() => void loadVault(1), 300);
+	}
+
+	function changePage(nextPage: number) {
+		const totalPages = mediaTab === 'images' ? imageTotalPages : videoTotalPages;
+		if (nextPage < 1 || nextPage > totalPages) return;
+		void loadVault(nextPage);
 	}
 
 	function requestDelete(image: VaultImage) {
@@ -285,7 +314,7 @@
 				<select
 					id="vault-sort"
 					bind:value={sort}
-					onchange={() => void loadVault()}
+					onchange={() => void loadVault(1)}
 					class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
 				>
 					<option value="latest">최신순</option>
@@ -399,7 +428,14 @@
 						</article>
 					{/each}
 					</div>
-				</section>
+					{#if imageTotalPages > 1}
+					<nav class="flex items-center justify-center gap-4 pt-2" aria-label="이미지 페이지 이동">
+						<button type="button" aria-label="이전 이미지 페이지" disabled={imagePage <= 1} onclick={() => changePage(imagePage - 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={18} /></button>
+						<span class="text-sm font-medium text-muted-foreground">{imagePage} / {imageTotalPages}</span>
+						<button type="button" aria-label="다음 이미지 페이지" disabled={imagePage >= imageTotalPages} onclick={() => changePage(imagePage + 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight size={18} /></button>
+					</nav>
+					{/if}
+					</section>
 			{/if}
 			{:else}
 				{#if videos.length === 0}
@@ -422,6 +458,13 @@
 							</article>
 						{/each}
 					</section>
+					{#if videoTotalPages > 1}
+						<nav class="flex items-center justify-center gap-4 pt-2" aria-label="동영상 페이지 이동">
+							<button type="button" aria-label="이전 동영상 페이지" disabled={videoPage <= 1} onclick={() => changePage(videoPage - 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={18} /></button>
+							<span class="text-sm font-medium text-muted-foreground">{videoPage} / {videoTotalPages}</span>
+							<button type="button" aria-label="다음 동영상 페이지" disabled={videoPage >= videoTotalPages} onclick={() => changePage(videoPage + 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight size={18} /></button>
+						</nav>
+					{/if}
 				{/if}
 			{/if}
 		{/if}

@@ -530,12 +530,13 @@ def list_image_generations(
     search: str = "",
     sort: str = "latest",
     favorites_only: bool = False,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+) -> tuple[list[dict[str, Any]], int, int]:
     order_by = {
-        "latest": "created_at DESC",
-        "oldest": "created_at ASC",
-        "most_viewed": "view_count DESC, created_at DESC",
-    }.get(sort, "created_at DESC")
+        "latest": "created_at DESC, id DESC",
+        "oldest": "created_at ASC, id ASC",
+        "most_viewed": "view_count DESC, created_at DESC, id DESC",
+    }.get(sort, "created_at DESC, id DESC")
     filters = ["user_id = %s"]
     parameters: list[Any] = [user_id]
     normalized_search = search.strip()
@@ -545,12 +546,22 @@ def list_image_generations(
     if favorites_only:
         filters.append("is_favorite = TRUE")
     where_clause = " AND ".join(filters)
+    page_size = 10
+    offset = (page - 1) * page_size
     with get_connection() as connection:
-        rows = connection.execute(
-            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {where_clause} ORDER BY {order_by}",
+        count_row = connection.execute(
+            f"SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'completed') FROM image_generations WHERE {where_clause}",
             parameters,
+        ).fetchone()
+        rows = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {where_clause} ORDER BY {order_by} LIMIT %s OFFSET %s",
+            [*parameters, page_size, offset],
         ).fetchall()
-    return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
+    return (
+        [generation for row in rows if (generation := _image_generation_row(row)) is not None],
+        int(count_row[0]),
+        int(count_row[1]),
+    )
 
 
 def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
@@ -617,7 +628,8 @@ def list_reusable_media(
     sort: str = "latest",
     include_generated: bool = False,
     media_kind: str | None = None,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+) -> tuple[list[dict[str, Any]], int]:
     order_by = {
         "latest": "created_at DESC, file_id",
         "oldest": "created_at ASC, file_id",
@@ -663,16 +675,16 @@ def list_reusable_media(
     if media_kind:
         filters.append("media_kind = %s")
         parameters.append(media_kind)
+    page_size = 10
+    offset = (page - 1) * page_size
+    query_from = f"FROM ({' UNION ALL '.join(sources)}) AS assets WHERE {' AND '.join(filters)}"
     with get_connection() as connection:
+        count_row = connection.execute(f"SELECT COUNT(*) {query_from}", parameters).fetchone()
         rows = connection.execute(
-            f"""
-            SELECT {_REUSABLE_MEDIA_FIELDS} FROM ({' UNION ALL '.join(sources)}) AS assets
-            WHERE {' AND '.join(filters)}
-            ORDER BY {order_by}
-            """,
-            parameters,
+            f"SELECT {_REUSABLE_MEDIA_FIELDS} {query_from} ORDER BY {order_by} LIMIT %s OFFSET %s",
+            [*parameters, page_size, offset],
         ).fetchall()
-    return [dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True)) for row in rows]
+    return [dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True)) for row in rows], int(count_row[0])
 
 
 def create_model_download(
@@ -953,12 +965,13 @@ def list_video_generations(
     search: str = "",
     sort: str = "latest",
     favorites_only: bool = False,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+) -> tuple[list[dict[str, Any]], int, int]:
     order_by = {
-        "latest": "created_at DESC",
-        "oldest": "created_at ASC",
-        "most_viewed": "view_count DESC, created_at DESC",
-    }.get(sort, "created_at DESC")
+        "latest": "created_at DESC, id DESC",
+        "oldest": "created_at ASC, id ASC",
+        "most_viewed": "view_count DESC, created_at DESC, id DESC",
+    }.get(sort, "created_at DESC, id DESC")
     filters = ["user_id = %s"]
     parameters: list[Any] = [user_id]
     if search.strip():
@@ -966,12 +979,23 @@ def list_video_generations(
         parameters.append(f"%{search.strip()}%")
     if favorites_only:
         filters.append("is_favorite = TRUE")
+    page_size = 10
+    offset = (page - 1) * page_size
+    where_clause = " AND ".join(filters)
     with get_connection() as connection:
-        rows = connection.execute(
-            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE {' AND '.join(filters)} ORDER BY {order_by}",
+        count_row = connection.execute(
+            f"SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'completed') FROM video_generations WHERE {where_clause}",
             parameters,
+        ).fetchone()
+        rows = connection.execute(
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE {where_clause} ORDER BY {order_by} LIMIT %s OFFSET %s",
+            [*parameters, page_size, offset],
         ).fetchall()
-    return [dict(zip(_VIDEO_FIELDS.split(", "), row, strict=True)) for row in rows]
+    return (
+        [dict(zip(_VIDEO_FIELDS.split(", "), row, strict=True)) for row in rows],
+        int(count_row[0]),
+        int(count_row[1]),
+    )
 
 
 def delete_video_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { AudioLines, Database, HardDrive, Image as ImageIcon, Sparkles, Video } from '@lucide/svelte';
+	import { AudioLines, ChevronLeft, ChevronRight, Database, HardDrive, Image as ImageIcon, Sparkles, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -22,6 +22,13 @@
 	type SelectionTarget = 'first' | 'last' | 'images' | 'videos' | 'audios';
 	type SelectionSource = 'device' | 'stored';
 	type StoredMediaAsset = VideoLibraryAsset & { source_type: string; created_at: string };
+	type StoredMediaPage = {
+		items: StoredMediaAsset[];
+		page: number;
+		page_size: number;
+		total_count: number;
+		total_pages: number;
+	};
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type VideoPromptLanguage = 'ko' | 'en' | 'ja';
 	const modes: { value: VideoMode; label: string; description: string }[] = [
@@ -73,7 +80,10 @@
 	let storedLoading = $state(false);
 	let storedSearch = $state('');
 	let storedSort = $state<StoredSort>('latest');
+	let storedPage = $state(1);
+	let storedTotalPages = $state(0);
 	let storedSelectedIds = $state<string[]>([]);
+	let storedSelectedAssets = $state<StoredMediaAsset[]>([]);
 	let storedRequestId = 0;
 	let selectionKind = $derived(
 		selectionTarget === 'videos' ? 'video' : selectionTarget === 'audios' ? 'audio' : 'image'
@@ -184,13 +194,21 @@
 		storedAssets = [];
 		storedSearch = '';
 		storedSort = 'latest';
+		storedPage = 1;
+		storedTotalPages = 0;
 		storedSelectedIds = [];
+		storedSelectedAssets = [];
 		selectionOpen = true;
 	}
 
 	function selectSelectionSource(source: SelectionSource) {
 		selectionSource = source;
-		if (source === 'stored') void loadStoredAssets();
+		if (source === 'stored') {
+			storedPage = 1;
+			storedSelectedIds = [];
+			storedSelectedAssets = [];
+			void loadStoredAssets(1);
+		}
 	}
 
 	function currentSelectionCount() {
@@ -200,7 +218,7 @@
 		return 0;
 	}
 
-	async function loadStoredAssets() {
+	async function loadStoredAssets(requestedPage = storedPage) {
 		if (!selectionTarget) return;
 		const requestId = ++storedRequestId;
 		storedLoading = true;
@@ -209,15 +227,31 @@
 				include_generated: 'true',
 				media_kind: selectionKind,
 				search: storedSearch,
-				sort: storedSort
+				sort: storedSort,
+				page: String(requestedPage)
 			});
-			const assets = await apiJson<StoredMediaAsset[]>(`uploads?${params.toString()}`);
-			if (requestId === storedRequestId) storedAssets = assets;
+			const result = await apiJson<StoredMediaPage>(`uploads?${params.toString()}`);
+			if (requestId === storedRequestId) {
+				storedAssets = result.items;
+				storedPage = result.page;
+				storedTotalPages = result.total_pages;
+			}
 		} catch (reason) {
 			if (requestId === storedRequestId) error = reason instanceof Error ? reason.message : '저장된 콘텐츠를 불러오지 못했습니다.';
 		} finally {
 			if (requestId === storedRequestId) storedLoading = false;
 		}
+	}
+
+	function changeStoredFilter() {
+		storedSelectedIds = [];
+		storedSelectedAssets = [];
+		void loadStoredAssets(1);
+	}
+
+	function changeStoredPage(nextPage: number) {
+		if (nextPage < 1 || nextPage > storedTotalPages) return;
+		void loadStoredAssets(nextPage);
 	}
 
 	function handleDeviceSelection(event: Event) {
@@ -248,6 +282,7 @@
 		}
 		if (storedSelectedIds.includes(asset.file_id)) {
 			storedSelectedIds = storedSelectedIds.filter((fileId) => fileId !== asset.file_id);
+			storedSelectedAssets = storedSelectedAssets.filter((item) => item.file_id !== asset.file_id);
 			return;
 		}
 		if (currentSelectionCount() + storedSelectedIds.length >= selectionMax) {
@@ -255,6 +290,7 @@
 			return;
 		}
 		storedSelectedIds = [...storedSelectedIds, asset.file_id];
+		storedSelectedAssets = [...storedSelectedAssets, asset];
 	}
 
 	function applyStoredAssets(assetsToApply: StoredMediaAsset[]) {
@@ -286,11 +322,12 @@
 			].slice(0, selectionMax);
 		}
 		storedSelectedIds = [];
+		storedSelectedAssets = [];
 		selectionOpen = false;
 	}
 
 	function confirmStoredSelection() {
-		applyStoredAssets(storedAssets.filter((asset) => storedSelectedIds.includes(asset.file_id)));
+		applyStoredAssets(storedSelectedAssets);
 	}
 
 	function storedSourceLabel(asset: StoredMediaAsset) {
@@ -496,7 +533,7 @@
 									</div>
 									<label class="block space-y-2" for="video-improved-prompt">
 										<span class="text-sm font-medium">개선된 프롬프트</span>
-										<textarea id="video-improved-prompt" bind:value={improvedPrompt} rows="9" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Atlas 형식으로 개선된 프롬프트가 여기에 표시됩니다."></textarea>
+										<textarea id="video-improved-prompt" bind:value={improvedPrompt} rows="9" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="개선된 프롬프트가 여기에 표시됩니다."></textarea>
 									</label>
 								</div>
 							{/if}
@@ -645,8 +682,8 @@
 			{:else}
 				<div class="space-y-4">
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-						<SearchBar id="video-stored-search" bind:value={storedSearch} label="저장 콘텐츠 검색" placeholder="파일명으로 검색" oninput={() => void loadStoredAssets()} />
-						<label class="flex items-center gap-2 text-sm" for="video-stored-sort"><span class="sr-only">정렬</span><select id="video-stored-sort" bind:value={storedSort} onchange={() => void loadStoredAssets()} class={inputClass}><option value="latest">최신순</option><option value="oldest">오래된순</option><option value="name">이름순</option></select></label>
+						<SearchBar id="video-stored-search" bind:value={storedSearch} label="저장 콘텐츠 검색" placeholder="파일명으로 검색" oninput={changeStoredFilter} />
+						<label class="flex items-center gap-2 text-sm" for="video-stored-sort"><span class="sr-only">정렬</span><select id="video-stored-sort" bind:value={storedSort} onchange={changeStoredFilter} class={inputClass}><option value="latest">최신순</option><option value="oldest">오래된순</option><option value="name">이름순</option></select></label>
 					</div>
 					{#if storedLoading}
 						<div class="flex min-h-48 items-center justify-center"><LoadingSpinner size="md" label="저장 콘텐츠를 불러오는 중" /></div>
@@ -674,6 +711,13 @@
 								</div>
 							{/each}
 						</div>
+						{#if storedTotalPages > 1}
+							<nav class="flex items-center justify-center gap-4 pt-2" aria-label="저장 콘텐츠 페이지 이동">
+								<button type="button" aria-label="이전 저장 콘텐츠 페이지" disabled={storedPage <= 1} onclick={() => changeStoredPage(storedPage - 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={18} /></button>
+								<span class="text-sm font-medium text-muted-foreground">{storedPage} / {storedTotalPages}</span>
+								<button type="button" aria-label="다음 저장 콘텐츠 페이지" disabled={storedPage >= storedTotalPages} onclick={() => changeStoredPage(storedPage + 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight size={18} /></button>
+							</nav>
+						{/if}
 					{/if}
 				</div>
 			{/if}
