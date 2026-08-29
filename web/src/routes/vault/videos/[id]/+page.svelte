@@ -2,8 +2,9 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Download, Heart, Trash2, Video } from '@lucide/svelte';
+	import { ArrowLeft, Crop, Download, Heart, Trash2, Video } from '@lucide/svelte';
 	import VideoMedia from '../../../../../components/media/video.svelte';
+	import VideoEditor from '../../../../../components/media/video-editor.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
 	import IconOutlinedButton from '../../../../../components/buttons/icon-outlined-button.svelte';
@@ -29,6 +30,7 @@
 		created_at: string;
 		completed_at: string | null;
 		elapsed_seconds: number;
+		is_edited: boolean;
 	};
 
 	let ready = $state(false);
@@ -38,6 +40,8 @@
 	let deleting = $state(false);
 	let favoriteUpdating = $state(false);
 	let downloading = $state(false);
+	let videoEditorOpen = $state(false);
+	let editError = $state('');
 
 	onMount(() => {
 		void loadDetail();
@@ -129,6 +133,7 @@
 			<a href="/vault?tab=videos" class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground"><ArrowLeft size={16} strokeWidth={1.8} />보관함으로 돌아가기</a>
 			<section>
 				<Typography as="h1" variant="display">동영상 콘텐츠 상세</Typography>
+				{#if generation.is_edited}<span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">편집 결과</span>{/if}
 				<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 조회 {generation.view_count}</p>
 			</section>
 
@@ -163,7 +168,8 @@
 				<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p>
 			</section>
 
-			<section class="flex justify-end">
+			<section class="flex flex-wrap justify-end gap-3">
+				<OutlinedButton disabled={!generation.video_url} onclick={() => (videoEditorOpen = true)}><Crop size={16} strokeWidth={1.9} /><span>동영상 편집</span></OutlinedButton>
 				<PrimaryButton loading={deleting} disabled={deleting} variant="destructive" onclick={() => (deleteModalOpen = true)}><Trash2 size={16} strokeWidth={2} /><span>콘텐츠 삭제</span></PrimaryButton>
 			</section>
 		</main>
@@ -177,4 +183,15 @@
 	{#snippet footer()}<OutlinedButton disabled={deleting} onclick={() => (deleteModalOpen = false)}>취소</OutlinedButton><PrimaryButton loading={deleting} variant="destructive" onclick={() => void deleteVideo()}><Trash2 size={16} strokeWidth={2} /><span>삭제</span></PrimaryButton>{/snippet}
 </Modal>
 
-{#if error}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="동영상 상세 처리 실패" message={error} onclose={() => (error = '')} /></div>{/if}
+{#if generation}
+	<VideoEditor
+		bind:open={videoEditorOpen}
+		generationId={page.params.id ?? ''}
+		videoUrl={generation.video_url ?? ''}
+		onsaved={(generationId) => void goto(`/vault/videos/${generationId}`)}
+		onerror={(message) => (editError = message)}
+	/>
+{/if}
+
+{#if error}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="동영상 상세 처리 실패" message={error} onclose={() => (error = '')} /></div>
+{:else if editError}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="편집 실패" message={editError} onclose={() => (editError = '')} /></div>{/if}

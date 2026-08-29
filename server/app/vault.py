@@ -1,14 +1,19 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
+from time import monotonic
 from typing import Literal
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel, Field, model_validator
 
 from .auth import UserResponse, current_user
+from .comfyui import _request_bytes
 from .database import (
+    create_image_edit,
+    create_video_edit,
     delete_image_generation,
     delete_image_generations,
     delete_video_generation,
@@ -23,7 +28,15 @@ from .database import (
     update_image_favorite,
     update_video_favorite,
 )
-from .storage import StorageError, delete_file as storage_delete_file, enabled as storage_enabled, read_url as storage_read_url
+from .storage import (
+    StorageError,
+    delete_file as storage_delete_file,
+    download_file as storage_download_file,
+    enabled as storage_enabled,
+    read_url as storage_read_url,
+    upload_file as storage_upload_file,
+)
+from .media_editing import MediaEditError, edit_video
 
 
 router = APIRouter(prefix="/vault", tags=["vault"])
@@ -42,6 +55,7 @@ class VaultImageSummary(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     elapsed_seconds: float
+    is_edited: bool
 
 
 class VaultLora(BaseModel):
@@ -86,6 +100,7 @@ class VaultVideoSummary(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     elapsed_seconds: float
+    is_edited: bool
 
 
 class VaultVideoPage(BaseModel):
@@ -111,6 +126,33 @@ class BulkDeleteRequest(BaseModel):
 
 class BulkDeleteResponse(BaseModel):
     deleted_count: int
+
+
+class ImageEditResponse(BaseModel):
+    generation_id: UUID
+
+
+class VideoEditRequest(BaseModel):
+    start_seconds: float = Field(default=0, ge=0, le=600)
+    end_seconds: float | None = Field(default=None, gt=0, le=600)
+    crop_x: int | None = Field(default=None, ge=0, le=8192)
+    crop_y: int | None = Field(default=None, ge=0, le=8192)
+    crop_width: int | None = Field(default=None, ge=2, le=8192)
+    crop_height: int | None = Field(default=None, ge=2, le=8192)
+    rotate: Literal[0, 90, 180, 270] = 0
+
+    @model_validator(mode="after")
+    def validate_time_and_crop(self) -> "VideoEditRequest":
+        if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("종료 시간은 시작 시간보다 커야 합니다.")
+        crop_values = (self.crop_x, self.crop_y, self.crop_width, self.crop_height)
+        if any(value is not None for value in crop_values) and not all(value is not None for value in crop_values):
+            raise ValueError("crop 영역은 x, y, width, height를 모두 입력해야 합니다.")
+        return self
+
+
+class VideoEditResponse(BaseModel):
+    generation_id: UUID
 
 
 @router.get("/videos", response_model=VaultVideoPage)
@@ -161,6 +203,74 @@ def vault_images(
         completed_count=completed_count,
         total_pages=(total_count + VAULT_PAGE_SIZE - 1) // VAULT_PAGE_SIZE,
     )
+
+
+@router.post("/videos/{generation_id}/edit", response_model=VideoEditResponse, status_code=status.HTTP_201_CREATED)
+def edit_vault_video(
+    generation_id: UUID,
+    payload: VideoEditRequest,
+    user: UserResponse = Depends(current_user),
+) -> VideoEditResponse:
+    generation = get_video_generation_by_id(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
+    if generation["status"] != "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="완료된 영상만 편집할 수 있습니다.")
+    storage_file_id = generation.get("storage_file_id")
+    if not storage_enabled() or not isinstance(storage_file_id, str) or not storage_file_id:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="영상 Storage 파일을 사용할 수 없습니다.")
+    try:
+        content, _ = storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+        started_at = monotonic()
+        edited = edit_video(
+            content=content,
+            filename=generation.get("filename") or "video.mp4",
+            start_seconds=payload.start_seconds,
+            end_seconds=payload.end_seconds,
+            crop_x=payload.crop_x,
+            crop_y=payload.crop_y,
+            crop_width=payload.crop_width,
+            crop_height=payload.crop_height,
+            rotate=payload.rotate,
+        )
+        edit_elapsed = round(monotonic() - started_at, 3)
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except MediaEditError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    try:
+        edited_file_id = storage_upload_file(
+            content=edited.content,
+            media_type="video/mp4",
+            owner_id=str(user.id),
+        )
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    try:
+        edited_id = create_video_edit(
+            user_id=user.id,
+            source_generation_id=generation_id,
+            storage_file_id=edited_file_id,
+            filename=edited.filename,
+            width=edited.width,
+            height=edited.height,
+            length=edited.frame_count,
+            elapsed_seconds=edit_elapsed,
+        )
+    except Exception as exc:
+        try:
+            storage_delete_file(file_id=edited_file_id, owner_id=str(user.id))
+        except StorageError:
+            pass
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="편집한 영상을 저장하지 못했습니다.") from exc
+    if edited_id is None:
+        try:
+            storage_delete_file(file_id=edited_file_id, owner_id=str(user.id))
+        except StorageError:
+            pass
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
+    return VideoEditResponse(generation_id=edited_id)
 
 
 @router.get("/videos/{generation_id}", response_model=VaultVideoSummary)
@@ -248,6 +358,92 @@ def delete_vault_images(
     return BulkDeleteResponse(deleted_count=deleted_count)
 
 
+@router.get("/images/{generation_id}/source")
+def vault_image_source(
+    generation_id: UUID,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    generation = get_image_generation_by_id(generation_id, user.id)
+    if generation is None or generation["status"] != "completed":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
+    storage_file_id = generation.get("storage_file_id")
+    try:
+        if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
+            content, media_type = storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+        else:
+            filename = generation.get("filename")
+            if not isinstance(filename, str) or not filename:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
+            query = urlencode(
+                {
+                    "filename": filename,
+                    "subfolder": generation.get("subfolder", ""),
+                    "type": generation.get("image_type", "output"),
+                }
+            )
+            content, media_type = _request_bytes(f"/view?{query}")
+    except HTTPException:
+        raise
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="이미지 원본을 읽을 수 없습니다.") from exc
+    return Response(content=content, media_type=media_type or "image/png")
+
+
+@router.post("/images/{generation_id}/edit", response_model=ImageEditResponse, status_code=status.HTTP_201_CREATED)
+def edit_vault_image(
+    generation_id: UUID,
+    file: UploadFile = File(...),
+    width: int = Form(..., ge=1, le=8192),
+    height: int = Form(..., ge=1, le=8192),
+    user: UserResponse = Depends(current_user),
+) -> ImageEditResponse:
+    generation = get_image_generation_by_id(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
+    if generation["status"] != "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="완료된 이미지만 편집할 수 있습니다.")
+    if not storage_enabled():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+    content_type = (file.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="이미지 파일만 저장할 수 있습니다.")
+    content = file.file.read(50 * 1024 * 1024 + 1)
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="편집할 이미지 파일이 너무 큽니다.")
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="빈 이미지 파일은 저장할 수 없습니다.")
+    filename = Path(file.filename or "edited.png").name or "edited.png"
+    try:
+        storage_file_id = storage_upload_file(content=content, media_type=content_type, owner_id=str(user.id))
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    try:
+        edited_id = create_image_edit(
+            user_id=user.id,
+            source_generation_id=generation_id,
+            storage_file_id=storage_file_id,
+            filename=filename[:255],
+            width=width,
+            height=height,
+            elapsed_seconds=0,
+        )
+    except Exception as exc:
+        try:
+            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+        except StorageError:
+            pass
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="편집한 이미지를 저장하지 못했습니다.") from exc
+    if edited_id is None:
+        try:
+            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+        except StorageError:
+            pass
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
+    return ImageEditResponse(generation_id=edited_id)
+
+
 @router.get("/images/{generation_id}", response_model=VaultImageDetail)
 def vault_image_detail(
     generation_id: UUID,
@@ -315,6 +511,7 @@ def _video_summary(generation: dict, user_id: UUID) -> VaultVideoSummary:
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
         elapsed_seconds=generation["elapsed_seconds"],
+        is_edited=generation["is_edited"],
     )
 
 
@@ -331,6 +528,7 @@ def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
         elapsed_seconds=generation["elapsed_seconds"],
+        is_edited=generation["is_edited"],
     )
 
 

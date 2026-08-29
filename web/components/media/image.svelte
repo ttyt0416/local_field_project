@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { ChevronLeft, ChevronRight, X } from '@lucide/svelte';
+	import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut } from '@lucide/svelte';
 	import LoadingShimmer from '../loadings/loading-shimmer.svelte';
+	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
 	import { apiBlob } from '$lib/utils/api';
 
 	type MediaSource = string | Blob;
@@ -32,6 +33,7 @@
 	let open = $state(false);
 	let activeIndex = $state(0);
 	let activeLoaded = $state(false);
+	let zoom = $state(1);
 	let closeButton = $state<HTMLButtonElement>();
 	let isExternalSource = $derived(sourceType === 'external');
 	let isServerSource = $derived(sourceType === 'server' || (!isExternalSource && typeof source === 'string' && /^(https?:)?\/\//.test(source)));
@@ -87,6 +89,7 @@
 		if (!sourceUrl || failed) return;
 		activeIndex = 0;
 		activeLoaded = false;
+		zoom = 1;
 		open = true;
 	}
 
@@ -98,6 +101,19 @@
 		if (galleryItems.length < 2) return;
 		activeIndex = (activeIndex + direction + galleryItems.length) % galleryItems.length;
 		activeLoaded = false;
+		zoom = 1;
+	}
+
+	function zoomIn() {
+		zoom = Math.min(4, Number((zoom + 0.25).toFixed(2)));
+	}
+
+	function zoomOut() {
+		zoom = Math.max(1, Number((zoom - 0.25).toFixed(2)));
+	}
+
+	function resetZoom() {
+		zoom = 1;
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
@@ -151,7 +167,7 @@
 		aria-label="이미지 갤러리"
 		onclick={handleBackdropClick}
 	>
-		<div class="relative flex max-h-full max-w-6xl items-center justify-center">
+		<div class="relative flex max-h-full max-w-6xl items-center justify-center overflow-auto">
 			<button
 				bind:this={closeButton}
 				type="button"
@@ -184,11 +200,21 @@
 			{#if activeIsRemote && !activeLoaded}
 				<LoadingShimmer class="h-[70vh] w-[min(90vw,72rem)] rounded-xl" label="이미지 불러오는 중" />
 			{/if}
+			<div class="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl bg-black/65 p-1">
+				<IconOutlinedButton variant="filled" ariaLabel="이미지 축소" disabled={zoom <= 1} class="border-0 bg-transparent text-white hover:bg-white/15 hover:text-white" onclick={zoomOut}>
+					<ZoomOut size={18} strokeWidth={1.9} />
+				</IconOutlinedButton>
+				<button type="button" class="min-w-14 rounded-lg px-2 py-2 text-xs font-semibold text-white hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" aria-label="이미지 확대 초기화" onclick={resetZoom}>{Math.round(zoom * 100)}%</button>
+				<IconOutlinedButton variant="filled" ariaLabel="이미지 확대" disabled={zoom >= 4} class="border-0 bg-transparent text-white hover:bg-white/15 hover:text-white" onclick={zoomIn}>
+					<ZoomIn size={18} strokeWidth={1.9} />
+				</IconOutlinedButton>
+			</div>
 			<img
 				 src={activeItem.source}
 				alt={activeItem.alt ?? alt}
 				onload={() => (activeLoaded = true)}
-				class={`max-h-[90vh] max-w-[90vw] rounded-xl object-contain ${activeIsRemote && !activeLoaded ? 'absolute opacity-0' : 'opacity-100'}`}
+				style={`transform: scale(${zoom}); transform-origin: center;`}
+				class={`max-h-[90vh] max-w-[90vw] rounded-xl object-contain transition-transform ${activeIsRemote && !activeLoaded ? 'absolute opacity-0' : 'opacity-100'}`}
 			/>
 		</div>
 	</dialog>

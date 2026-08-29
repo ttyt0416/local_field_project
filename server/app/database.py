@@ -197,6 +197,46 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'image_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'source_generation_id'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN source_generation_id UUID;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'is_edited'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN is_edited BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'video_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'source_generation_id'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN source_generation_id UUID;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'is_edited'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN is_edited BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -284,7 +324,9 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMPTZ,
-        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
+        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+        source_generation_id UUID,
+        is_edited BOOLEAN NOT NULL DEFAULT FALSE
     )
     """,
     """
@@ -331,7 +373,9 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMPTZ,
-        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
+        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+        source_generation_id UUID,
+        is_edited BOOLEAN NOT NULL DEFAULT FALSE
     )
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
@@ -448,7 +492,8 @@ def initialize_database() -> None:
 _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
     "loras, cfg, steps, width, height, seed, file_path, storage_file_id, filename, "
-    "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds"
+    "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
+    "source_generation_id, is_edited"
 )
 
 
@@ -496,6 +541,50 @@ def create_image_generation(
         if row is None:
             raise RuntimeError("image generation insert did not return a row")
     return row[0], row[1]
+
+
+def create_image_edit(
+    *,
+    user_id: uuid.UUID,
+    source_generation_id: uuid.UUID,
+    storage_file_id: str,
+    filename: str,
+    width: int,
+    height: int,
+    elapsed_seconds: float,
+) -> uuid.UUID | None:
+    generation_id = uuid.uuid4()
+    prompt_id = f"edit-image-{generation_id.hex}"
+    client_id = f"edit-{generation_id.hex}"
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            INSERT INTO image_generations
+                (id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint,
+                 loras, cfg, steps, width, height, seed, storage_file_id, filename, subfolder,
+                 image_type, completed_at, elapsed_seconds, source_generation_id, is_edited)
+            SELECT %s, user_id, %s, %s, 'completed', prompt, negative_prompt, checkpoint,
+                   loras, cfg, steps, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
+                   %s, %s, TRUE
+            FROM image_generations
+            WHERE id = %s AND user_id = %s AND status = 'completed'
+            RETURNING id
+            """,
+            (
+                generation_id,
+                prompt_id,
+                client_id,
+                width,
+                height,
+                storage_file_id,
+                filename,
+                elapsed_seconds,
+                source_generation_id,
+                source_generation_id,
+                user_id,
+            ),
+        ).fetchone()
+    return row[0] if row is not None else None
 
 
 def get_image_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
@@ -929,9 +1018,9 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 _VIDEO_FIELDS = (
     "id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length, fps, seed, "
-    "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds"
+    "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
+    "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited"
 )
-
 
 def create_video_generation(
     *,
@@ -974,6 +1063,52 @@ def create_video_generation(
         if row is None:
             raise RuntimeError("video generation insert did not return a row")
     return row[0], row[1]
+
+
+def create_video_edit(
+    *,
+    user_id: uuid.UUID,
+    source_generation_id: uuid.UUID,
+    storage_file_id: str,
+    filename: str,
+    width: int,
+    height: int,
+    length: int,
+    elapsed_seconds: float,
+) -> uuid.UUID | None:
+    generation_id = uuid.uuid4()
+    prompt_id = f"edit-video-{generation_id.hex}"
+    client_id = f"edit-{generation_id.hex}"
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            INSERT INTO video_generations
+                (id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length,
+                 fps, seed, input_file_ids, storage_file_id, filename, subfolder, video_type,
+                 completed_at, elapsed_seconds, source_generation_id, is_edited)
+            SELECT %s, user_id, %s, %s, mode, 'completed', prompt, %s, %s, %s,
+                   fps, seed, input_file_ids, %s, %s, '', 'output', CURRENT_TIMESTAMP,
+                   %s, %s, TRUE
+            FROM video_generations
+            WHERE id = %s AND user_id = %s AND status = 'completed'
+            RETURNING id
+            """,
+            (
+                generation_id,
+                prompt_id,
+                client_id,
+                width,
+                height,
+                length,
+                storage_file_id,
+                filename,
+                elapsed_seconds,
+                source_generation_id,
+                source_generation_id,
+                user_id,
+            ),
+        ).fetchone()
+    return row[0] if row is not None else None
 
 
 def get_video_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:

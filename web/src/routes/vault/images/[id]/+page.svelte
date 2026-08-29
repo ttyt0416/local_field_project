@@ -2,8 +2,9 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Copy, Download, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { ArrowLeft, Copy, Crop, Download, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
+	import ImageEditor from '../../../../../components/media/image-editor.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../../../components/buttons/outlined-button.svelte';
 	import IconOutlinedButton from '../../../../../components/buttons/icon-outlined-button.svelte';
@@ -40,6 +41,7 @@ import { downloadMedia } from '$lib/utils/download';
 		elapsed_seconds: number;
 		view_count: number;
 		is_favorite: boolean;
+		is_edited: boolean;
 	};
 
 	let ready = $state(false);
@@ -51,6 +53,8 @@ import { downloadMedia } from '$lib/utils/download';
 	let deleting = $state(false);
 	let favoriteUpdating = $state(false);
 	let downloading = $state(false);
+	let imageEditorOpen = $state(false);
+	let editError = $state('');
 
 	onMount(() => {
 		void loadDetail();
@@ -199,7 +203,10 @@ import { downloadMedia } from '$lib/utils/download';
 			<section>
 				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div>
-						<Typography as="h1" variant="display">콘텐츠 상세</Typography>
+						<div class="flex items-center gap-3">
+							<Typography as="h1" variant="display">콘텐츠 상세</Typography>
+							{#if generation.is_edited}<span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">편집 결과</span>{/if}
+						</div>
 						<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 조회 {generation.view_count}</p>
 					</div>
 				</div>
@@ -286,6 +293,10 @@ import { downloadMedia } from '$lib/utils/download';
 			</section>
 
 			<section class="flex flex-col justify-end gap-3 sm:flex-row">
+				<OutlinedButton disabled={!generation.image_url} onclick={() => (imageEditorOpen = true)}>
+					<Crop size={16} strokeWidth={1.9} />
+					<span>이미지 편집</span>
+				</OutlinedButton>
 				<PrimaryButton onclick={() => void generateFromParameters()}>
 					<Sparkles size={16} strokeWidth={1.9} />
 					<span>이 설정으로 다시 생성</span>
@@ -332,9 +343,22 @@ import { downloadMedia } from '$lib/utils/download';
 	{/snippet}
 </Modal>
 
+{#if generation}
+	<ImageEditor
+		bind:open={imageEditorOpen}
+		generationId={page.params.id ?? ''}
+		onsaved={(generationId) => void goto(`/vault/images/${generationId}`)}
+		onerror={(message) => (editError = message)}
+	/>
+{/if}
+
 {#if error}
 	<div class="fixed right-4 top-4 z-50">
 		<Toast state="negative" title="상세 조회 실패" message={error} onclose={() => (error = '')} />
+	</div>
+{:else if editError}
+	<div class="fixed right-4 top-4 z-50">
+		<Toast state="negative" title="편집 실패" message={editError} onclose={() => (editError = '')} />
 	</div>
 {:else if copyError}
 	<div class="fixed right-4 top-4 z-50">

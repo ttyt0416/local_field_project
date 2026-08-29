@@ -62,6 +62,51 @@ class VideoGenerationStatusTest(unittest.TestCase):
 
         self.assertEqual(result, (generation_id, created_at))
 
+    def test_create_image_edit_copies_source_and_overrides_media_metadata(self) -> None:
+        edited_id = uuid4()
+        connection = ReturningConnection((edited_id,))
+        user_id = uuid4()
+        source_id = uuid4()
+
+        with patch.object(database, "get_connection", return_value=connection):
+            result = database.create_image_edit(
+                user_id=user_id,
+                source_generation_id=source_id,
+                storage_file_id="edited-file",
+                filename="edited.png",
+                width=256,
+                height=128,
+                elapsed_seconds=0,
+            )
+
+        query, parameters = connection.calls[0]
+        self.assertEqual(result, edited_id)
+        self.assertIn("source_generation_id, is_edited", query)
+        self.assertEqual(parameters[-2:], (source_id, user_id))
+
+    def test_create_video_edit_copies_source_and_overrides_media_metadata(self) -> None:
+        edited_id = uuid4()
+        connection = ReturningConnection((edited_id,))
+        user_id = uuid4()
+        source_id = uuid4()
+
+        with patch.object(database, "get_connection", return_value=connection):
+            result = database.create_video_edit(
+                user_id=user_id,
+                source_generation_id=source_id,
+                storage_file_id="edited-file",
+                filename="edited.mp4",
+                width=256,
+                height=128,
+                length=12,
+                elapsed_seconds=1.2,
+            )
+
+        query, parameters = connection.calls[0]
+        self.assertEqual(result, edited_id)
+        self.assertIn("source_generation_id, is_edited", query)
+        self.assertEqual(parameters[-2:], (source_id, user_id))
+
     def test_create_video_generation_reads_returning_cursor(self) -> None:
         generation_id = uuid4()
         created_at = datetime.now(timezone.utc)
