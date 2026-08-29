@@ -9,3 +9,5 @@ I2V와 FL2V는 `fl2va` 모델을 사용하고 R2V는 `ref2va` 모델과 R2V 전�
 `POST /generation/video/enhance-prompt`는 이미지 생성과 같은 vLLM 기반 prompt 개선 endpoint다. vLLM은 AtlasCloud의 MiniMax H3 규칙을 우선해 `style`, `timeline`, `camera`, `audio`, `text`, `negative` 문자열 필드를 가진 JSON만 반환한다. 서버는 이 필드를 `Style`, `Timeline`, `Camera`, `Audio`, `Text`, `Negative` 6블록으로 순서대로 조립하며, Timeline은 선택한 duration 전체를 다루고 camera·audio·화면 text·negative 제약을 명시한다. 조립된 prompt에는 video submit 시 실제 참조 입력의 역할을 `@imageN`, `@videoN`, `@audioN`으로 앞에 붙인다.
 
 `prompt_output_languages`는 `ko`, `en`, `ja` 중 1개 이상을 받는 multi-select 필드다. 개선 결과는 선택 언어의 문자 집합 union과 숫자·ASCII 특수기호·공백·줄바꿈만 허용하는 JSON schema pattern과 서버 검증을 모두 통과해야 한다. 개선이 활성화된 생성 요청도 같은 6블록·문자 규칙을 다시 검증하며, 개선 결과가 없거나 규칙을 벗어나면 queue 제출과 입력 업로드 전에 `422`로 거절한다.
+
+세 video workflow의 `SaveVideo`는 ComfyUI V3 DynamicCombo API 형식에 맞춰 `format`과 `codec`을 평탄한 선택값으로 `/prompt`에 전달한다. ComfyUI가 이를 실행 시 내부 dynamic input object로 재구성하므로 중첩된 `format` object를 workflow에 넣지 않는다.

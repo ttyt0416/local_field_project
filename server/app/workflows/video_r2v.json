@@ -112,12 +112,8 @@
     "inputs": {
       "video": ["14", 0],
       "filename_prefix": "video/LocalField_MiniMaxH3",
-      "format": {
-        "format": "mp4",
-        "codec": {
-          "codec": "h264"
-        }
-      }
+      "format": "mp4",
+      "codec": "h264"
     }
   }
 }

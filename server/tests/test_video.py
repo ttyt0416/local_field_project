@@ -39,11 +39,8 @@ class VideoContractTest(unittest.TestCase):
             for mode, request in requests.items():
                 prompt, _ = video._build_prompt(mode, request, resolved)
                 save = next(node for node in prompt.values() if node["class_type"] == "SaveVideo")
-                self.assertEqual(
-                    save["inputs"]["format"],
-                    {"format": "mp4", "codec": {"codec": "h264"}},
-                )
-                self.assertNotIn("codec", save["inputs"])
+                self.assertEqual(save["inputs"]["format"], "mp4")
+                self.assertEqual(save["inputs"]["codec"], "h264")
                 generator = next(
                     node
                     for node in prompt.values()
