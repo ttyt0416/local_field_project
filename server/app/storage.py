@@ -91,6 +91,37 @@ def download_file(*, file_id: str, owner_id: str) -> tuple[bytes, str]:
         raise StorageError("스토리지 파일을 읽을 수 없습니다.") from exc
 
 
+def file_size(*, file_id: str, owner_id: str) -> int | None:
+    public_url = read_url(file_id=file_id, owner_id=owner_id, expires_in=300)
+    signed = urlsplit(public_url)
+    internal = urlsplit(settings.storage_url)
+    url = urlunsplit((internal.scheme, internal.netloc, signed.path, signed.query, ""))
+    try:
+        with urlopen(UrlRequest(url, method="HEAD"), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+            value = response.headers.get("Content-Length")
+            if value and value.isdigit():
+                return int(value)
+    except UrlHTTPError as exc:
+        if exc.code not in {405, 501}:
+            raise StorageError(f"스토리지 파일 정보 조회가 실패했습니다. (HTTP {exc.code})", status_code=exc.code) from exc
+    except (URLError, TimeoutError) as exc:
+        raise StorageError("스토리지 파일 정보를 읽을 수 없습니다.") from exc
+
+    try:
+        request = UrlRequest(url, headers={"Range": "bytes=0-0"})
+        with urlopen(request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+            content_range = response.headers.get("Content-Range", "")
+            total = content_range.rsplit("/", 1)[-1]
+            if total.isdigit():
+                return int(total)
+            value = response.headers.get("Content-Length")
+            return int(value) if value and value.isdigit() else None
+    except UrlHTTPError as exc:
+        raise StorageError(f"스토리지 파일 정보 조회가 실패했습니다. (HTTP {exc.code})", status_code=exc.code) from exc
+    except (URLError, TimeoutError) as exc:
+        raise StorageError("스토리지 파일 정보를 읽을 수 없습니다.") from exc
+
+
 
 def _invalidate_read_url_cache(file_id: str, owner_id: str) -> None:
     for cache_key in tuple(_read_url_cache):

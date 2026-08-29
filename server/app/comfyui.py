@@ -541,6 +541,7 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
 
     generation = get_image_generation(prompt_id, user_id)
     storage_file_id = generation.get("storage_file_id") if generation else None
+    size_bytes: int | None = None
     if storage_enabled() and not storage_file_id:
         query = urlencode({"filename": filename, "subfolder": subfolder, "type": image_type})
         content, media_type = _request_bytes(f"/view?{query}")
@@ -550,6 +551,7 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
                 media_type=media_type or "image/png",
                 owner_id=str(user_id),
             )
+            size_bytes = len(content)
         except StorageError as exc:
             update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
             raise _ComfyUIError(str(exc)) from exc
@@ -565,6 +567,7 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
         filename=filename,
         subfolder=subfolder,
         image_type=image_type,
+        size_bytes=size_bytes,
     )
 
 

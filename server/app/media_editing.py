@@ -18,7 +18,7 @@ class MediaEditError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class _VideoInfo:
+class VideoMetadata:
     width: int
     height: int
     duration: float
@@ -33,6 +33,15 @@ class VideoEditResult:
     height: int
     duration: float
     frame_count: int
+
+
+def probe_video(*, content: bytes, filename: str) -> VideoMetadata:
+    if len(content) > _MAX_VIDEO_BYTES:
+        raise MediaEditError("확인할 영상 파일이 너무 큽니다.")
+    with tempfile.TemporaryDirectory(prefix="local-field-video-probe-") as directory:
+        source = Path(directory) / (Path(filename).suffix.lower() or ".mp4")
+        source.write_bytes(content)
+        return _probe(source)
 
 
 def edit_video(
@@ -131,7 +140,7 @@ def edit_video(
         )
 
 
-def _probe(path: Path) -> _VideoInfo:
+def _probe(path: Path) -> VideoMetadata:
     command = [
         "ffprobe",
         "-v",
@@ -157,7 +166,7 @@ def _probe(path: Path) -> _VideoInfo:
         raise MediaEditError("영상 정보를 읽을 수 없습니다.") from exc
     if width < 2 or height < 2 or duration <= 0 or not math.isfinite(duration) or fps <= 0:
         raise MediaEditError("편집할 수 있는 영상 정보가 아닙니다.")
-    return _VideoInfo(width=width, height=height, duration=duration, fps=fps)
+    return VideoMetadata(width=width, height=height, duration=duration, fps=fps)
 
 
 def _parse_rate(value: object) -> float:

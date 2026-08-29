@@ -1,6 +1,6 @@
 # 미디어 Storage 메타데이터
 
-`image_generations.storage_file_id`와 `video_generations.storage_file_id`는 실제 바이트가 아니라 독립 Storage 서비스의 파일 식별자만 보관한다.
+`image_generations.storage_file_id`와 `video_generations.storage_file_id`는 실제 바이트가 아니라 독립 Storage 서비스의 파일 식별자만 보관한다. `size_bytes`는 저장 결과의 실제 파일 용량을 별도로 보관한다.
 
 `media_assets`는 생성 요청 시 새로 저장되었거나 기존 Storage에서 재사용된 이미지·동영상·오디오 입력을 사용자별로 추적한다. `list_reusable_media`의 기본 조회는 생성 결과 파일을 제외한 업로드 콘텐츠만 반환하며, 동영상 선택 모달이 `include_generated=true`를 요청할 때만 생성 이미지·영상 generation 레코드도 합친다. `storage_file_id`는 재사용을 위한 unique key이며, 생성 결과를 input으로 재사용해도 generation 출력 파일은 업로드 목록에 중복 표시하지 않는다. `source_type`은 직접 저장된 사용 콘텐츠, 이미지 생성 결과, 영상 생성 결과를 구분하는 표시값이며 향후 i2i 등 다른 생성 방식도 같은 계약을 재사용한다.
 

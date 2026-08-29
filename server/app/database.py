@@ -216,6 +216,12 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
             ) THEN
                 ALTER TABLE image_generations ADD COLUMN is_edited BOOLEAN NOT NULL DEFAULT FALSE;
             END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'size_bytes'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN size_bytes BIGINT NOT NULL DEFAULT 0;
+            END IF;
         END IF;
         IF EXISTS (
             SELECT 1 FROM information_schema.tables
@@ -232,6 +238,12 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
                 WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'is_edited'
             ) THEN
                 ALTER TABLE video_generations ADD COLUMN is_edited BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'size_bytes'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN size_bytes BIGINT NOT NULL DEFAULT 0;
             END IF;
         END IF;
     END
@@ -326,7 +338,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         completed_at TIMESTAMPTZ,
         elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
         source_generation_id UUID,
-        is_edited BOOLEAN NOT NULL DEFAULT FALSE
+        is_edited BOOLEAN NOT NULL DEFAULT FALSE,
+        size_bytes BIGINT NOT NULL DEFAULT 0
     )
     """,
     """
@@ -375,7 +388,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         completed_at TIMESTAMPTZ,
         elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
         source_generation_id UUID,
-        is_edited BOOLEAN NOT NULL DEFAULT FALSE
+        is_edited BOOLEAN NOT NULL DEFAULT FALSE,
+        size_bytes BIGINT NOT NULL DEFAULT 0
     )
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
@@ -493,7 +507,7 @@ _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
     "loras, cfg, steps, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
-    "source_generation_id, is_edited"
+    "source_generation_id, is_edited, size_bytes"
 )
 
 
@@ -552,6 +566,7 @@ def create_image_edit(
     width: int,
     height: int,
     elapsed_seconds: float,
+    size_bytes: int = 0,
 ) -> uuid.UUID | None:
     generation_id = uuid.uuid4()
     prompt_id = f"edit-image-{generation_id.hex}"
@@ -562,10 +577,10 @@ def create_image_edit(
             INSERT INTO image_generations
                 (id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint,
                  loras, cfg, steps, width, height, seed, storage_file_id, filename, subfolder,
-                 image_type, completed_at, elapsed_seconds, source_generation_id, is_edited)
+                 image_type, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes)
             SELECT %s, user_id, %s, %s, 'completed', prompt, negative_prompt, checkpoint,
                    loras, cfg, steps, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
-                   %s, %s, TRUE
+                   %s, %s, TRUE, %s
             FROM image_generations
             WHERE id = %s AND user_id = %s AND status = 'completed'
             RETURNING id
@@ -580,6 +595,7 @@ def create_image_edit(
                 filename,
                 elapsed_seconds,
                 source_generation_id,
+                size_bytes,
                 source_generation_id,
                 user_id,
             ),
@@ -719,7 +735,7 @@ def delete_image_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID
 
 
 _MEDIA_FIELDS = "id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type, created_at"
-_REUSABLE_MEDIA_FIELDS = "file_id, filename, content_type, media_kind, source_type, created_at"
+_REUSABLE_MEDIA_FIELDS = "file_id, filename, content_type, media_kind, source_type, created_at, size"
 _MODEL_DOWNLOAD_FIELDS = "id, user_id, version_id, model_type, file_index, filename, target_path, status, downloaded_bytes, total_bytes, error_message, created_at, completed_at"
 
 
@@ -731,19 +747,20 @@ def create_media_asset(
     content_type: str,
     media_kind: str,
     size: int,
+    source_type: str = "generation_input",
 ) -> dict[str, Any]:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             INSERT INTO media_assets
-                (id, user_id, storage_file_id, filename, content_type, media_kind, size)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (storage_file_id) DO UPDATE
             SET source_type = 'generation_input'
             WHERE media_assets.user_id = EXCLUDED.user_id
             RETURNING {_MEDIA_FIELDS}
             """,
-            (uuid.uuid4(), user_id, storage_file_id, filename, content_type, media_kind, size),
+            (uuid.uuid4(), user_id, storage_file_id, filename, content_type, media_kind, size, source_type),
         ).fetchone()
     return dict(zip(_MEDIA_FIELDS.split(", "), row, strict=True))
 
@@ -775,7 +792,7 @@ def list_reusable_media(
     sources = [
         """
         SELECT storage_file_id AS file_id, filename, content_type, media_kind,
-               source_type, created_at, user_id
+               source_type, created_at, size, user_id
         FROM media_assets
         WHERE NOT EXISTS (
             SELECT 1 FROM image_generations
@@ -792,13 +809,13 @@ def list_reusable_media(
             (
                 """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
-                       'image/png', 'image', 'image_generation', created_at, user_id
+                       'image/png', 'image', 'image_generation', created_at, size_bytes, user_id
                 FROM image_generations
                 WHERE storage_file_id IS NOT NULL
                 """,
                 """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
-                       'video/mp4', 'video', 'video_generation', created_at, user_id
+                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, user_id
                 FROM video_generations
                 WHERE storage_file_id IS NOT NULL
                 """,
@@ -993,16 +1010,16 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
             f"""
             SELECT {_REUSABLE_MEDIA_FIELDS} FROM (
                 SELECT storage_file_id AS file_id, filename, content_type, media_kind,
-                       source_type, created_at, user_id
+                       source_type, created_at, size, user_id
                 FROM media_assets
                 UNION ALL
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
-                       'image/png', 'image', 'image_generation', created_at, user_id
+                       'image/png', 'image', 'image_generation', created_at, size_bytes, user_id
                 FROM image_generations
                 WHERE storage_file_id IS NOT NULL
                 UNION ALL
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
-                       'video/mp4', 'video', 'video_generation', created_at, user_id
+                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, user_id
                 FROM video_generations
                 WHERE storage_file_id IS NOT NULL
             ) AS assets
@@ -1019,7 +1036,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 _VIDEO_FIELDS = (
     "id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
-    "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited"
+    "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
 
 def create_video_generation(
@@ -1075,6 +1092,7 @@ def create_video_edit(
     height: int,
     length: int,
     elapsed_seconds: float,
+    size_bytes: int = 0,
 ) -> uuid.UUID | None:
     generation_id = uuid.uuid4()
     prompt_id = f"edit-video-{generation_id.hex}"
@@ -1085,10 +1103,10 @@ def create_video_edit(
             INSERT INTO video_generations
                 (id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length,
                  fps, seed, input_file_ids, storage_file_id, filename, subfolder, video_type,
-                 completed_at, elapsed_seconds, source_generation_id, is_edited)
+                 completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes)
             SELECT %s, user_id, %s, %s, mode, 'completed', prompt, %s, %s, %s,
                    fps, seed, input_file_ids, %s, %s, '', 'output', CURRENT_TIMESTAMP,
-                   %s, %s, TRUE
+                   %s, %s, TRUE, %s
             FROM video_generations
             WHERE id = %s AND user_id = %s AND status = 'completed'
             RETURNING id
@@ -1104,6 +1122,7 @@ def create_video_edit(
                 filename,
                 elapsed_seconds,
                 source_generation_id,
+                size_bytes,
                 source_generation_id,
                 user_id,
             ),
@@ -1228,6 +1247,7 @@ def update_video_generation_status(
     filename: str | None = None,
     subfolder: str = "",
     video_type: str = "output",
+    size_bytes: int | None = None,
 ) -> None:
     with get_connection() as connection:
         connection.execute(
@@ -1238,6 +1258,7 @@ def update_video_generation_status(
                 filename = COALESCE(%s, filename),
                 subfolder = COALESCE(%s::varchar, subfolder),
                 video_type = COALESCE(%s::varchar, video_type),
+                size_bytes = COALESCE(%s, size_bytes),
                 completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                     CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
@@ -1250,6 +1271,7 @@ def update_video_generation_status(
                 filename,
                 subfolder if filename is not None else None,
                 video_type if filename is not None else None,
+                size_bytes,
                 status,
                 status,
                 prompt_id,
@@ -1357,6 +1379,7 @@ def update_image_generation_status(
     filename: str | None = None,
     subfolder: str = "",
     image_type: str = "output",
+    size_bytes: int | None = None,
 ) -> None:
     with get_connection() as connection:
         if file_path is None:
@@ -1382,13 +1405,14 @@ def update_image_generation_status(
                     filename = %s,
                     subfolder = %s,
                     image_type = %s,
+                    size_bytes = COALESCE(%s, size_bytes),
                     completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
                     elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                         CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                     )))
                 WHERE prompt_id = %s AND user_id = %s
                 """,
-                (status, file_path, storage_file_id, filename, subfolder, image_type, status, status, prompt_id, user_id),
+                (status, file_path, storage_file_id, filename, subfolder, image_type, size_bytes, status, status, prompt_id, user_id),
             )
 
 

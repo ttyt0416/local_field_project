@@ -35,6 +35,7 @@ from .storage import (
     enabled as storage_enabled,
     read_url as storage_read_url,
     upload_file as storage_upload_file,
+    file_size as storage_file_size,
 )
 from .media_editing import MediaEditError, edit_video
 
@@ -56,6 +57,7 @@ class VaultImageSummary(BaseModel):
     completed_at: datetime | None
     elapsed_seconds: float
     is_edited: bool
+    file_size_bytes: int | None
 
 
 class VaultLora(BaseModel):
@@ -101,6 +103,8 @@ class VaultVideoSummary(BaseModel):
     completed_at: datetime | None
     elapsed_seconds: float
     is_edited: bool
+    duration_seconds: float | None
+    file_size_bytes: int | None
 
 
 class VaultVideoPage(BaseModel):
@@ -257,6 +261,7 @@ def edit_vault_video(
             height=edited.height,
             length=edited.frame_count,
             elapsed_seconds=edit_elapsed,
+            size_bytes=len(edited.content),
         )
     except Exception as exc:
         try:
@@ -281,7 +286,7 @@ def vault_video_detail(
     generation = increment_video_generation_view_count(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
-    return _video_summary(generation, user.id)
+    return _video_summary(generation, user.id, include_file_size=True)
 
 
 @router.patch("/videos/{generation_id}/favorite", response_model=FavoriteResponse)
@@ -428,6 +433,7 @@ def edit_vault_image(
             width=width,
             height=height,
             elapsed_seconds=0,
+            size_bytes=len(content),
         )
     except Exception as exc:
         try:
@@ -490,7 +496,7 @@ def delete_vault_image(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _video_summary(generation: dict, user_id: UUID) -> VaultVideoSummary:
+def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultVideoSummary:
     video_url = None
     storage_file_id = generation.get("storage_file_id")
     if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
@@ -512,10 +518,12 @@ def _video_summary(generation: dict, user_id: UUID) -> VaultVideoSummary:
         completed_at=generation["completed_at"],
         elapsed_seconds=generation["elapsed_seconds"],
         is_edited=generation["is_edited"],
+        duration_seconds=(float(generation["length"]) / float(generation["fps"])) if generation.get("fps") else None,
+        file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
     )
 
 
-def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:
+def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultImageSummary:
     return VaultImageSummary(
         id=generation["id"],
         media_type="image",
@@ -529,12 +537,13 @@ def _summary(generation: dict, user_id: UUID) -> VaultImageSummary:
         completed_at=generation["completed_at"],
         elapsed_seconds=generation["elapsed_seconds"],
         is_edited=generation["is_edited"],
+        file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
     )
 
 
 def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
     return VaultImageDetail(
-        **_summary(generation, user_id).model_dump(),
+        **_summary(generation, user_id, include_file_size=True).model_dump(),
         prompt_id=generation["prompt_id"],
         negative_prompt=generation["negative_prompt"],
         loras=_loras(generation),
@@ -548,6 +557,19 @@ def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
         subfolder=generation["subfolder"],
         image_type=generation["image_type"],
     )
+
+
+def _generation_file_size(generation: dict, user_id: UUID, include_storage_lookup: bool) -> int | None:
+    stored_size = int(generation.get("size_bytes") or 0)
+    if stored_size > 0 or not include_storage_lookup:
+        return stored_size or None
+    storage_file_id = generation.get("storage_file_id")
+    if not storage_enabled() or not isinstance(storage_file_id, str) or not storage_file_id:
+        return None
+    try:
+        return storage_file_size(file_id=storage_file_id, owner_id=str(user_id))
+    except StorageError:
+        return None
 
 
 def _loras(generation: dict) -> list[VaultLora]:

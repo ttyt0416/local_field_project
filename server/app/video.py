@@ -855,6 +855,7 @@ def _sync_video_output(generation: dict[str, Any], user_id: uuid.UUID, outputs: 
         filename=filename,
         subfolder=subfolder,
         video_type=video_type,
+        size_bytes=len(content),
     )
 
 

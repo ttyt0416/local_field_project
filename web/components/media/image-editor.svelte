@@ -10,6 +10,8 @@
 	type Props = {
 		open?: boolean;
 		generationId: string;
+		sourcePath?: string;
+		editPath?: string;
 		onsaved?: (generationId: string) => void;
 		onerror?: (message: string) => void;
 	};
@@ -17,6 +19,8 @@
 	let {
 		open = $bindable(false),
 		generationId,
+		sourcePath,
+		editPath,
 		onsaved,
 		onerror
 	}: Props = $props();
@@ -40,7 +44,7 @@
 		let cancelled = false;
 		loading = true;
 		image = undefined;
-		void apiBlob(`vault/images/${generationId}/source`)
+		void apiBlob(sourcePath ?? `vault/images/${generationId}/source`)
 			.then((blob) => {
 				if (cancelled) return;
 				if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -147,7 +151,7 @@
 			form.append('width', String(outputCanvas.width));
 			form.append('height', String(outputCanvas.height));
 			try {
-				const result = await apiForm<{ generation_id: string }>(`vault/images/${generationId}/edit`, form);
+				const result = await apiForm<{ generation_id: string }>(editPath ?? `vault/images/${generationId}/edit`, form);
 				open = false;
 				onsaved?.(result.generation_id);
 			} catch (reason) {

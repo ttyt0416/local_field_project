@@ -15,7 +15,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
-	import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
+	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 import { downloadMedia } from '$lib/utils/download';
 
 	type VaultImageDetail = {
@@ -42,6 +42,7 @@ import { downloadMedia } from '$lib/utils/download';
 		view_count: number;
 		is_favorite: boolean;
 		is_edited: boolean;
+		file_size_bytes: number | null;
 	};
 
 	let ready = $state(false);
@@ -207,7 +208,7 @@ import { downloadMedia } from '$lib/utils/download';
 							<Typography as="h1" variant="display">콘텐츠 상세</Typography>
 							{#if generation.is_edited}<span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">편집 결과</span>{/if}
 						</div>
-						<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 조회 {generation.view_count}</p>
+						<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
 					</div>
 				</div>
 			</section>
@@ -266,6 +267,7 @@ import { downloadMedia } from '$lib/utils/download';
 						</div>
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
+						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 					</dl>
 				</section>

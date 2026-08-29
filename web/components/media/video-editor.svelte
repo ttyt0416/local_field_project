@@ -9,6 +9,7 @@
 		open?: boolean;
 		generationId: string;
 		videoUrl: string;
+		editPath?: string;
 		onsaved?: (generationId: string) => void;
 		onerror?: (message: string) => void;
 	};
@@ -17,6 +18,7 @@
 		open = $bindable(false),
 		generationId,
 		videoUrl,
+		editPath,
 		onsaved,
 		onerror
 	}: Props = $props();
@@ -74,7 +76,7 @@
 		clampValues();
 		saving = true;
 		try {
-			const result = await apiJson<{ generation_id: string }>(`vault/videos/${generationId}/edit`, {
+			const result = await apiJson<{ generation_id: string }>(editPath ?? `vault/videos/${generationId}/edit`, {
 				method: 'POST',
 				json: {
 					start_seconds: startSeconds,

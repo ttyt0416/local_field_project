@@ -15,7 +15,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
-	import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
+	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 
 	type VaultVideoDetail = {
 		id: string;
@@ -31,6 +31,8 @@
 		completed_at: string | null;
 		elapsed_seconds: number;
 		is_edited: boolean;
+		duration_seconds: number | null;
+		file_size_bytes: number | null;
 	};
 
 	let ready = $state(false);
@@ -134,7 +136,7 @@
 			<section>
 				<Typography as="h1" variant="display">동영상 콘텐츠 상세</Typography>
 				{#if generation.is_edited}<span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">편집 결과</span>{/if}
-				<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 조회 {generation.view_count}</p>
+				<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 재생 시간 {formatElapsedSeconds(generation.duration_seconds ?? 0)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
 			</section>
 
 			<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
@@ -159,6 +161,8 @@
 						<div><dt class="text-muted-foreground">생성 방식</dt><dd class="mt-1 font-medium">{generation.mode.toUpperCase()}</dd></div>
 						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
+						<div><dt class="text-muted-foreground">재생 시간</dt><dd class="mt-1 font-medium">{formatElapsedSeconds(generation.duration_seconds ?? 0)}</dd></div>
+						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 					</dl>
 				</section>
 			</div>

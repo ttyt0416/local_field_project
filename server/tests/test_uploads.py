@@ -1,12 +1,81 @@
 import unittest
+from datetime import datetime, timezone
+from io import BytesIO
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import UploadFile
+from starlette.datastructures import Headers
+
 from app import uploads
 from app.auth import UserResponse
+from app.media_editing import VideoMetadata
 
 
 class UploadsRouteTest(unittest.TestCase):
+    def test_detail_returns_video_duration_and_size(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        asset = {
+            "storage_file_id": "file-1",
+            "filename": "clip.mp4",
+            "content_type": "video/mp4",
+            "media_kind": "video",
+            "source_type": "generation_input",
+            "created_at": datetime.now(timezone.utc),
+            "size": 1234,
+        }
+        with (
+            patch.object(uploads, "get_media_asset", return_value=asset),
+            patch.object(uploads, "storage_enabled", return_value=True),
+            patch.object(uploads, "storage_read_url", return_value="https://storage.test/file-1"),
+            patch.object(uploads, "storage_download_file", return_value=(b"video", "video/mp4")),
+            patch.object(uploads, "probe_video", return_value=VideoMetadata(1920, 1080, 65.25, 30)),
+        ):
+            result = uploads.upload_detail("file-1", user)
+
+        self.assertEqual(result.size, 1234)
+        self.assertEqual(result.duration_seconds, 65.25)
+        self.assertEqual(result.width, 1920)
+        self.assertEqual(result.height, 1080)
+
+    def test_image_edit_creates_new_uploaded_asset(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        asset = {
+            "storage_file_id": "file-1",
+            "filename": "photo.jpg",
+            "content_type": "image/jpeg",
+            "media_kind": "image",
+            "source_type": "generation_input",
+            "created_at": datetime.now(timezone.utc),
+            "size": 1234,
+        }
+
+        upload_file = UploadFile(
+            file=BytesIO(b"png-bytes"),
+            filename="edited.png",
+            headers=Headers({"content-type": "image/png"}),
+        )
+
+        with (
+            patch.object(uploads, "get_media_asset", return_value=asset),
+            patch.object(uploads, "storage_enabled", return_value=True),
+            patch.object(uploads, "storage_upload_file", return_value="new-file") as upload,
+            patch.object(uploads, "create_media_asset", return_value={"storage_file_id": "new-file"}) as create,
+        ):
+            result = uploads.edit_uploaded_image("file-1", upload_file, 640, 480, user)
+
+        self.assertEqual(result.generation_id, "new-file")
+        upload.assert_called_once_with(content=b"png-bytes", media_type="image/png", owner_id=str(user.id))
+        create.assert_called_once_with(
+            user_id=user.id,
+            storage_file_id="new-file",
+            filename="photo-edited.png",
+            content_type="image/png",
+            media_kind="image",
+            size=9,
+            source_type="edited_upload",
+        )
+
     def test_list_passes_media_filter_and_page_to_database(self) -> None:
         user = UserResponse(id=uuid4(), username="tester")
         with (
