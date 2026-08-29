@@ -4,13 +4,17 @@ import asyncio
 import json
 import re
 import secrets
+import threading
 import uuid
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, Literal
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
+
+from websockets.asyncio.client import connect as websocket_connect
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
@@ -40,6 +44,9 @@ _COMFYUI_TIMEOUT_SECONDS = 30
 _VLLM_TIMEOUT_SECONDS = 600
 _SSE_HEARTBEAT_SECONDS = 15
 _MAX_SEED = 2**63 - 1
+_PROGRESS_UNSET = object()
+_progress_lock = threading.Lock()
+_progress_states: dict[str, dict[str, Any]] = {}
 
 
 class LoraSelection(BaseModel):
@@ -77,7 +84,145 @@ class ImageOutput(BaseModel):
 class ImageGenerationStatus(BaseModel):
     prompt_id: str
     status: str
+    progress: float = Field(default=0, ge=0, le=100)
+    queue_position: int | None = Field(default=None, ge=1)
     images: list[ImageOutput] = Field(default_factory=list)
+
+
+class ImageGenerationAccepted(BaseModel):
+    prompt_id: str
+    status: Literal["queued"]
+    client_id: str
+    generation_id: str
+    progress: float = Field(default=0, ge=0, le=100)
+
+
+def _progress_key(prompt_id: str, user_id: uuid.UUID) -> str:
+    return f"{user_id}:{prompt_id}"
+
+
+def generation_progress(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
+    with _progress_lock:
+        state = _progress_states.get(_progress_key(prompt_id, user_id), {})
+        return {
+            "status": state.get("status"),
+            "progress": float(state.get("progress", 0)),
+            "queue_position": state.get("queue_position"),
+        }
+
+
+def _set_progress_state(
+    prompt_id: str,
+    user_id: uuid.UUID,
+    *,
+    status: Any = _PROGRESS_UNSET,
+    progress: Any = _PROGRESS_UNSET,
+    queue_position: Any = _PROGRESS_UNSET,
+) -> bool:
+    key = _progress_key(prompt_id, user_id)
+    with _progress_lock:
+        state = _progress_states.setdefault(key, {"status": None, "progress": 0.0, "queue_position": None})
+        previous = state.copy()
+        if status is not _PROGRESS_UNSET:
+            state["status"] = status
+        if progress is not _PROGRESS_UNSET:
+            state["progress"] = max(0.0, min(100.0, float(progress)))
+        if queue_position is not _PROGRESS_UNSET:
+            state["queue_position"] = queue_position
+        return state != previous
+
+
+def record_comfy_progress(
+    prompt_id: str,
+    user_id: uuid.UUID,
+    event_name: str,
+    data: dict[str, Any],
+) -> bool:
+    event_prompt_id = data.get("prompt_id")
+    if event_prompt_id is not None and event_prompt_id != prompt_id:
+        return False
+    if event_name == "execution_start":
+        return _set_progress_state(prompt_id, user_id, status="processing", progress=0, queue_position=None)
+    if event_name == "executing":
+        if data.get("node") is None:
+            return False
+        return _set_progress_state(prompt_id, user_id, status="processing", queue_position=None)
+    if event_name == "progress":
+        value = data.get("value")
+        maximum = data.get("max")
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not isinstance(maximum, (int, float)) or maximum <= 0:
+            return False
+        return _set_progress_state(
+            prompt_id,
+            user_id,
+            status="processing",
+            progress=value / maximum * 100,
+            queue_position=None,
+        )
+    if event_name == "progress_state":
+        nodes = data.get("nodes")
+        if not isinstance(nodes, dict):
+            return False
+        values = [
+            node.get("value", 0) / node.get("max", 1) * 100
+            for node in nodes.values()
+            if isinstance(node, dict)
+            and isinstance(node.get("value"), (int, float))
+            and isinstance(node.get("max"), (int, float))
+            and node.get("max", 0) > 0
+        ]
+        if not values:
+            return False
+        return _set_progress_state(
+            prompt_id,
+            user_id,
+            status="processing",
+            progress=max(values),
+            queue_position=None,
+        )
+    if event_name == "execution_error":
+        return _set_progress_state(prompt_id, user_id, status="failed")
+    return False
+
+
+def _comfy_websocket_url(client_id: str) -> str:
+    parsed = urlsplit(settings.comfyui_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    return urlunsplit((scheme, parsed.netloc, "/ws", urlencode({"clientId": client_id}), ""))
+
+
+async def stream_comfy_progress(client_id: str, stop_event: asyncio.Event) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    async with websocket_connect(_comfy_websocket_url(client_id), open_timeout=5, ping_interval=20) as socket:
+        while not stop_event.is_set():
+            try:
+                raw_message = await asyncio.wait_for(socket.recv(), timeout=1)
+            except asyncio.TimeoutError:
+                continue
+            if isinstance(raw_message, bytes):
+                continue
+            try:
+                message = json.loads(raw_message)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            event_name = message.get("type") if isinstance(message, dict) else None
+            data = message.get("data") if isinstance(message, dict) else None
+            if isinstance(event_name, str) and isinstance(data, dict):
+                yield event_name, data
+
+
+def _queue_position(prompt_id: str) -> int | None:
+    try:
+        queue = _request_json("GET", "/queue")
+    except _ComfyUIError:
+        return None
+    for queue_name in ("queue_running", "queue_pending"):
+        entries = queue.get(queue_name)
+        if not isinstance(entries, list):
+            continue
+        for index, entry in enumerate(entries):
+            if isinstance(entry, (list, tuple)) and len(entry) > 1 and entry[1] == prompt_id:
+                return index + 1
+    return None
 
 
 class PromptEnhancementRequest(BaseModel):
@@ -111,11 +256,11 @@ def enhance_prompt(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
-@router.post("", response_model=dict[str, str], status_code=status.HTTP_202_ACCEPTED)
+@router.post("", response_model=ImageGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 def create_image_generation(
     payload: ImageGenerationRequest,
     user: UserResponse = Depends(current_user),
-) -> dict[str, str]:
+) -> ImageGenerationAccepted:
     try:
         options = _image_options()
         _validate_model_choice(payload, options)
@@ -146,12 +291,13 @@ def create_image_generation(
         height=payload.height,
         seed=seed,
     )
-    return {
-        "prompt_id": prompt_id,
-        "status": "queued",
-        "client_id": client_id,
-        "generation_id": str(generation_id),
-    }
+    return ImageGenerationAccepted(
+        prompt_id=prompt_id,
+        status="queued",
+        client_id=client_id,
+        generation_id=str(generation_id),
+        progress=0,
+    )
 
 
 @router.get("/{prompt_id}/events")
@@ -207,9 +353,26 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
             )
             return
         if current_status == "failed":
-            yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed"})
+            yield _sse_message(
+                "failed",
+                {
+                    "prompt_id": prompt_id,
+                    "status": "failed",
+                    "progress": 0,
+                    "queue_position": None,
+                },
+            )
             return
-        yield _sse_message("status", {"prompt_id": prompt_id, "status": current_status})
+        progress_state = generation_progress(prompt_id, user_id)
+        yield _sse_message(
+            "status",
+            {
+                "prompt_id": prompt_id,
+                "status": current_status,
+                "progress": progress_state["progress"],
+                "queue_position": progress_state["queue_position"] or _queue_position(prompt_id),
+            },
+        )
 
         while True:
             try:
@@ -225,25 +388,41 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
 def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGenerationStatus:
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
+    progress_state = generation_progress(prompt_id, user_id)
     if not isinstance(entry, dict):
-        return ImageGenerationStatus(prompt_id=prompt_id, status="queued")
+        current_status = progress_state["status"] or "queued"
+        if current_status == "processing":
+            update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
+        elif current_status == "failed":
+            update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
+        return ImageGenerationStatus(
+            prompt_id=prompt_id,
+            status=current_status,
+            progress=progress_state["progress"],
+            queue_position=progress_state["queue_position"] or _queue_position(prompt_id),
+        )
 
     raw_status = entry.get("status")
     comfy_status: dict[str, Any] = raw_status if isinstance(raw_status, dict) else {}
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
         update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-        return ImageGenerationStatus(prompt_id=prompt_id, status="failed")
+        return ImageGenerationStatus(prompt_id=prompt_id, status="failed", progress=progress_state["progress"])
     if comfy_status.get("completed") is True:
         raw_images = _raw_image_outputs(entry.get("outputs"))
         _sync_generation_output(prompt_id, user_id, raw_images)
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status="completed",
+            progress=100,
             images=_image_outputs(prompt_id, user_id, entry.get("outputs")),
         )
     update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
-    return ImageGenerationStatus(prompt_id=prompt_id, status="processing")
+    return ImageGenerationStatus(
+        prompt_id=prompt_id,
+        status="processing",
+        progress=progress_state["progress"],
+    )
 
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:

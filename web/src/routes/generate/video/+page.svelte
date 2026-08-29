@@ -67,7 +67,10 @@
 	let selectedReferenceVideos = $state<VideoLibraryAsset[]>([]);
 	let selectedReferenceAudios = $state<VideoLibraryAsset[]>([]);
 	let generating = $state(false);
+	let uploading = $state(false);
 	let status = $state('');
+	let progress = $state(0);
+	let queuePosition = $state<number | null>(null);
 	let videoUrl = $state('');
 	let error = $state('');
 	let success = $state('');
@@ -113,6 +116,8 @@
 		const job = videoJobKey ? generationJobStore.jobs[videoJobKey] : undefined;
 		if (!job) return;
 		status = job.status;
+		progress = job.progress;
+		queuePosition = job.queuePosition;
 		videoUrl = job.videoUrl ?? '';
 		if (job.status === 'completed') success = '영상 생성이 완료되었습니다.';
 		if (job.status === 'failed') error = job.error ?? '영상 생성에 실패했습니다.';
@@ -420,6 +425,7 @@
 			}
 			form.append('payload', JSON.stringify(payload));
 			generating = true;
+			uploading = newFiles.length > 0;
 			const accepted = await apiForm<{ prompt_id: string; client_id: string; generation_id: string }>(`generation/video/${mode}`, form, { timeout: 120_000 });
 			videoJobKey = generationJobStore.track({
 				kind: 'video',
@@ -435,6 +441,7 @@
 				status = 'failed';
 			}
 		} finally {
+			uploading = false;
 			generating = false;
 		}
 	}
@@ -445,6 +452,8 @@
 
 	function resetResult() {
 		status = '';
+		progress = 0;
+		queuePosition = null;
 		videoUrl = '';
 		error = '';
 		success = '';
@@ -472,7 +481,7 @@
 					<div class="flex items-center justify-between gap-4">
 						<div>
 							<div id="video-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
-							{#if status}<Typography as="p" variant="muted" class="mt-1">상태: {statusLabel(status)}</Typography>{/if}
+							{#if status}<Typography as="p" variant="muted" class="mt-1">상태: {statusLabel(status)}{#if status === 'queued' || status === 'processing'} · {Math.round(progress)}%{/if}{#if status === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}</Typography>{/if}
 						</div>
 						<Video size={22} class="text-primary" strokeWidth={1.8} />
 					</div>
@@ -480,7 +489,7 @@
 						{#if videoUrl}
 							<VideoMedia source={videoUrl} sourceType="server" preview={false} muted={false} class="min-h-[24rem] sm:min-h-[34rem]" />
 						{:else if generating}
-							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]"><LoadingSpinner size="lg" label="영상 생성 중" /><p class="text-sm text-muted-foreground">Storage 업로드와 영상 생성을 진행하고 있습니다.</p></div>
+							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 sm:min-h-[34rem]"><LoadingSpinner size="lg" label={uploading ? '파일 업로드 중' : '영상 생성 중'} /><p class="text-sm text-muted-foreground">{uploading ? '파일을 업로드를 진행하고 있습니다.' : '영상 생성중입니다.'}</p>{#if !uploading}<p class="text-2xl font-semibold tabular-nums text-primary">{Math.round(progress)}%</p>{/if}</div>
 					{:else}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-3 px-6 text-center sm:min-h-[34rem]"><div class="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Video size={26} strokeWidth={1.7} /></div><p class="text-sm font-medium">아직 생성된 영상이 없습니다.</p><p class="max-w-sm text-xs leading-5 text-muted-foreground">콘텐츠를 선택하고 프롬프트를 입력한 뒤 생성 버튼을 눌러 주세요.</p></div>
 						{/if}

@@ -26,7 +26,9 @@ from .comfyui import (
     PromptEnhancementResponse,
     _ComfyUIError,
     _VLLMError,
+    _queue_position,
     _comfy_url,
+    generation_progress,
     _request_bytes,
     _request_json,
     _request_structured_object,
@@ -119,6 +121,7 @@ class VideoGenerationAccepted(BaseModel):
     generation_id: str
     mode: str
     status: Literal["queued"]
+    progress: float = Field(default=0, ge=0, le=100)
 
 
 class VideoOutput(BaseModel):
@@ -132,6 +135,8 @@ class VideoGenerationStatus(BaseModel):
     prompt_id: str
     mode: str
     status: str
+    progress: float = Field(default=0, ge=0, le=100)
+    queue_position: int | None = Field(default=None, ge=1)
     video: VideoOutput | None = None
 
 
@@ -199,6 +204,7 @@ async def create_video(
         generation_id=str(generation_id),
         mode=mode,
         status="queued",
+        progress=0,
     )
 
 
@@ -259,9 +265,28 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
             )
             return
         if current_status == "failed":
-            yield _sse_message("failed", {"prompt_id": prompt_id, "mode": mode, "status": "failed"})
+            yield _sse_message(
+                "failed",
+                {
+                    "prompt_id": prompt_id,
+                    "mode": mode,
+                    "status": "failed",
+                    "progress": 0,
+                    "queue_position": None,
+                },
+            )
             return
-        yield _sse_message("status", {"prompt_id": prompt_id, "mode": mode, "status": current_status})
+        progress_state = generation_progress(prompt_id, user_id)
+        yield _sse_message(
+            "status",
+            {
+                "prompt_id": prompt_id,
+                "mode": mode,
+                "status": current_status,
+                "progress": progress_state["progress"],
+                "queue_position": progress_state["queue_position"] or _queue_position(prompt_id),
+            },
+        )
 
         while True:
             try:
@@ -651,14 +676,31 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
     prompt_id = generation["prompt_id"]
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
+    progress_state = generation_progress(prompt_id, user_id)
     if not isinstance(entry, dict):
-        return VideoGenerationStatus(prompt_id=prompt_id, mode=generation["mode"], status="queued")
+        current_status = progress_state["status"] or "queued"
+        if current_status == "processing":
+            update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
+        elif current_status == "failed":
+            update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
+        return VideoGenerationStatus(
+            prompt_id=prompt_id,
+            mode=generation["mode"],
+            status=current_status,
+            progress=progress_state["progress"],
+            queue_position=progress_state["queue_position"] or _queue_position(prompt_id),
+        )
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
         update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-        return VideoGenerationStatus(prompt_id=prompt_id, mode=generation["mode"], status="failed")
+        return VideoGenerationStatus(
+            prompt_id=prompt_id,
+            mode=generation["mode"],
+            status="failed",
+            progress=progress_state["progress"],
+        )
     if comfy_status.get("completed") is True:
         _sync_video_output(generation, user_id, entry.get("outputs"))
         refreshed = get_video_generation(prompt_id, user_id) or generation
@@ -666,10 +708,16 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             prompt_id=prompt_id,
             mode=generation["mode"],
             status="completed",
+            progress=100,
             video=_video_output(refreshed, user_id),
         )
     update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
-    return VideoGenerationStatus(prompt_id=prompt_id, mode=generation["mode"], status="processing")
+    return VideoGenerationStatus(
+        prompt_id=prompt_id,
+        mode=generation["mode"],
+        status="processing",
+        progress=progress_state["progress"],
+    )
 
 
 def _sync_video_output(generation: dict[str, Any], user_id: uuid.UUID, outputs: Any) -> None:

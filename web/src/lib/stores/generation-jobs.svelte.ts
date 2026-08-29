@@ -27,6 +27,8 @@ type ActiveGenerationResponse = {
 	generation_id: string;
 	mode?: 'i2v' | 'fl2v' | 'r2v' | null;
 	status: 'queued' | 'processing';
+	progress: number;
+	queue_position: number | null;
 	created_at: string;
 };
 
@@ -95,8 +97,8 @@ class GenerationJobStore {
 					generationId: active.generation_id,
 					mode: active.mode ?? undefined,
 					status: active.status,
-					progress: 0,
-					queuePosition: null,
+					progress: active.progress,
+					queuePosition: active.queue_position,
 					createdAt: Date.parse(active.created_at) || Date.now()
 				};
 				void this.connect(key);

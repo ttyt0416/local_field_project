@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
+from .comfyui import generation_progress
 from .database import list_active_image_generations, list_active_video_generations
 
 
@@ -23,11 +24,20 @@ class ActiveGeneration(BaseModel):
     generation_id: str
     mode: VideoMode | None = None
     status: GenerationStatus
+    progress: float = 0
+    queue_position: int | None = None
     created_at: datetime
 
 
 @router.get("/active", response_model=list[ActiveGeneration])
 def active_generations(user: UserResponse = Depends(current_user)) -> list[ActiveGeneration]:
+    def active_fields(generation: dict[str, Any]) -> dict[str, Any]:
+        progress = generation_progress(generation["prompt_id"], user.id)
+        return {
+            "progress": progress["progress"],
+            "queue_position": progress["queue_position"],
+        }
+
     rows = [
         *(
             {
@@ -36,6 +46,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 "client_id": generation["client_id"],
                 "generation_id": str(generation["id"]),
                 "status": generation["status"],
+                **active_fields(generation),
                 "created_at": generation["created_at"],
             }
             for generation in list_active_image_generations(user.id)
@@ -48,6 +59,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 "generation_id": str(generation["id"]),
                 "mode": generation["mode"],
                 "status": generation["status"],
+                **active_fields(generation),
                 "created_at": generation["created_at"],
             }
             for generation in list_active_video_generations(user.id)
