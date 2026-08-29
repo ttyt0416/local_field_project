@@ -104,7 +104,7 @@
 			onclick={close}
 		>
 			<Download size={18} strokeWidth={1.8} />
-			<span>civitai 다운로드</span>
+			<span>CIVITAI 다운로드</span>
 		</a>
 		<a
 			href="/presets"

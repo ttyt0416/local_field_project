@@ -20,13 +20,17 @@ from app.model_downloads import (
     _ModelDownloadCancelled,
     _file_matches,
     _installed_model_path,
+    _model_target_directory,
     _parse_version,
     _process_model_download,
+    _safe_subfolder,
     _safe_filename,
     _select_file_index,
     ModelType,
     cancel_download,
     delete_installed_model,
+    download_civitai_model,
+    ModelDownloadRequest,
 )
 
 
@@ -89,6 +93,81 @@ class ModelDownloadsTest(unittest.TestCase):
             _safe_filename("model.zip")
         with self.assertRaises(CivitaiError):
             _safe_filename("../model.safetensors\n")
+
+    def test_safe_subfolder_allows_relative_nested_path_only(self) -> None:
+        self.assertEqual(_safe_subfolder(" characters/anime "), "characters/anime")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "checkpoints").mkdir()
+            with patch(
+                "app.model_downloads.settings",
+                replace(settings, comfyui_models_path=temporary_directory),
+            ):
+                self.assertEqual(
+                    _model_target_directory("checkpoint", "characters/anime"),
+                    root / "checkpoints/characters/anime",
+                )
+
+                outside = root / "outside"
+                outside.mkdir()
+                (root / "checkpoints/linked").symlink_to(outside, target_is_directory=True)
+                with self.assertRaises(CivitaiError):
+                    _model_target_directory("checkpoint", "linked/nested")
+
+        for invalid in ("../outside", "/outside", "characters\\anime", "characters//anime", "characters/./anime", "C:/outside", "characters\x00/anime"):
+            with self.assertRaises(CivitaiError):
+                _safe_subfolder(invalid)
+
+    def test_download_request_uses_subfolder_in_target_path(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        version = CivitaiVersion(
+            version_id=1,
+            model_id=None,
+            model_name="Example",
+            model_type="Checkpoint",
+            version_name="v1",
+            base_model=None,
+            files=(
+                CivitaiFile(
+                    name="model.safetensors",
+                    file_type="Model",
+                    download_url="https://civitai.com/file",
+                    size_bytes=7,
+                    sha256=None,
+                    primary=True,
+                ),
+            ),
+        )
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            root.mkdir(exist_ok=True)
+            target = root / "checkpoints/characters/anime/model.safetensors"
+            row = {
+                "id": uuid.uuid4(),
+                "version_id": 1,
+                "model_type": "checkpoint",
+                "target_path": str(target),
+                "filename": "model.safetensors",
+                "status": "queued",
+                "downloaded_bytes": 0,
+                "total_bytes": 7,
+                "error_message": None,
+                "created_at": datetime.now(timezone.utc),
+                "completed_at": None,
+            }
+            with (
+                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory, civitai_token="token")),
+                patch("app.model_downloads._fetch_version", return_value=version),
+                patch("app.model_downloads.create_model_download", return_value=row) as create_job,
+            ):
+                response = download_civitai_model(
+                    ModelDownloadRequest(source="1", model_type="checkpoint", file_index=0, subfolder="characters/anime"),
+                    user,
+                )
+
+            self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
+            self.assertEqual(response.subfolder, "characters/anime")
+            self.assertEqual(response.filename, "model.safetensors")
 
     def test_installed_model_delete_stays_inside_model_directory(self) -> None:
         user = UserResponse(id=uuid.uuid4(), username="tester")

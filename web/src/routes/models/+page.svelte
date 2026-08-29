@@ -35,6 +35,7 @@
 		id: string;
 		version_id: number;
 		model_type: ModelType;
+		subfolder: string;
 		filename: string;
 		status: 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled' | string;
 		downloaded_bytes: number;
@@ -69,6 +70,7 @@
 	let ready = $state(false);
 	let source = $state('');
 	let modelType = $state<ModelType>('checkpoint');
+	let subfolder = $state('');
 	let lookup = $state<Lookup | null>(null);
 	let selectedFileIndex = $state<number | null>(null);
 	let lookupLoading = $state(false);
@@ -147,7 +149,7 @@
 		try {
 			const job = await apiJson<DownloadJob>('models/civitai/download', {
 				method: 'POST',
-				json: { source: source.trim(), model_type: modelType, file_index: selectedFileIndex }
+				json: { source: source.trim(), model_type: modelType, file_index: selectedFileIndex, subfolder: subfolder.trim() }
 			});
 			jobs = [job, ...jobs.filter((item) => item.id !== job.id)];
 			lookup = null;
@@ -254,18 +256,18 @@
 </script>
 
 <svelte:head>
-	<title>civitai 다운로드 · Local Field</title>
+	<title>CIVITAI 다운로드 · Local Field</title>
 	<meta name="description" content="Civitai 모델을 ComfyUI 모델 폴더에 다운로드합니다." />
 </svelte:head>
 
 {#if !ready}
-	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="civitai 다운로드를 불러오는 중" /></div>
+	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="CIVITAI 다운로드를 불러오는 중" /></div>
 {:else}
 	<Layout>
 		<div class="space-y-6">
 			<div class="flex flex-wrap items-end justify-between gap-4">
 				<div>
-					<Typography as="h1" variant="display">civitai 다운로드</Typography>
+					<Typography as="h1" variant="display">CIVITAI 다운로드</Typography>
 				</div>
 				<OutlinedButton class="gap-2" onclick={() => void refresh()}><RefreshCw size={16} />새로고침</OutlinedButton>
 			</div>
@@ -281,6 +283,11 @@
 					<input id="civitai-source" bind:value={source} placeholder="Civitai 모델 버전 ID 또는 링크" class="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
 					<button type="submit" disabled={lookupLoading} class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">{#if lookupLoading}<LoadingSpinner size="sm" label="조회 중" />{:else}<Download size={16} />모델 조회{/if}</button>
 				</form>
+				<label class="block space-y-2" for="civitai-subfolder">
+					<span class="text-sm font-medium">저장 하위폴더 <span class="font-normal text-muted-foreground">(선택)</span></span>
+					<input id="civitai-subfolder" bind:value={subfolder} maxlength="255" placeholder="예: character/anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
+					<span class="text-xs text-muted-foreground">선택한 모델 종류 폴더 아래에 저장합니다. 예: checkpoints/character/anime</span>
+				</label>
 			</section>
 
 			{#if lookup}
@@ -304,7 +311,7 @@
 			<section class="space-y-3">
 				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">다운로드 상태</Typography></div>
 				{#if jobs.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">요청한 모델 다운로드가 없습니다.</div>
-				{:else}<div class="space-y-3">{#each jobs as job (job.id)}<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="truncate text-sm font-semibold" title={job.filename}>{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div><span class={`rounded-full px-2.5 py-1 text-xs font-semibold ${job.status === 'completed' ? 'bg-success/10 text-success' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : job.status === 'cancelled' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>{statusLabels[job.status] ?? job.status}</span></div>{#if job.status === 'queued' || job.status === 'downloading'}<div class="flex items-center gap-3"><div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><button type="button" disabled={cancelLoadingId !== ''} onclick={() => void cancelJob(job.id)} class="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">{#if cancelLoadingId === job.id}<LoadingSpinner size="sm" label="중단 중" />{:else}중단{/if}</button></div><p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>{:else if job.status === 'failed' || job.status === 'cancelled'}<div class="flex flex-wrap items-center justify-between gap-3"><p class={`text-xs ${job.status === 'cancelled' ? 'text-muted-foreground' : 'text-destructive'}`}>{job.status === 'cancelled' ? '다운로드가 중단되었습니다. 임시 파일은 삭제되었습니다.' : job.error_message ?? '다운로드에 실패했습니다.'}</p><button type="button" class="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted" onclick={() => void retryJob(job.id)}>다시 시도</button></div>{:else}<p class="text-xs text-success">{formatSize(job.total_bytes ?? job.downloaded_bytes)} · ComfyUI 모델 폴더에 저장됨</p>{/if}</article>{/each}</div>{/if}
+				{:else}<div class="space-y-3">{#each jobs as job (job.id)}<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="truncate text-sm font-semibold" title={`${job.subfolder ? `${job.subfolder}/` : ''}${job.filename}`}>{job.subfolder ? `${job.subfolder}/` : ''}{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div><span class={`rounded-full px-2.5 py-1 text-xs font-semibold ${job.status === 'completed' ? 'bg-success/10 text-success' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : job.status === 'cancelled' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>{statusLabels[job.status] ?? job.status}</span></div>{#if job.status === 'queued' || job.status === 'downloading'}<div class="flex items-center gap-3"><div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><button type="button" disabled={cancelLoadingId !== ''} onclick={() => void cancelJob(job.id)} class="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">{#if cancelLoadingId === job.id}<LoadingSpinner size="sm" label="중단 중" />{:else}중단{/if}</button></div><p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>{:else if job.status === 'failed' || job.status === 'cancelled'}<div class="flex flex-wrap items-center justify-between gap-3"><p class={`text-xs ${job.status === 'cancelled' ? 'text-muted-foreground' : 'text-destructive'}`}>{job.status === 'cancelled' ? '다운로드가 중단되었습니다. 임시 파일은 삭제되었습니다.' : job.error_message ?? '다운로드에 실패했습니다.'}</p><button type="button" class="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted" onclick={() => void retryJob(job.id)}>다시 시도</button></div>{/if}</article>{/each}</div>{/if}
 			</section>
 
 			<section class="space-y-3">

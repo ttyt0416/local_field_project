@@ -118,12 +118,14 @@ class ModelDownloadRequest(BaseModel):
     source: str = Field(min_length=1, max_length=2048)
     model_type: ModelType
     file_index: int | None = Field(default=None, ge=0)
+    subfolder: str = Field(default="", max_length=255)
 
 
 class ModelDownloadResponse(BaseModel):
     id: str
     version_id: int
     model_type: ModelType
+    subfolder: str
     filename: str
     status: str
     downloaded_bytes: int
@@ -266,13 +268,20 @@ def download_civitai_model(
         filename = _safe_filename(selected_file.name)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    target_directory = root / _MODEL_TARGETS[payload.model_type][1]
+    try:
+        subfolder = _safe_subfolder(payload.subfolder)
+        target_directory = _model_target_directory(payload.model_type, subfolder)
+    except CivitaiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     try:
         target_directory.mkdir(parents=True, exist_ok=True)
+        target_directory = _model_target_directory(payload.model_type, subfolder)
     except OSError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더에 쓸 수 없습니다.") from exc
+    except CivitaiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     target_path = target_directory / filename
-    if target_path.exists():
+    if target_path.exists() or target_path.is_symlink():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
     row = create_model_download(
         user_id=user.id,
@@ -292,6 +301,7 @@ def _download_response(row: dict[str, Any]) -> ModelDownloadResponse:
         id=str(row["id"]),
         version_id=row["version_id"],
         model_type=row["model_type"],
+        subfolder=_download_subfolder(row["model_type"], row["target_path"]),
         filename=row["filename"],
         status=row["status"],
         downloaded_bytes=row["downloaded_bytes"],
@@ -300,6 +310,69 @@ def _download_response(row: dict[str, Any]) -> ModelDownloadResponse:
         created_at=row["created_at"],
         completed_at=row["completed_at"],
     )
+
+
+def _safe_subfolder(raw_subfolder: str) -> str:
+    value = raw_subfolder.strip()
+    if not value:
+        return ""
+    if len(value) > 255 or "\x00" in value or "\\" in value or value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+        raise CivitaiError("저장 하위폴더 경로가 올바르지 않습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    parts = value.split("/")
+    if any(
+        not part
+        or part in {".", ".."}
+        or any(ord(char) < 32 for char in part)
+        for part in parts
+    ):
+        raise CivitaiError("저장 하위폴더 경로가 올바르지 않습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    return "/".join(parts)
+
+
+def _model_target_directory(model_type: ModelType, subfolder: str) -> Path:
+    root = Path(settings.comfyui_models_path).resolve()
+    base = root / _MODEL_TARGETS[model_type][1]
+    try:
+        base.resolve().relative_to(root)
+        if base.is_symlink():
+            raise ValueError("symbolic link")
+        target = base
+        for part in subfolder.split("/") if subfolder else []:
+            target /= part
+            if target.is_symlink() or (target.exists() and not target.is_dir()):
+                raise ValueError("unsafe directory")
+            target.resolve().relative_to(base.resolve())
+        return target
+    except (OSError, ValueError) as exc:
+        raise CivitaiError("저장 하위폴더 경로가 올바르지 않습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT) from exc
+
+
+def _download_subfolder(model_type: str, target_path: str) -> str:
+    try:
+        base = Path(settings.comfyui_models_path).resolve() / _MODEL_TARGETS[cast(ModelType, model_type)][1]
+        relative = Path(target_path).relative_to(base)
+    except (KeyError, ValueError, TypeError):
+        return ""
+    return "/".join(relative.parts[:-1])
+
+
+def _validated_model_target(model_type: ModelType, raw_target_path: str | Path) -> Path:
+    target_path = Path(raw_target_path)
+    base = _model_target_directory(model_type, "")
+    if not target_path.is_absolute():
+        raise CivitaiError("모델 저장 경로가 올바르지 않습니다.")
+    try:
+        relative = target_path.relative_to(base)
+        if not relative.parts:
+            raise ValueError("missing filename")
+        subfolder = _safe_subfolder("/".join(relative.parts[:-1]))
+        filename = _safe_filename(relative.parts[-1])
+        validated = _model_target_directory(model_type, subfolder) / filename
+        if validated != target_path:
+            raise ValueError("normalized path differs")
+        return validated
+    except (CivitaiError, ValueError) as exc:
+        raise CivitaiError("모델 저장 경로가 올바르지 않습니다.") from exc
 
 
 def _lookup_response(version: CivitaiVersion, selected_index: int) -> CivitaiLookupResponse:
@@ -500,8 +573,8 @@ def _process_model_download(job: dict[str, Any]) -> None:
     model_type = cast(ModelType, job["model_type"])
     selected_index = _select_file_index(version, model_type, int(job["file_index"]))
     selected_file = version.files[selected_index]
-    target = Path(job["target_path"])
-    if target.exists():
+    target = _validated_model_target(model_type, job["target_path"])
+    if target.exists() or target.is_symlink():
         raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = _partial_path(target)
@@ -545,7 +618,7 @@ def _process_model_download(job: dict[str, Any]) -> None:
                 partial.unlink(missing_ok=True)
                 raise CivitaiError("다운로드한 모델의 SHA256 검증에 실패했습니다.")
         _ensure_model_download_active(job["id"])
-        if target.exists():
+        if target.exists() or target.is_symlink():
             raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
         os.replace(partial, target)
         if not complete_model_download(job["id"], actual_bytes, total_bytes or actual_bytes):
