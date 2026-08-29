@@ -9,6 +9,7 @@
 	import Modal from '../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
+	import Tab from '../../../components/tabs/tab.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import VideoPresetModal from '../../../components/presets/video-preset-modal.svelte';
@@ -23,6 +24,10 @@
 	let success = $state('');
 	let presets = $state<Preset[]>([]);
 	let activeType = $state<PresetType>('t2i');
+	const presetTypeTabs: { value: PresetType; label: string }[] = [
+		{ value: 't2i', label: 'IMAGE GEN' },
+		{ value: 'video', label: 'VIDEO GEN' }
+	];
 	let options = $state<ImageOptions>({ checkpoints: [], loras: [], default_checkpoint: '' });
 	let editingPreset = $state<Preset | null>(null);
 	let imageEditorOpen = $state(false);
@@ -210,10 +215,7 @@
 				</PrimaryButton>
 			</section>
 
-			<div class="grid grid-cols-2 gap-2 rounded-xl border border-border p-1" role="tablist" aria-label="프리셋 종류">
-				<button type="button" role="tab" aria-selected={activeType === 't2i'} onclick={() => selectPresetType('t2i')} class={`rounded-lg px-3 py-2.5 text-sm font-semibold transition ${activeType === 't2i' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>IMAGE GEN</button>
-				<button type="button" role="tab" aria-selected={activeType === 'video'} onclick={() => selectPresetType('video')} class={`rounded-lg px-3 py-2.5 text-sm font-semibold transition ${activeType === 'video' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>VIDEO GEN</button>
-			</div>
+			<Tab items={presetTypeTabs} bind:value={activeType} ariaLabel="프리셋 종류" onselect={selectPresetType} />
 
 			{#if presetsLoading}
 				<div class="flex justify-center py-12"><LoadingSpinner size="md" label="프리셋 불러오는 중" /></div>
