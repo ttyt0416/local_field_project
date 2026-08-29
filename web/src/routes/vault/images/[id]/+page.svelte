@@ -214,10 +214,11 @@ import { downloadMedia } from '$lib/utils/download';
 							<div class="flex min-h-[24rem] items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">이미지 결과가 아직 없습니다.</div>
 						{/if}
 						<IconOutlinedButton
+							variant="filled"
 							ariaLabel="이미지 다운로드"
 							loading={downloading}
 							disabled={!generation.image_url}
-							class="absolute bottom-3 right-16 z-10 bg-card/90 shadow-lg"
+							class="absolute bottom-3 right-16 z-10 bg-primary text-primary-foreground shadow-lg hover:bg-primary/90"
 							onclick={() => void downloadImage()}
 						>
 							<Download size={18} strokeWidth={1.9} />

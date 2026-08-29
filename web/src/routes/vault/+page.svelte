@@ -405,69 +405,65 @@ import { downloadMedia } from '$lib/utils/download';
 					</div>
 					<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
 					{#each images as image (image.id)}
-						<article class="relative overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
-							<a
-								href={`/vault/images/${image.id}`}
-								aria-label={`${image.prompt || image.checkpoint} 콘텐츠 상세 보기`}
-								class="absolute inset-0 z-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							></a>
-							<div class="pointer-events-none relative z-10">
-								<div class="relative">
-									<label class="pointer-events-auto absolute left-3 top-3 z-10 inline-flex cursor-pointer">
-										<span class="sr-only">콘텐츠 선택</span>
-										<input
-											type="checkbox"
-											checked={selectedIds.has(image.id)}
-											onchange={(event) => handleSelectionChange(event, image.id)}
-											aria-label={`${image.prompt || image.checkpoint} 선택`}
-											class="size-5 rounded border-input accent-primary"
-										/>
-									</label>
-									{#if image.image_url}
-										<ImageMedia source={imageSource(image)} sourceType={imageSourceType(imageSource(image))} alt="생성 이미지" class="aspect-square" />
-									{:else}
-										<div class="flex aspect-square items-center justify-center bg-muted text-sm text-muted-foreground">이미지 준비 중</div>
-									{/if}
-									<div class="pointer-events-auto absolute bottom-3 right-3 z-10 flex flex-col gap-2">
-										<IconOutlinedButton
-											variant="filled"
-											ariaLabel={image.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
-											pressed={image.is_favorite}
-											loading={favoriteUpdatingId === image.id}
-											class={`${image.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} shadow-lg`}
-											onclick={() => void toggleFavorite(image)}
-										>
-											<Heart size={17} strokeWidth={1.9} fill={image.is_favorite ? 'currentColor' : 'none'} />
-										</IconOutlinedButton>
+						<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
+							<div class="relative aspect-square bg-muted">
+								<label class="pointer-events-auto absolute left-3 top-3 z-10 inline-flex cursor-pointer">
+									<span class="sr-only">콘텐츠 선택</span>
+									<input
+										type="checkbox"
+										checked={selectedIds.has(image.id)}
+										onchange={(event) => handleSelectionChange(event, image.id)}
+										aria-label={`${image.prompt || image.checkpoint} 선택`}
+										class="size-5 rounded border-input accent-primary"
+									/>
+								</label>
+								{#if image.image_url}
+									<ImageMedia source={imageSource(image)} sourceType={imageSourceType(imageSource(image))} alt="생성 이미지" class="h-full" />
+								{:else}
+									<div class="flex h-full items-center justify-center text-sm text-muted-foreground">이미지 준비 중</div>
+								{/if}
+							</div>
+							<div class="space-y-3 p-4">
+								<a href={`/vault/images/${image.id}`} aria-label={`${image.prompt || image.checkpoint} 콘텐츠 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+										<span>{image.status === 'completed' ? 'IMAGE' : `IMAGE · ${statusLabel(image.status)}`}</span>
+										<span>{formatKstDateTime(image.created_at)}</span>
+									</div>
+									<p class="line-clamp-2 text-sm leading-5 text-foreground transition hover:text-primary">{image.prompt}</p>
+								</a>
+								<div class="flex items-end justify-between gap-3">
+									<div class="min-w-0 space-y-0.5 text-xs text-muted-foreground">
+										<p class="truncate" title={image.checkpoint}>{image.checkpoint}</p>
+										<p>소요 {formatElapsedSeconds(image.elapsed_seconds)}</p>
+										<p>조회 {image.view_count}</p>
+									</div>
+									<div class="flex shrink-0 gap-2">
 										<IconOutlinedButton
 											ariaLabel="이미지 다운로드"
 											loading={downloadingId === image.id}
 											disabled={!image.image_url}
-											class="shadow-lg"
 											onclick={() => void downloadImage(image)}
 										>
 											<Download size={17} strokeWidth={1.9} />
 										</IconOutlinedButton>
 										<IconOutlinedButton
-											ariaLabel="콘텐츠 삭제"
+											variant="filled"
+											ariaLabel={image.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+											pressed={image.is_favorite}
+											loading={favoriteUpdatingId === image.id}
+											class={image.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''}
+											onclick={() => void toggleFavorite(image)}
+										>
+											<Heart size={17} strokeWidth={1.9} fill={image.is_favorite ? 'currentColor' : 'none'} />
+										</IconOutlinedButton>
+										<IconOutlinedButton
+											ariaLabel="이미지 콘텐츠 삭제"
 											loading={deletingId === image.id}
 											variant="destructive"
-											class="shadow-lg"
 											onclick={() => requestDelete(image)}
 										>
 											<Trash2 size={17} strokeWidth={2} />
 										</IconOutlinedButton>
-									</div>
-								</div>
-								<div class="space-y-3 p-4">
-									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-										<span>{image.status === 'completed' ? 'IMAGE' : `IMAGE · ${statusLabel(image.status)}`}</span>
-										<span>{formatKstDateTime(image.created_at)}</span>
-									</div>
-									<p class="line-clamp-2 text-sm leading-5 text-foreground">{image.prompt}</p>
-									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-										<span class="truncate">{image.checkpoint}</span>
-										<span class="shrink-0">소요 {formatElapsedSeconds(image.elapsed_seconds)} · 조회 {image.view_count}</span>
 									</div>
 								</div>
 							</div>
