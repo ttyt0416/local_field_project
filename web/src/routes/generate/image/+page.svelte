@@ -701,7 +701,7 @@
 												{#if lora.name}
 													<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
 														<span class="text-sm font-medium">Strength</span>
-														<input id={`lora-strength-${index}`} type="number" min="-2" max="2" step="0.05" bind:value={lora.strength} class={numberInputClass} />
+														<input id={`lora-strength-${index}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} />
 													</label>
 												{/if}
 										</div>

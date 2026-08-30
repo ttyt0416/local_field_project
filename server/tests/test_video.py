@@ -93,6 +93,12 @@ class VideoContractTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             video.VideoGenerationRequest(prompt="move", fps=121)
 
+    def test_duration_has_no_fixed_bounds(self) -> None:
+        request = video.VideoGenerationRequest(prompt="move", duration=100)
+        enhancement = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=0)
+        self.assertEqual(request.duration, 100)
+        self.assertEqual(enhancement.duration, 0)
+
     def test_mode_is_explicit_when_resolving_assets(self) -> None:
         request = video.VideoGenerationRequest(
             prompt="move",

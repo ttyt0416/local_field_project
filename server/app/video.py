@@ -88,7 +88,7 @@ class VideoGenerationRequest(BaseModel):
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
     width: int = Field(default=1344, ge=32, le=1344)
     height: int = Field(default=768, ge=32, le=1344)
-    duration: float = Field(default=5, ge=1, le=15)
+    duration: float = Field(default=5)
     fps: float = Field(default=24, ge=1, le=120)
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
     first_frame: VideoAsset | None = None
@@ -108,7 +108,7 @@ class VideoGenerationRequest(BaseModel):
 class VideoPromptEnhancementRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
     mode: Literal["i2v", "fl2v", "r2v"]
-    duration: float = Field(default=5, ge=1, le=15)
+    duration: float = Field(default=5)
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
 
     @field_validator("prompt_output_languages")

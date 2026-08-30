@@ -41,11 +41,23 @@ class PresetRequestTest(unittest.TestCase):
         payload = PresetCreateRequest(
             type="video",
             name="  motion  ",
-            values=PresetValues(prompt="a moving portrait", mode="i2v", width=1344, height=768, duration=5, random_seed=True),
+            values=PresetValues.model_validate(
+                {
+                    "prompt": "a moving portrait",
+                    "mode": "i2v",
+                    "width": 1344,
+                    "height": 768,
+                    "duration": 100,
+                    "loras": [{"name": "style.safetensors", "strength": -100}],
+                    "random_seed": True,
+                }
+            ),
         )
 
         self.assertEqual(payload.type, "video")
         self.assertEqual(payload.values.mode, "i2v")
+        self.assertEqual(payload.values.duration, 100)
+        self.assertEqual(payload.values.loras[0].strength, -100)
 
     def test_unknown_type_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):

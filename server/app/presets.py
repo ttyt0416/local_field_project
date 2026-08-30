@@ -21,7 +21,7 @@ class PresetLora(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
-    strength: float = Field(ge=-2, le=2)
+    strength: float
 
 
 class PresetValues(BaseModel):
@@ -39,7 +39,7 @@ class PresetValues(BaseModel):
     cfg: float | None = Field(default=None, ge=0, le=20)
     steps: int | None = Field(default=None, ge=1, le=100)
     mode: PresetVideoMode | None = None
-    duration: float | None = Field(default=None, ge=1, le=15)
+    duration: float | None = None
     fps: float | None = Field(default=None, ge=1, le=120)
     seed: str | None = Field(default=None, min_length=1, max_length=19, pattern=r"^[0-9]+$")
     random_seed: bool | None = None

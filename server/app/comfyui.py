@@ -53,7 +53,7 @@ _progress_states: dict[str, dict[str, Any]] = {}
 
 class LoraSelection(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    strength: float = Field(default=1.0, ge=-2, le=2)
+    strength: float = Field(default=1.0)
 
 
 class ImageGenerationRequest(BaseModel):

@@ -33,6 +33,16 @@ class PromptEnhancementTest(unittest.TestCase):
                 seed=_MAX_SEED + 1,
             )
 
+    def test_lora_strength_has_no_fixed_bounds(self) -> None:
+        payload = ImageGenerationRequest.model_validate(
+            {
+                "prompt": "a red apple",
+                "checkpoint": "Anima/test.safetensors",
+                "loras": [{"name": "style.safetensors", "strength": -100}],
+            }
+        )
+        self.assertEqual(payload.loras[0].strength, -100)
+
     def test_enabled_enhancement_uses_one_improved_prompt(self) -> None:
         payload = ImageGenerationRequest(
             prompt="a red apple",
