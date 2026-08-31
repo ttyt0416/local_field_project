@@ -17,7 +17,7 @@
 	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
-	import type { ImageOptions, Preset, PresetValues } from '$lib/types/presets';
+	import type { ImageOptions, ImagePresetType, Preset, PresetValues } from '$lib/types/presets';
 	import { downloadMedia } from '$lib/utils/download';
 
 	type VaultImageDetail = {
@@ -190,6 +190,7 @@
 			aspect_ratio: 'custom',
 			width: generation.width,
 			height: generation.height,
+			denoise: generation.denoise,
 			cfg: generation.cfg,
 			steps: generation.steps,
 			sampler_name: generation.sampler_name,
@@ -198,6 +199,12 @@
 			random_seed: false,
 			prompt_enhancement_enabled: false
 		};
+	}
+
+	function imagePresetType(image: VaultImageDetail): ImagePresetType {
+		return image.generation_mode === 'i2i'
+			? image.model_family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima'
+			: image.model_family === 'illustrious' ? 't2i_illustrious' : 't2i_anima';
 	}
 
 	function handlePresetSaved(preset: Preset) {
@@ -413,6 +420,7 @@
 		bind:open={presetOpen}
 		preset={null}
 		initialValues={presetValues()}
+		presetType={imagePresetType(generation)}
 		options={imageOptions}
 		onSaved={handlePresetSaved}
 	/>

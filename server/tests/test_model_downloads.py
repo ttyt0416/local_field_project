@@ -35,7 +35,9 @@ from app.model_downloads import (
     download_civitai_model,
     ModelDownloadRequest,
     ModelFolderRequest,
+    MoveInstalledModelRequest,
     list_model_folders,
+    move_installed_model,
 )
 
 
@@ -256,6 +258,35 @@ class ModelDownloadsTest(unittest.TestCase):
             self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
             self.assertEqual(response.subfolder, "characters/anime")
             self.assertEqual(response.filename, "model.safetensors")
+
+    def test_installed_model_can_move_to_existing_nested_folder(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "checkpoints" / "model.safetensors"
+            destination = root / "checkpoints" / "characters" / "anime" / source.name
+            source.parent.mkdir()
+            destination.parent.mkdir(parents=True)
+            source.write_bytes(b"model")
+            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
+                moved = move_installed_model(
+                    "checkpoint",
+                    MoveInstalledModelRequest(filename="model.safetensors", subfolder="characters/anime"),
+                    user,
+                )
+                with self.assertRaises(HTTPException) as collision:
+                    (root / "checkpoints" / "other.safetensors").write_bytes(b"other")
+                    (destination.parent / "other.safetensors").write_bytes(b"existing")
+                    move_installed_model(
+                        "checkpoint",
+                        MoveInstalledModelRequest(filename="other.safetensors", subfolder="characters/anime"),
+                        user,
+                    )
+
+            self.assertEqual(moved.filename, "characters/anime/model.safetensors")
+            self.assertEqual(destination.read_bytes(), b"model")
+            self.assertFalse(source.exists())
+            self.assertEqual(collision.exception.status_code, 409)
 
     def test_installed_model_delete_stays_inside_model_directory(self) -> None:
         user = UserResponse(id=uuid.uuid4(), username="tester")

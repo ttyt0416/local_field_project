@@ -21,7 +21,7 @@
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
-	import type { Preset, PresetValues } from '$lib/types/presets';
+	import { imagePresetCategories, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
 	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
 	type SelectionTarget = 'first' | 'last' | 'images' | 'videos' | 'audios';
@@ -118,6 +118,8 @@
 	let storedSelectedIds = $state<string[]>([]);
 	let storedSelectedAssets = $state<StoredMediaAsset[]>([]);
 	let storedAssetSource = $state<StoredSource>('uploaded');
+	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
+	let storedImagePreset = $derived(imagePresetCategories.find((category) => category.value === storedImagePresetType) ?? imagePresetCategories[0]);
 	let mediaDimensions = $state<Record<string, MediaDimensionState>>({});
 	let sizeApplying = $state('');
 	let mediaDimensionRequestId = 0;
@@ -345,6 +347,7 @@
 		storedSelectedIds = [];
 		storedSelectedAssets = [];
 		storedAssetSource = 'uploaded';
+		storedImagePresetType = 't2i_anima';
 		selectionOpen = true;
 	}
 
@@ -362,6 +365,14 @@
 		if (storedAssetSource === source) return;
 		storedAssetSource = source;
 		storedPage = 1;
+		storedSelectedIds = [];
+		storedSelectedAssets = [];
+		void loadStoredAssets(1);
+	}
+
+	function selectStoredImagePresetType(type: ImagePresetType) {
+		if (storedImagePresetType === type) return;
+		storedImagePresetType = type;
 		storedSelectedIds = [];
 		storedSelectedAssets = [];
 		void loadStoredAssets(1);
@@ -387,6 +398,10 @@
 				sort: storedSort,
 				page: String(requestedPage)
 			});
+			if (storedAssetSource === 'generated' && selectionKind === 'image') {
+				params.set('generation_mode', storedImagePreset.generationMode);
+				params.set('model_family', storedImagePreset.modelFamily);
+			}
 			const result = await apiJson<StoredMediaPage>(`uploads?${params.toString()}`);
 			if (requestId === storedRequestId) {
 				storedAssets = result.items;
@@ -1070,6 +1085,13 @@
 			{:else}
 				<div class="space-y-4">
 					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 콘텐츠 종류" onselect={selectStoredAssetSource} />
+					{#if storedAssetSource === 'generated' && selectionKind === 'image'}
+						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="생성 이미지 분류">
+							{#each imagePresetCategories as category (category.value)}
+								<OutlinedButton type="button" class="justify-center text-xs" active={storedImagePresetType === category.value} onclick={() => selectStoredImagePresetType(category.value)}>{category.label}</OutlinedButton>
+							{/each}
+						</div>
+					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
 						<SearchBar id="video-stored-search" bind:value={storedSearch} label="저장 콘텐츠 검색" placeholder="파일명으로 검색" oninput={changeStoredFilter} />
 						<label class="flex items-center gap-2 text-sm" for="video-stored-sort"><span class="sr-only">정렬</span><select id="video-stored-sort" bind:value={storedSort} onchange={changeStoredFilter} class={inputClass}><option value="latest">최신순</option><option value="oldest">오래된순</option><option value="name">이름순</option></select></label>

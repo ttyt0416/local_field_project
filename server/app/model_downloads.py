@@ -164,6 +164,11 @@ class ModelFolderResponse(BaseModel):
     subfolder: str
 
 
+class MoveInstalledModelRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=512)
+    subfolder: str = Field(default="", max_length=255)
+
+
 @router.get("/installed", response_model=list[InstalledModelResponse])
 def installed_models(_: UserResponse = Depends(current_user)) -> list[InstalledModelResponse]:
     root = Path(settings.comfyui_models_path)
@@ -206,6 +211,49 @@ def delete_installed_model(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
     except OSError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 삭제할 수 없습니다.") from exc
+
+
+@router.post("/installed/{model_type}/move", response_model=InstalledModelResponse)
+def move_installed_model(
+    model_type: ModelType,
+    payload: MoveInstalledModelRequest,
+    _: UserResponse = Depends(current_user),
+) -> InstalledModelResponse:
+    source = _installed_model_path(model_type, payload.filename)
+    if not source.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.")
+    try:
+        subfolder = _safe_folder_selection(payload.subfolder)
+        destination_directory = _model_target_directory(model_type, subfolder)
+    except CivitaiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if not destination_directory.is_dir():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="선택한 모델 폴더를 찾을 수 없습니다.")
+    destination = destination_directory / source.name
+    if destination == source:
+        file_stat = source.stat()
+        return InstalledModelResponse(
+            model_type=model_type,
+            filename=payload.filename,
+            size_bytes=file_stat.st_size,
+            modified_at=datetime.fromtimestamp(file_stat.st_mtime, timezone.utc),
+        )
+    if destination.exists() or destination.is_symlink():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="대상 폴더에 같은 이름의 모델 파일이 이미 있습니다.")
+    try:
+        source.rename(destination)
+        verified = _installed_model_path(model_type, f"{subfolder}/{source.name}" if subfolder else source.name)
+        file_stat = verified.stat()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 이동할 수 없습니다.") from exc
+    return InstalledModelResponse(
+        model_type=model_type,
+        filename=str(verified.relative_to(_model_target_directory(model_type, ""))),
+        size_bytes=file_stat.st_size,
+        modified_at=datetime.fromtimestamp(file_stat.st_mtime, timezone.utc),
+    )
 
 
 def _installed_model_path(model_type: ModelType, filename: str) -> Path:

@@ -54,6 +54,8 @@ from .media_editing import MediaEditError, edit_video
 
 router = APIRouter(prefix="/vault", tags=["vault"])
 VAULT_PAGE_SIZE = 10
+ImageGenerationMode = Literal["t2i", "i2i"]
+ImageModelFamily = Literal["anima", "illustrious"]
 
 
 class VaultImageSummary(BaseModel):
@@ -274,12 +276,18 @@ def vault_images(
     favorites_only: bool = False,
     page: int = Query(default=1, ge=1),
     user: UserResponse = Depends(current_user),
+    generation_mode: ImageGenerationMode | None = None,
+    model_family: ImageModelFamily | None = None,
 ) -> VaultImagePage:
+    if (generation_mode is None) != (model_family is None):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="이미지 분류를 모두 선택해 주세요.")
     rows, total_count, completed_count = list_image_generations(
         user.id,
         search=search,
         sort=sort,
         favorites_only=favorites_only,
+        model_family=model_family,
+        generation_mode=generation_mode,
         page=page,
     )
     return VaultImagePage(
@@ -335,8 +343,18 @@ def delete_filtered_vault_images(
     expected_count: int = Query(ge=0),
     confirmed: bool = False,
     user: UserResponse = Depends(current_user),
+    generation_mode: ImageGenerationMode | None = None,
+    model_family: ImageModelFamily | None = None,
 ) -> BulkDeleteResponse:
-    generations = list_filtered_image_generations(user.id, search=search, favorites_only=favorites_only)
+    if (generation_mode is None) != (model_family is None):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="이미지 분류를 모두 선택해 주세요.")
+    generations = list_filtered_image_generations(
+        user.id,
+        search=search,
+        favorites_only=favorites_only,
+        model_family=model_family,
+        generation_mode=generation_mode,
+    )
     _validate_filtered_delete(len(generations), expected_count, confirmed)
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(

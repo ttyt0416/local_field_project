@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Download, FileDown, Folder, Plus, RefreshCw, Trash2 } from '@lucide/svelte';
+	import { Download, FileDown, Folder, FolderInput, FolderUp, Plus, RefreshCw, Trash2 } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
@@ -92,10 +92,16 @@
 	let downloadLoading = $state(false);
 	let jobs = $state<DownloadJob[]>([]);
 	let folderModalOpen = $state(false);
+	let folderModalMode = $state<'download' | 'move'>('download');
+	let folderModelType = $state<ModelType>('checkpoint');
+	let folderView = $state('');
 	let folders = $state<ModelFolder[]>([]);
 	let foldersLoading = $state(false);
 	let creatingFolder = $state(false);
 	let folderCreating = $state(false);
+	let moveTarget = $state<InstalledModel | null>(null);
+	let moveLoading = $state(false);
+	let visibleFolders = $derived(folders.filter((folder) => folder.subfolder && folderParent(folder.subfolder) === folderView));
 	let newFolderName = $state('');
 	let installed = $state<InstalledModel[]>([]);
 	let deleteTarget = $state<InstalledModel | null>(null);
@@ -226,22 +232,62 @@
 		}
 	}
 
-	async function openFolderModal() {
-		if (!lookup || selectedFileIndex === null) return;
-		folderModalOpen = true;
+	function folderParent(folder: string) {
+		return folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '';
+	}
+
+	function selectFolder(folder: string) {
+		subfolder = folder;
+		folderView = folder;
 		creatingFolder = false;
-		newFolderName = '';
+	}
+
+	async function loadFolders(targetType: ModelType) {
 		foldersLoading = true;
 		error = '';
 		try {
-			folders = await apiJson<ModelFolder[]>(`models/folders?model_type=${modelType}`);
-			if (!folders.some((folder) => folder.subfolder === subfolder)) subfolder = '';
+			const loaded = await apiJson<ModelFolder[]>(`models/folders?model_type=${targetType}`);
+			if (folderModelType !== targetType) return;
+			folders = loaded;
+			if (!loaded.some((folder) => folder.subfolder === subfolder)) selectFolder('');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '모델 폴더를 불러오지 못했습니다.';
 			folderModalOpen = false;
 		} finally {
-			foldersLoading = false;
+			if (folderModelType === targetType) foldersLoading = false;
 		}
+	}
+
+	async function openFolderModal() {
+		if (!lookup || selectedFileIndex === null) return;
+		folderModalMode = 'download';
+		folderModelType = modelType;
+		moveTarget = null;
+		subfolder = '';
+		folderView = '';
+		creatingFolder = false;
+		newFolderName = '';
+		folderModalOpen = true;
+		await loadFolders(folderModelType);
+	}
+
+	async function openMoveFolderModal(model: InstalledModel) {
+		if (moveLoading || deleteLoading !== null) return;
+		folderModalMode = 'move';
+		folderModelType = model.model_type;
+		moveTarget = model;
+		subfolder = folderParent(model.filename);
+		folderView = subfolder;
+		creatingFolder = false;
+		newFolderName = '';
+		folderModalOpen = true;
+		await loadFolders(folderModelType);
+	}
+
+	function closeFolderModal() {
+		if (downloadLoading || folderCreating || moveLoading) return;
+		folderModalOpen = false;
+		moveTarget = null;
 	}
 
 	async function createFolder() {
@@ -251,16 +297,38 @@
 		try {
 			const folder = await apiJson<ModelFolder>('models/folders', {
 				method: 'POST',
-				json: { model_type: modelType, parent: subfolder, name: newFolderName.trim() }
+				json: { model_type: folderModelType, parent: folderView, name: newFolderName.trim() }
 			});
 			folders = [...folders.filter((item) => item.subfolder !== folder.subfolder), folder].sort((a, b) => a.subfolder.localeCompare(b.subfolder));
-			subfolder = folder.subfolder;
-			creatingFolder = false;
+			selectFolder(folder.subfolder);
 			newFolderName = '';
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '새 모델 폴더를 만들지 못했습니다.';
 		} finally {
 			folderCreating = false;
+		}
+	}
+
+	async function moveInstalledModel() {
+		const model = moveTarget;
+		if (!model || moveLoading) return;
+		moveLoading = true;
+		error = '';
+		try {
+			const moved = await apiJson<InstalledModel>(`models/installed/${encodeURIComponent(model.model_type)}/move`, {
+				method: 'POST',
+				json: { filename: model.filename, subfolder }
+			});
+			installed = [...installed.filter((item) => item !== model), moved].sort((a, b) => `${a.model_type}/${a.filename}`.localeCompare(`${b.model_type}/${b.filename}`));
+			folderModalOpen = false;
+			moveTarget = null;
+			showToast('positive', '모델 이동 완료', `${moved.filename} 위치로 이동했습니다.`);
+		} catch (reason) {
+			const message = reason instanceof Error ? reason.message : '모델 파일을 이동하지 못했습니다.';
+			error = message;
+			showToast('negative', '모델 이동 실패', message);
+		} finally {
+			moveLoading = false;
 		}
 	}
 
@@ -428,7 +496,18 @@
 			<section class="space-y-3">
 				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">설치된 모델</Typography><span class="text-xs text-muted-foreground">{installed.length}개</span></div>
 				{#if installed.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">ComfyUI 모델 폴더에 설치된 모델이 없습니다.</div>
-				{:else}<div class="grid gap-3 md:grid-cols-2">{#each installed as model}<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3"><Folder size={18} class="shrink-0 text-primary" /><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div><button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null} onclick={() => requestDeleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button></article>{/each}</div>{/if}
+				{:else}
+					<div class="grid gap-3 md:grid-cols-2">
+						{#each installed as model}
+							<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3">
+								<Folder size={18} class="shrink-0 text-primary" />
+								<div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div>
+								<button type="button" aria-label={`${model.filename} 폴더 이동`} title="폴더 이동" disabled={deleteLoading !== null || moveLoading} onclick={() => void openMoveFolderModal(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"><FolderInput size={16} /></button>
+								<button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null || moveLoading} onclick={() => requestDeleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button>
+							</article>
+						{/each}
+					</div>
+				{/if}
 			</section>
 		</div>
 	</Layout>
@@ -454,32 +533,53 @@
 	{/snippet}
 </Modal>
 
-<Modal bind:open={folderModalOpen} title="저장 폴더 선택" description={`${modelFolders[modelType]} 아래의 기존 폴더를 선택하거나 새 폴더를 만드세요.`} closeOnBackdrop={!downloadLoading && !folderCreating}>
+<Modal
+	bind:open={folderModalOpen}
+	title={folderModalMode === 'move' ? '모델 이동 폴더 선택' : '저장 폴더 선택'}
+	description={`${modelFolders[folderModelType]} 아래에서 현재 folder를 선택하거나 새 하위 folder를 만드세요.`}
+	closeOnBackdrop={!downloadLoading && !folderCreating && !moveLoading}
+	onclose={closeFolderModal}
+>
 	{#if foldersLoading}
 		<div class="flex min-h-40 items-center justify-center"><LoadingSpinner size="lg" label="폴더를 불러오는 중" /></div>
 	{:else}
 		<div class="space-y-4">
-			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-				{#each folders as folder (folder.subfolder)}
-					<button type="button" onclick={() => (subfolder = folder.subfolder)} class={`flex min-w-0 items-center gap-2 rounded-xl border p-3 text-left transition ${subfolder === folder.subfolder ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'border-border hover:bg-muted'}`}>
-						<Folder size={17} class="shrink-0 text-primary" />
-						<span class="truncate text-sm font-medium" title={folder.subfolder || '기본 폴더'}>{folder.subfolder || '기본 폴더'}</span>
-					</button>
-				{/each}
+			<div class="flex flex-wrap items-center gap-2">
+				<OutlinedButton class="px-3 text-xs" active={folderView === ''} onclick={() => selectFolder('')}>전체</OutlinedButton>
+				{#if folderView}
+					<OutlinedButton class="px-3 text-xs" onclick={() => selectFolder(folderParent(folderView))}><FolderUp size={15} />상위 폴더</OutlinedButton>
+				{/if}
+				<span class="min-w-0 truncate text-xs text-muted-foreground">선택: {subfolder || '전체'}</span>
 			</div>
+			{#if visibleFolders.length === 0}
+				<p class="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">이 folder 안에 하위 folder가 없습니다.</p>
+			{:else}
+				<div class="grid max-h-[40dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+					{#each visibleFolders as folder (folder.subfolder)}
+						<button type="button" onclick={() => selectFolder(folder.subfolder)} class={`flex min-w-0 items-center gap-2 rounded-xl border p-3 text-left transition ${subfolder === folder.subfolder ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'border-border hover:bg-muted'}`}>
+							<Folder size={17} class="shrink-0 text-primary" />
+							<span class="truncate text-sm font-medium" title={folder.subfolder}>{folder.subfolder.slice(folderView ? folderView.length + 1 : 0)}</span>
+						</button>
+					{/each}
+				</div>
+			{/if}
 			{#if creatingFolder}
 				<form class="space-y-3 rounded-xl border border-border bg-muted/30 p-3" onsubmit={(event) => { event.preventDefault(); void createFolder(); }}>
-					<label class="block space-y-2" for="new-model-folder"><span class="text-sm font-semibold">{subfolder ? `${subfolder} 아래 새 폴더 이름` : '새 폴더 이름'}</span><input id="new-model-folder" bind:value={newFolderName} maxlength="120" placeholder="예: anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
+					<label class="block space-y-2" for="new-model-folder"><span class="text-sm font-semibold">{folderView ? `${folderView} 아래 새 폴더 이름` : '새 폴더 이름'}</span><input id="new-model-folder" bind:value={newFolderName} maxlength="120" placeholder="예: anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
 					<div class="flex justify-end gap-2"><OutlinedButton disabled={folderCreating} onclick={() => (creatingFolder = false)}>취소</OutlinedButton><PrimaryButton type="submit" loading={folderCreating} disabled={!newFolderName.trim()}>폴더 추가</PrimaryButton></div>
 				</form>
 			{:else}
-				<button type="button" onclick={() => (creatingFolder = true)} class="inline-flex items-center gap-2 rounded-lg border border-dashed border-primary px-3 py-2 text-sm font-semibold text-primary hover:bg-primary/10"><Plus size={16} />새 폴더</button>
+				<button type="button" onclick={() => (creatingFolder = true)} class="inline-flex items-center gap-2 rounded-lg border border-dashed border-primary px-3 py-2 text-sm font-semibold text-primary hover:bg-primary/10"><Plus size={16} />현재 폴더에 하위 폴더 추가</button>
 			{/if}
 		</div>
 	{/if}
 	{#snippet footer()}
-		<OutlinedButton disabled={downloadLoading || folderCreating} onclick={() => (folderModalOpen = false)}>취소</OutlinedButton>
-		<PrimaryButton loading={downloadLoading} disabled={foldersLoading || folderCreating} onclick={() => void startDownload()}><FileDown size={16} /><span>선택한 폴더에 다운로드</span></PrimaryButton>
+		<OutlinedButton disabled={downloadLoading || folderCreating || moveLoading} onclick={closeFolderModal}>취소</OutlinedButton>
+		{#if folderModalMode === 'move'}
+			<PrimaryButton loading={moveLoading} disabled={foldersLoading || folderCreating} onclick={() => void moveInstalledModel()}><FolderInput size={16} /><span>선택한 폴더로 이동</span></PrimaryButton>
+		{:else}
+			<PrimaryButton loading={downloadLoading} disabled={foldersLoading || folderCreating} onclick={() => void startDownload()}><FileDown size={16} /><span>선택한 폴더에 다운로드</span></PrimaryButton>
+		{/if}
 	{/snippet}
 </Modal>
 

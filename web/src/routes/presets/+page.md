@@ -1,11 +1,7 @@
 # 프리셋 관리
 
-프리셋 관리에서는 현재 사용자의 `IMAGE GEN`과 `VIDEO GEN` 프리셋을 타입별 탭에서 이름별로 저장·수정·삭제한다. 이름은 식별자가 아니므로 같은 이름도 여러 개 보관할 수 있으며, 각 항목의 UUID와 타입으로 수정·삭제 대상을 구분한다. 타입 탭은 로그인 화면에서 사용하는 공용 `components/tabs/tab.svelte`를 재사용해 보관함과 동일한 탭 디자인을 사용한다.
+프리셋 관리는 `IMAGE`와 `VIDEO`를 별도 title로 표시한다. `IMAGE` 아래에는 3-column grid의 `T2I (Anima)`, `I2I (Anima)`, `T2I (Illustrious)`, `I2I (Illustrious)` 버튼을 둔다. 각 버튼은 정확히 하나의 preset type만 조회·생성·수정·삭제·기본 지정한다.
 
-`IMAGE GEN`은 이미지 생성의 prompt, negative prompt, checkpoint, LoRA, 비율·크기, CFG, Steps, 프롬프트 개선 설정을 저장한다. `VIDEO GEN`은 영상 생성의 prompt, mode, 크기, 길이, seed를 저장한다. 각 모달은 타입별 필드만 표시한다.
+이미지 preset type은 `t2i_anima`, `i2i_anima`, `t2i_illustrious`, `i2i_illustrious`다. mode 또는 family 간 fallback·공유는 없다. 따라서 같은 이름의 preset이어도 type이 다르면 서로 영향을 주지 않으며, 사용자·exact type마다 기본 프리셋은 하나만 유지한다. `VIDEO`는 기존 `video` type을 유지한다.
 
-프리셋 목록의 `기본 프리셋으로 설정`으로 사용자·프리셋 타입별 기본 프리셋을 지정할 수 있다. 같은 사용자와 타입에서 기본 프리셋은 하나만 유지되며, 다른 프리셋을 기본으로 지정하면 기존 기본 프리셋은 자동 해제된다. `기본 해제`로 현재 기본 프리셋을 해제할 수도 있다.
-
-프리셋 값은 선택한 항목만 저장한다. 생성 화면에서 불러오면 저장된 항목만 현재 생성 설정을 덮어쓴다. 공용 모달은 viewport를 넘지 않도록 최대 높이 `80dvh`를 사용하고, 본문만 내부 스크롤한다.
-
-프리셋 관리 화면의 헤더는 카드형 컨테이너·`Generation presets` 서브타이틀·헤더 아이콘·설명 문구 없이 `프리셋 관리` 제목과 `새 프리셋` 액션만 표시한다.
+이미지 modal은 T2I에서 prompt improvement를, I2I에서 Denoise를 해당 mode 전용 항목으로 표시한다. 선택한 값만 저장하며, load는 선택한 exact type의 저장 항목만 현재 설정에 덮어쓴다.

@@ -762,6 +762,8 @@ def list_image_generations(
     search: str = "",
     sort: str = "latest",
     favorites_only: bool = False,
+    model_family: str | None = None,
+    generation_mode: str | None = None,
     page: int = 1,
 ) -> tuple[list[dict[str, Any]], int, int]:
     order_by = {
@@ -777,6 +779,12 @@ def list_image_generations(
         parameters.append(f"%{normalized_search}%")
     if favorites_only:
         filters.append("is_favorite = TRUE")
+    if model_family:
+        filters.append("model_family = %s")
+        parameters.append(model_family)
+    if generation_mode:
+        filters.append("generation_mode = %s")
+        parameters.append(generation_mode)
     where_clause = " AND ".join(filters)
     page_size = 10
     offset = (page - 1) * page_size
@@ -801,6 +809,8 @@ def list_filtered_image_generations(
     *,
     search: str = "",
     favorites_only: bool = False,
+    model_family: str | None = None,
+    generation_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     filters = ["user_id = %s"]
     parameters: list[Any] = [user_id]
@@ -809,6 +819,12 @@ def list_filtered_image_generations(
         parameters.append(f"%{search.strip()}%")
     if favorites_only:
         filters.append("is_favorite = TRUE")
+    if model_family:
+        filters.append("model_family = %s")
+        parameters.append(model_family)
+    if generation_mode:
+        filters.append("generation_mode = %s")
+        parameters.append(generation_mode)
     with get_connection() as connection:
         rows = connection.execute(
             f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {' AND '.join(filters)}",
@@ -921,6 +937,8 @@ def list_reusable_media(
     include_generated: bool = False,
     media_kind: str | None = None,
     source_type: str | None = None,
+    model_family: str | None = None,
+    generation_mode: str | None = None,
     page: int = 1,
 ) -> tuple[list[dict[str, Any]], int]:
     order_by = {
@@ -931,7 +949,8 @@ def list_reusable_media(
     sources = [
         """
         SELECT storage_file_id AS file_id, filename, content_type, media_kind,
-               source_type, created_at, size, user_id
+               source_type, created_at, size, user_id,
+               NULL::VARCHAR AS model_family, NULL::VARCHAR AS generation_mode
         FROM media_assets
         WHERE NOT EXISTS (
             SELECT 1 FROM image_generations
@@ -948,13 +967,15 @@ def list_reusable_media(
             (
                 """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
-                       'image/png', 'image', 'image_generation', created_at, size_bytes, user_id
+                       'image/png', 'image', 'image_generation', created_at, size_bytes, user_id,
+                       model_family, generation_mode
                 FROM image_generations
                 WHERE storage_file_id IS NOT NULL
                 """,
                 """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
-                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, user_id
+                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, user_id,
+                       NULL::VARCHAR AS model_family, NULL::VARCHAR AS generation_mode
                 FROM video_generations
                 WHERE storage_file_id IS NOT NULL
                 """,
@@ -972,6 +993,12 @@ def list_reusable_media(
         filters.append("source_type NOT IN ('image_generation', 'video_generation')")
     elif source_type == "generated":
         filters.append("source_type IN ('image_generation', 'video_generation')")
+    if model_family:
+        filters.append("model_family = %s")
+        parameters.append(model_family)
+    if generation_mode:
+        filters.append("generation_mode = %s")
+        parameters.append(generation_mode)
     page_size = 10
     offset = (page - 1) * page_size
     query_from = f"FROM ({' UNION ALL '.join(sources)}) AS assets WHERE {' AND '.join(filters)}"

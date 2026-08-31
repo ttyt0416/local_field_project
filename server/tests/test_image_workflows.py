@@ -1,12 +1,15 @@
+import asyncio
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 from pydantic import ValidationError
 
 from app import comfyui
+from app.auth import UserResponse
 from app.configs.constants import settings
 
 
@@ -111,6 +114,39 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             comfyui.ImageSource(file_id="a" * 32, file_index=0)
         self.assertEqual(comfyui.ImageSource(file_index=0).file_index, 0)
+
+    def test_i2i_reuses_owner_checked_generated_image_without_upload(self) -> None:
+        source_file_id = "f" * 32
+        user = UserResponse(id=uuid4(), username="tester")
+        source = comfyui.ImageSource(file_id=source_file_id)
+        generated = {
+            "file_id": source_file_id,
+            "filename": "generated-image.png",
+            "content_type": "image/png",
+            "media_kind": "image",
+            "source_type": "image_generation",
+        }
+        with (
+            patch.object(comfyui, "storage_enabled", return_value=True),
+            patch.object(comfyui, "get_reusable_media", return_value=generated) as get_media,
+            patch.object(comfyui, "storage_download_file", return_value=(b"image-bytes", "image/png")) as download,
+            patch.object(comfyui, "storage_upload_file") as upload,
+            patch.object(comfyui, "create_media_asset") as create_asset,
+        ):
+            result = asyncio.run(comfyui._resolve_image_source(source, [], user))
+
+        self.assertEqual(result, (source_file_id, "generated-image.png", b"image-bytes", "image/png"))
+        get_media.assert_called_once_with(source_file_id, user.id)
+        download.assert_called_once_with(file_id=source_file_id, owner_id=str(user.id))
+        upload.assert_not_called()
+        create_asset.assert_called_once_with(
+            user_id=user.id,
+            storage_file_id=source_file_id,
+            filename="generated-image.png",
+            content_type="image/png",
+            media_kind="image",
+            size=len(b"image-bytes"),
+        )
 
 
 if __name__ == "__main__":

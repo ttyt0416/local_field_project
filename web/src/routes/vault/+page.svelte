@@ -19,6 +19,7 @@
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
+	import { imagePresetCategories, type ImagePresetType } from '$lib/types/presets';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
 	const vaultMediaTabs = [
@@ -100,6 +101,8 @@
 
 	let ready = $state(false);
 	let mediaTab = $state<MediaTab>(mediaTabFromQuery(page.url.searchParams.get('tab')));
+	let imagePresetType = $state<ImagePresetType>('t2i_anima');
+	let activeImagePreset = $derived(imagePresetCategories.find((category) => category.value === imagePresetType) ?? imagePresetCategories[0]);
 	let images = $state<VaultImage[]>([]);
 	let videos = $state<VaultVideo[]>([]);
 	let models = $state<Vault3D[]>([]);
@@ -170,6 +173,8 @@
 			if (query) params.set('search', query);
 			if (favoritesOnly) params.set('favorites_only', 'true');
 			if (mediaTab === 'images') {
+				params.set('generation_mode', activeImagePreset.generationMode);
+				params.set('model_family', activeImagePreset.modelFamily);
 				const result = await apiJson<VaultPage<VaultImage>>(`vault/images?${params.toString()}`);
 				images = result.items;
 				imagePage = result.page;
@@ -207,6 +212,13 @@
 	function selectVaultMediaTab(nextTab: MediaTab) {
 		const query = favoritesOnly ? `?favorites=true&tab=${nextTab}` : `?tab=${nextTab}`;
 		void goto(`/vault${query}`);
+	}
+
+	function selectImagePresetType(type: ImagePresetType) {
+		if (imagePresetType === type) return;
+		imagePresetType = type;
+		selectedIds = new Set();
+		void loadVault(1);
 	}
 
 	function changePage(nextPage: number) {
@@ -275,6 +287,10 @@
 			const params = new URLSearchParams();
 			if (searchQuery.trim()) params.set('search', searchQuery.trim());
 			if (favoritesOnly) params.set('favorites_only', 'true');
+			if (mediaTab === 'images') {
+				params.set('generation_mode', activeImagePreset.generationMode);
+				params.set('model_family', activeImagePreset.modelFamily);
+			}
 			params.set('expected_count', String(filteredCount));
 			params.set('confirmed', 'true');
 			const path = `vault/${mediaTab}/filtered${params.size ? `?${params.toString()}` : ''}`;
@@ -468,6 +484,17 @@
 	<div class="space-y-8">
 		<Typography as="h1" variant="display">{favoritesOnly ? '즐겨찾기' : '보관함'}</Typography>
 		<Tab items={vaultMediaTabs} bind:value={mediaTab} ariaLabel="보관함 콘텐츠 종류" onselect={selectVaultMediaTab} />
+
+		{#if mediaTab === 'images'}
+			<section aria-labelledby="vault-image-category-title">
+				<div id="vault-image-category-title"><Typography as="h2" variant="h2">IMAGE</Typography></div>
+				<div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+					{#each imagePresetCategories as category (category.value)}
+						<OutlinedButton type="button" class="justify-center text-xs" active={imagePresetType === category.value} onclick={() => selectImagePresetType(category.value)}>{category.label}</OutlinedButton>
+					{/each}
+				</div>
+			</section>
+		{/if}
 
 		<div class="flex flex-col gap-3 sm:flex-row">
 			<SearchBar bind:value={searchQuery} class="min-w-0 flex-1" oninput={handleSearchInput} />

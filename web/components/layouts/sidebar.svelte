@@ -82,7 +82,7 @@
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>텍스트를 이미지로 (Anima)</span>
+			<span>T2I (Anima)</span>
 		</a>
 		<a
 			href="/generate/image-to-image?family=anima"
@@ -91,7 +91,7 @@
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>이미지를 이미지로 (Anima)</span>
+			<span>I2I (Anima)</span>
 		</a>
 		<a
 			href="/generate/image?family=illustrious"
@@ -100,7 +100,7 @@
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>텍스트를 이미지로 (Illustrious)</span>
+			<span>T2I (Illustrious)</span>
 		</a>
 		<a
 			href="/generate/image-to-image?family=illustrious"
@@ -109,7 +109,7 @@
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>이미지를 이미지로 (Illustrious)</span>
+			<span>I2I (Illustrious)</span>
 		</a>
 		<a
 			href="/generate/video"

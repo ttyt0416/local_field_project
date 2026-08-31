@@ -9,13 +9,12 @@
 	import Modal from '../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
-	import Tab from '../../../components/tabs/tab.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import VideoPresetModal from '../../../components/presets/video-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
-	import type { ImageOptions, Preset, PresetType } from '$lib/types/presets';
+	import { imagePresetCategories, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
 
 	let ready = $state(false);
 	let optionsLoading = $state(true);
@@ -23,11 +22,7 @@
 	let error = $state('');
 	let success = $state('');
 	let presets = $state<Preset[]>([]);
-	let activeType = $state<PresetType>('t2i');
-	const presetTypeTabs: { value: PresetType; label: string }[] = [
-		{ value: 't2i', label: 'IMAGE GEN' },
-		{ value: 'video', label: 'VIDEO GEN' }
-	];
+	let activeType = $state<PresetType>('t2i_anima');
 	let options = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
 	let editingPreset = $state<Preset | null>(null);
 	let imageEditorOpen = $state(false);
@@ -58,6 +53,16 @@
 		}
 	}
 
+	async function loadImageOptions(type: ImagePresetType) {
+		const family = imagePresetCategories.find((category) => category.value === type)?.modelFamily ?? 'anima';
+		optionsLoading = true;
+		try {
+			options = await apiJson<ImageOptions>(`generation/image/options?family=${family}`);
+		} finally {
+			optionsLoading = false;
+		}
+	}
+
 	async function initialize() {
 		await authStore.initialize();
 		if (!authStore.isAuthenticated) {
@@ -65,7 +70,7 @@
 			return;
 		}
 		try {
-			options = await apiJson<ImageOptions>('generation/image/options');
+			await loadImageOptions('t2i_anima');
 			await loadPresets();
 		} catch (reason) {
 			error = getErrorMessage(reason);
@@ -85,18 +90,19 @@
 		deleteModalOpen = false;
 		deleteTarget = null;
 		error = '';
+		if (type !== 'video') void loadImageOptions(type);
 		void loadPresets();
 	}
 
 	function openNew() {
 		editingPreset = null;
-		if (activeType === 't2i') imageEditorOpen = true;
+		if (activeType !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
 	}
 
 	function openEdit(preset: Preset) {
 		editingPreset = preset;
-		if (preset.type === 't2i') imageEditorOpen = true;
+		if (preset.type !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
 	}
 
@@ -157,13 +163,14 @@
 
 	function savedPresetLabels(preset: Preset) {
 		const labels: Record<string, string> =
-			preset.type === 't2i'
+			preset.type !== 'video'
 				? {
 						prompt: '긍정 프롬프트',
 						negative_prompt: '부정 프롬프트',
 						checkpoint: '체크포인트',
 						loras: 'LoRA',
 						aspect_ratio: '이미지 비율·크기',
+						denoise: 'Denoise',
 						cfg: 'CFG',
 						steps: 'Steps',
 						prompt_enhancement_enabled: '프롬프트 개선 설정',
@@ -171,11 +178,11 @@
 					}
 				: { prompt: '프롬프트', mode: '생성 방식', size: '영상 크기', duration: '길이(초)', fps: 'FPS', seed: 'Seed', random_seed: 'Seed' };
 		const fields = new Set(preset.saved_fields);
-		if (preset.type === 't2i' && fields.has('aspect_ratio')) {
+		if (preset.type !== 'video' && fields.has('aspect_ratio')) {
 			fields.delete('width');
 			fields.delete('height');
 		}
-		if (preset.type === 't2i' && (fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt'))) {
+		if (preset.type !== 'video' && (fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt'))) {
 			fields.delete('prompt_enhancement_enabled');
 			fields.delete('improved_prompt');
 			fields.add('prompt_enhancement_enabled');
@@ -192,6 +199,10 @@
 		return [...fields].map((field) => labels[field] ?? field).join(', ');
 	}
 
+	function presetTypeLabel(type: PresetType) {
+		return type === 'video' ? 'VIDEO' : imagePresetCategories.find((category) => category.value === type)?.label ?? 'IMAGE';
+	}
+
 	function getErrorMessage(reason: unknown) {
 		return reason instanceof Error ? reason.message : '요청을 처리하지 못했습니다.';
 	}
@@ -199,7 +210,7 @@
 
 <svelte:head>
 	<title>프리셋 관리 · Local Field</title>
-	<meta name="description" content="IMAGE GEN과 VIDEO GEN 프리셋 저장, 수정, 삭제" />
+	<meta name="description" content="IMAGE와 VIDEO 프리셋 저장, 수정, 삭제" />
 </svelte:head>
 
 {#if !ready}
@@ -209,21 +220,33 @@
 		<div class="space-y-6">
 			<section class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
 				<Typography as="h1" variant="display">프리셋 관리</Typography>
-				<PrimaryButton onclick={openNew} disabled={activeType === 't2i' && optionsLoading}>
+				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && optionsLoading}>
 					<Plus size={17} strokeWidth={1.9} />
 					<span>새 프리셋</span>
 				</PrimaryButton>
 			</section>
 
-			<Tab items={presetTypeTabs} bind:value={activeType} ariaLabel="프리셋 종류" onselect={selectPresetType} />
+			<section aria-labelledby="image-preset-types-title">
+				<div id="image-preset-types-title"><Typography as="h2" variant="h2">IMAGE</Typography></div>
+				<div class="mt-3 grid grid-cols-3 gap-2">
+					{#each imagePresetCategories as category (category.value)}
+						<OutlinedButton type="button" class="justify-center text-xs" active={activeType === category.value} onclick={() => selectPresetType(category.value)}>{category.label}</OutlinedButton>
+					{/each}
+				</div>
+			</section>
+
+			<section aria-labelledby="video-preset-types-title">
+				<div id="video-preset-types-title"><Typography as="h2" variant="h2">VIDEO</Typography></div>
+				<div class="mt-3"><OutlinedButton type="button" active={activeType === 'video'} onclick={() => selectPresetType('video')}>VIDEO</OutlinedButton></div>
+			</section>
 
 			{#if presetsLoading}
 				<div class="flex justify-center py-12"><LoadingSpinner size="md" label="프리셋 불러오는 중" /></div>
 			{:else if presets.length === 0}
 				<section class="rounded-2xl border border-dashed border-border bg-card/70 p-10 text-center">
 					<Bookmark size={28} class="mx-auto text-muted-foreground" strokeWidth={1.6} />
-					<Typography as="h2" variant="h2" class="mt-4">저장된 {activeType === 't2i' ? 'IMAGE GEN' : 'VIDEO GEN'} 프리셋이 없습니다.</Typography>
-					<p class="mt-2 text-sm text-muted-foreground">새 {activeType === 't2i' ? 'IMAGE GEN' : 'VIDEO GEN'} 프리셋을 만들어 생성 설정을 저장해 주세요.</p>
+					<Typography as="h2" variant="h2" class="mt-4">저장된 {presetTypeLabel(activeType)} 프리셋이 없습니다.</Typography>
+					<p class="mt-2 text-sm text-muted-foreground">새 {presetTypeLabel(activeType)} 프리셋을 만들어 생성 설정을 저장해 주세요.</p>
 				</section>
 			{:else}
 				<section class="grid gap-4 md:grid-cols-2">
@@ -235,7 +258,7 @@
 									<h2 class="truncate text-base font-semibold">{preset.name}</h2>
 									{#if preset.is_default}<span class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">기본 프리셋</span>{/if}
 								</div>
-								<p class="mt-2 truncate text-xs text-muted-foreground">{preset.type === 't2i' ? 'IMAGE GEN' : 'VIDEO GEN'} · {savedPresetLabels(preset)}</p>
+								<p class="mt-2 truncate text-xs text-muted-foreground">{presetTypeLabel(preset.type)} · {savedPresetLabels(preset)}</p>
 								<p class="mt-1 text-xs text-muted-foreground">수정 {new Date(preset.updated_at).toLocaleString('ko-KR')}</p>
 							</div>
 							<div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -252,7 +275,9 @@
 		</div>
 	</Layout>
 
-	<ImagePresetModal bind:open={imageEditorOpen} preset={editingPreset} options={options} onSaved={handleSaved} />
+	{#if activeType !== 'video'}
+		<ImagePresetModal bind:open={imageEditorOpen} preset={editingPreset} presetType={activeType} options={options} onSaved={handleSaved} />
+	{/if}
 	<VideoPresetModal bind:open={videoEditorOpen} preset={editingPreset} onSaved={handleSaved} />
 
 	<Modal bind:open={deleteModalOpen} title="프리셋을 삭제하시겠습니까?" description="삭제한 프리셋은 복구할 수 없습니다." closeOnBackdrop={!deleting} onclose={cancelDelete}>

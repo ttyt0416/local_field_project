@@ -12,7 +12,7 @@ from .database import create_preset, delete_preset, list_presets, update_preset
 
 
 router = APIRouter(prefix="/presets", tags=["presets"])
-PresetType = Literal["t2i", "video"]
+PresetType = Literal["t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "video"]
 PresetAspectRatio = Literal["custom", "2:3", "3:2", "1:1", "16:9", "9:16"]
 PresetVideoMode = Literal["i2v", "fl2v", "r2v"]
 
@@ -36,6 +36,7 @@ class PresetValues(BaseModel):
     aspect_ratio: PresetAspectRatio | None = None
     width: int | None = Field(default=None, ge=32, le=2048)
     height: int | None = Field(default=None, ge=32, le=2048)
+    denoise: float | None = Field(default=None, ge=0, le=1)
     cfg: float | None = Field(default=None, ge=0, le=20)
     steps: int | None = Field(default=None, ge=1, le=100)
     sampler_name: str | None = Field(default=None, min_length=1, max_length=64)
@@ -67,7 +68,7 @@ class PresetCreateRequest(BaseModel):
 class PresetUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: PresetType = "t2i"
+    type: PresetType
     name: str = Field(min_length=1, max_length=100)
     values: PresetValues
     is_default: bool | None = None
@@ -94,7 +95,7 @@ class PresetResponse(BaseModel):
 
 @router.get("", response_model=list[PresetResponse])
 def get_presets(
-    preset_type: PresetType = Query(default="t2i", alias="type"),
+    preset_type: PresetType = Query(alias="type"),
     user: UserResponse = Depends(current_user),
 ) -> list[PresetResponse]:
     return [_response(row) for row in list_presets(user_id=user.id, preset_type=preset_type)]
@@ -144,7 +145,7 @@ def edit_preset(
 @router.delete("/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_preset(
     preset_id: UUID,
-    preset_type: PresetType = Query(default="t2i", alias="type"),
+    preset_type: PresetType = Query(alias="type"),
     user: UserResponse = Depends(current_user),
 ) -> Response:
     if not delete_preset(preset_id=preset_id, user_id=user.id, preset_type=preset_type):

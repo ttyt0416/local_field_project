@@ -29,8 +29,30 @@ class VaultRouteTest(unittest.TestCase):
             search="portrait",
             sort="most_viewed",
             favorites_only=True,
+            model_family=None,
+            generation_mode=None,
             page=2,
         )
+
+    def test_list_passes_exact_image_category_to_database(self) -> None:
+        with patch.object(vault, "list_image_generations", return_value=([], 0, 0)) as list_images:
+            vault.vault_images("", "latest", False, 1, self.user, "i2i", "illustrious")
+
+        list_images.assert_called_once_with(
+            self.user.id,
+            search="",
+            sort="latest",
+            favorites_only=False,
+            model_family="illustrious",
+            generation_mode="i2i",
+            page=1,
+        )
+
+    def test_list_rejects_partial_image_category(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            vault.vault_images("", "latest", False, 1, self.user, "i2i")
+
+        self.assertEqual(raised.exception.status_code, 422)
 
     def test_three_d_list_passes_page_to_database(self) -> None:
         with patch.object(vault, "list_three_d_generations", return_value=([], 12, 9)) as list_three_d:

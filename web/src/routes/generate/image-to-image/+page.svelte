@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeftRight, Check, ImagePlus, Sparkles, X } from '@lucide/svelte';
+	import { ArrowLeftRight, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
@@ -10,14 +10,19 @@
 	import Modal from '../../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
+	import SearchBar from '../../../../components/inputs/searchbar.svelte';
+	import Tab from '../../../../components/tabs/tab.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
 	import SamplingSelectionModal from '../../../../components/presets/sampling-selection-modal.svelte';
+	import ImagePresetModal from '../../../../components/presets/image-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
-	import { apiForm, apiJson } from '$lib/utils/api';
+	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize } from '$lib/utils/generation';
+	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
+	import { imagePresetCategories, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
 	type ImageFamily = 'anima' | 'illustrious';
 	type ImageDimensions = { width: number; height: number };
@@ -45,6 +50,24 @@
 		created_at: string;
 		elapsed_seconds: number;
 	};
+	type StoredImageAsset = {
+		file_id: string;
+		filename: string;
+		content_type: string;
+		media_kind: 'image';
+		source_type: string;
+		created_at: string;
+		size: number;
+		url: string | null;
+	};
+	type StoredImagePage = {
+		items: StoredImageAsset[];
+		page: number;
+		total_pages: number;
+	};
+	type SelectionSource = 'device' | 'stored';
+	type StoredSort = 'latest' | 'oldest' | 'name';
+	type StoredSource = 'uploaded' | 'generated';
 
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const emptyOptions: ImageOptions = {
@@ -63,10 +86,21 @@
 	const maxImageDimension = 2048;
 	const minImageDimension = 64;
 	const imageDimensionStep = 8;
+const selectionSourceTabs: { value: SelectionSource; label: string }[] = [
+	{ value: 'device', label: '기기 저장소' },
+	{ value: 'stored', label: '저장된 콘텐츠' }
+];
+const storedSourceTabs: { value: StoredSource; label: string }[] = [
+	{ value: 'uploaded', label: '업로드' },
+	{ value: 'generated', label: '생성' }
+];
 
 	let family = $derived<ImageFamily>(page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima');
 	let familyLabel = $derived(family === 'illustrious' ? 'Illustrious' : 'Anima');
-	let routeTitle = $derived(`이미지를 이미지로 (${familyLabel})`);
+	let routeTitle = $derived(`I2I (${familyLabel})`);
+	let presetType = $derived<ImagePresetType>(family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima');
+	let storedImagePresetType = $state<ImagePresetType>('i2i_anima');
+	let storedImagePreset = $derived(imagePresetCategories.find((category) => category.value === storedImagePresetType) ?? imagePresetCategories[0]);
 
 	let active = true;
 	let ready = $state(false);
@@ -88,6 +122,12 @@
 	let imageJobKey = $state('');
 	let announcedTerminal = $state('');
 	let options = $state<ImageOptions>({ ...emptyOptions });
+	let presets = $state<Preset[]>([]);
+	let presetsLoading = $state(false);
+	let presetOpen = $state(false);
+	let presetLoadOpen = $state(false);
+	let presetError = $state('');
+	let presetSuccess = $state('');
 	let prompt = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
@@ -99,6 +139,15 @@
 	let samplingModalOpen = $state(false);
 	let checkpointModalOpen = $state(false);
 	let loraModalOpen = $state(false);
+	let checkpointFolder = $state('');
+	let loraFolder = $state('');
+	let embeddingFolder = $state('');
+	let checkpointFolders = $derived(modelFolders(options.checkpoints));
+	let loraFolders = $derived(modelFolders(options.loras));
+	let embeddingFolders = $derived(modelFolders(options.embeddings));
+	let visibleCheckpoints = $derived(filterModelFolder(options.checkpoints, checkpointFolder));
+	let visibleLoras = $derived(filterModelFolder(options.loras, loraFolder));
+	let visibleEmbeddings = $derived(filterModelFolder(options.embeddings, embeddingFolder));
 	let embeddingModalOpen = $state(false);
 	let embeddingTarget = $state<'positive' | 'negative'>('positive');
 	let seed = $state('');
@@ -110,6 +159,17 @@
 	let sourceFileId = $state('');
 	let sourceImageUrl = $state('');
 	let sourceInput = $state<HTMLInputElement>();
+	let sourceSelectionOpen = $state(false);
+	let selectionSource = $state<SelectionSource>('device');
+	let storedAssetSource = $state<StoredSource>('uploaded');
+	let storedAssets = $state<StoredImageAsset[]>([]);
+	let storedLoading = $state(false);
+	let storedSearch = $state('');
+	let storedSort = $state<StoredSort>('latest');
+	let storedPage = $state(1);
+	let storedTotalPages = $state(0);
+	let storedRequestId = 0;
+	let sourceStoredAsset = $state<StoredImageAsset | null>(null);
 	let sourceDimensions = $state<ImageDimensions | null>(null);
 	let sourceMetadataLoading = $state(false);
 	let sizeApplying = $state(false);
@@ -171,10 +231,14 @@
 
 	async function loadOptions(targetFamily: ImageFamily) {
 		const requestId = ++optionsRequestId;
+		const targetPresetType: ImagePresetType = targetFamily === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima';
 		optionsLoading = true;
 		optionsError = '';
 		checkpointModalOpen = false;
 		loraModalOpen = false;
+		checkpointFolder = '';
+		loraFolder = '';
+		embeddingFolder = '';
 		samplingModalOpen = false;
 		options = { ...emptyOptions };
 		checkpoint = '';
@@ -182,15 +246,22 @@
 		samplerName = '';
 		scheduler = '';
 		try {
-			const loaded = await apiJson<ImageOptions>(`generation/image/options?family=${targetFamily}`);
+			const [loaded, loadedPresets] = await Promise.all([
+				apiJson<ImageOptions>(`generation/image/options?family=${targetFamily}`),
+				apiJson<Preset[]>(`presets?type=${targetPresetType}`)
+			]);
 			if (!active || requestId !== optionsRequestId || family !== targetFamily) return;
 			options = loaded;
+			presets = loadedPresets;
 			checkpoint = loaded.default_checkpoint;
 			samplerName = loaded.default_sampler;
 			scheduler = loaded.default_scheduler;
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 				regenerationParameters = null;
+			} else {
+				const defaultPreset = loadedPresets.find((preset) => preset.is_default);
+				if (defaultPreset) applyPreset(defaultPreset);
 			}
 		} catch (error) {
 			if (active && requestId === optionsRequestId) optionsError = getErrorMessage(error);
@@ -216,45 +287,197 @@
 		denoise = parameters.denoise ?? 0.65;
 		sourceFileId = parameters.source_file_id ?? '';
 		sourceImageUrl = parameters.source_image_url ?? '';
+		sourceStoredAsset = null;
+		sourceDimensions = null;
+		if (sourceImageUrl && sourceFileId) void inspectSourceImage(sourceImageUrl, sourceFileId);
+	}
+
+	function imagePresetInitialValues(): PresetValues {
+		return {
+			prompt: prompt.trim(),
+			negative_prompt: negativePrompt.trim(),
+			checkpoint,
+			loras: loras.map(({ name, strength }) => ({ name, strength })),
+			aspect_ratio: 'custom',
+			width: Number(width),
+			height: Number(height),
+			denoise: Number(denoise),
+			cfg: Number(cfg),
+			steps: Number(steps),
+			sampler_name: samplerName,
+			scheduler,
+			random_seed: randomSeed,
+			...(randomSeed || !seed.trim() ? {} : { seed: seed.trim() })
+		};
+	}
+
+	function openImagePresetSave() {
+		presetError = '';
+		presetOpen = true;
+	}
+
+	async function openImagePresetLoad() {
+		presetLoadOpen = true;
+		presetsLoading = true;
+		presetError = '';
+		try {
+			presets = await apiJson<Preset[]>(`presets?type=${presetType}`);
+		} catch (error) {
+			presetError = getErrorMessage(error);
+			presets = [];
+		} finally {
+			presetsLoading = false;
+		}
+	}
+
+	function applyPreset(preset: Preset, announce = false) {
+		const values = preset.values;
+		if (values.prompt !== undefined) prompt = values.prompt;
+		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
+		if (values.checkpoint !== undefined && options.checkpoints.includes(values.checkpoint)) checkpoint = values.checkpoint;
+		if (values.loras !== undefined) loras = values.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
+		if (values.width !== undefined) width = values.width;
+		if (values.height !== undefined) height = values.height;
+		if (values.denoise !== undefined) denoise = values.denoise;
+		if (values.cfg !== undefined) cfg = values.cfg;
+		if (values.steps !== undefined) steps = values.steps;
+		if (values.sampler_name !== undefined && options.samplers.includes(values.sampler_name)) samplerName = values.sampler_name;
+		if (values.scheduler !== undefined && options.schedulers.includes(values.scheduler)) scheduler = values.scheduler;
+		if (values.random_seed !== undefined) randomSeed = values.random_seed;
+		if (values.seed !== undefined) {
+			seed = values.seed;
+			randomSeed = false;
+		}
+		if (announce) {
+			presetLoadOpen = false;
+			presetSuccess = `'${preset.name}' 프리셋을 불러왔습니다. 저장된 항목만 적용했습니다.`;
+		}
+	}
+
+	function handlePresetSaved(saved: Preset) {
+		presets = [saved, ...presets.filter((preset) => preset.id !== saved.id)];
+		presetSuccess = `'${saved.name}' 프리셋을 저장했습니다.`;
+	}
+
+	function openSourceSelection() {
+		if (generating) return;
+		selectionSource = 'device';
+		storedAssetSource = 'uploaded';
+		storedImagePresetType = family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima';
+		storedAssets = [];
+		storedSearch = '';
+		storedSort = 'latest';
+		storedPage = 1;
+		storedTotalPages = 0;
+		sourceSelectionOpen = true;
+	}
+
+	function selectSelectionSource(source: SelectionSource) {
+		selectionSource = source;
+		if (source === 'stored') void loadStoredImages(1);
+	}
+
+	function selectStoredAssetSource(source: StoredSource) {
+		if (storedAssetSource === source) return;
+		storedAssetSource = source;
+		void loadStoredImages(1);
+	}
+
+	function selectStoredImagePresetType(type: ImagePresetType) {
+		if (storedImagePresetType === type) return;
+		storedImagePresetType = type;
+		void loadStoredImages(1);
+	}
+
+	async function loadStoredImages(requestedPage = storedPage) {
+		const requestId = ++storedRequestId;
+		storedLoading = true;
+		try {
+			const params = new URLSearchParams({
+				include_generated: 'true',
+				media_kind: 'image',
+				source: storedAssetSource,
+				search: storedSearch,
+				sort: storedSort,
+				page: String(requestedPage)
+			});
+			if (storedAssetSource === 'generated') {
+				params.set('generation_mode', storedImagePreset.generationMode);
+				params.set('model_family', storedImagePreset.modelFamily);
+			}
+			const result = await apiJson<StoredImagePage>(`uploads?${params.toString()}`);
+			if (active && requestId === storedRequestId) {
+				storedAssets = result.items;
+				storedPage = result.page;
+				storedTotalPages = result.total_pages;
+			}
+		} catch (error) {
+			if (active && requestId === storedRequestId) sourceError = getErrorMessage(error);
+		} finally {
+			if (active && requestId === storedRequestId) storedLoading = false;
+		}
+	}
+
+	function changeStoredFilter() {
+		void loadStoredImages(1);
+	}
+
+	function changeStoredPage(nextPage: number) {
+		if (nextPage < 1 || nextPage > storedTotalPages) return;
+		void loadStoredImages(nextPage);
+	}
+
+	function selectStoredImage(asset: StoredImageAsset) {
+		sourceMetadataRequestId += 1;
+		sourceError = '';
+		sourceFile = null;
+		sourceFileId = asset.file_id;
+		sourceImageUrl = asset.url ?? '';
+		sourceStoredAsset = asset;
+		sourceDimensions = null;
+		sourceMetadataLoading = false;
+		if (sourceInput) sourceInput.value = '';
+		sourceSelectionOpen = false;
+		if (asset.url) void inspectSourceImage(asset.url, asset.file_id);
 	}
 
 	function handleSourceFile(event: Event) {
 		if (!(event.currentTarget instanceof HTMLInputElement) || generating) return;
 		const files = event.currentTarget.files;
-		if (!files || files.length === 0) {
-			clearSource();
-			return;
-		}
+		if (!files || files.length === 0) return;
 		if (files.length !== 1) {
 			sourceError = '소스 이미지는 정확히 한 장만 선택해 주세요.';
-			clearSource();
 			return;
 		}
 		const file = files[0];
 		if (!file.type.startsWith('image/')) {
 			sourceError = '이미지 파일만 선택할 수 있습니다.';
-			clearSource();
 			return;
 		}
 		if (file.size <= 0) {
 			sourceError = '비어 있는 이미지 파일은 사용할 수 없습니다.';
-			clearSource();
 			return;
 		}
 		sourceError = '';
 		sourceFile = file;
 		sourceFileId = '';
 		sourceImageUrl = '';
+		sourceStoredAsset = null;
 		sourceDimensions = null;
+		event.currentTarget.value = '';
+		sourceSelectionOpen = false;
 		void inspectSourceImage(file);
 	}
 
-	async function inspectSourceImage(file: File) {
+	async function inspectSourceImage(source: File | string, expectedFileId = '') {
 		const requestId = ++sourceMetadataRequestId;
 		sourceMetadataLoading = true;
 		try {
-			const dimensions = await readImageDimensions(file);
-			if (!active || requestId !== sourceMetadataRequestId || sourceFile !== file) return;
+			const dimensions = await readImageDimensions(source);
+			const currentSource = source instanceof File
+				? sourceFile === source
+				: sourceFileId === expectedFileId && sourceImageUrl === source;
+			if (!active || requestId !== sourceMetadataRequestId || !currentSource) return;
 			sourceDimensions = dimensions;
 		} catch {
 			if (active && requestId === sourceMetadataRequestId) {
@@ -266,24 +489,23 @@
 		}
 	}
 
-	function readImageDimensions(file: File) {
-		const objectUrl = URL.createObjectURL(file);
-		return new Promise<ImageDimensions>((resolve, reject) => {
-			const image = new Image();
-			image.onload = () => {
-				URL.revokeObjectURL(objectUrl);
-				if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-					resolve({ width: image.naturalWidth, height: image.naturalHeight });
-				} else {
-					reject(new Error('invalid image dimensions'));
-				}
-			};
-			image.onerror = () => {
-				URL.revokeObjectURL(objectUrl);
-				reject(new Error('image metadata unavailable'));
-			};
-			image.src = objectUrl;
-		});
+	async function readImageDimensions(source: Blob | string) {
+		let objectUrl = '';
+		try {
+			if (source instanceof Blob) objectUrl = URL.createObjectURL(source);
+			else if (!/^(https?:)?\/\//.test(source)) objectUrl = URL.createObjectURL(await apiBlob(source));
+			const url = objectUrl || (typeof source === 'string' ? source : '');
+			return await new Promise<ImageDimensions>((resolve, reject) => {
+				const image = new Image();
+				image.onload = () => image.naturalWidth > 0 && image.naturalHeight > 0
+					? resolve({ width: image.naturalWidth, height: image.naturalHeight })
+					: reject(new Error('invalid image dimensions'));
+				image.onerror = () => reject(new Error('image metadata unavailable'));
+				image.src = url;
+			});
+		} finally {
+			if (objectUrl) URL.revokeObjectURL(objectUrl);
+		}
 	}
 
 	function normalizedImageDimensions(dimensions: ImageDimensions) {
@@ -296,12 +518,17 @@
 	}
 
 	async function applySourceSize() {
-		if (!sourceFile || sizeApplying || generating) return;
+		const selectedFile = sourceFile;
+		const selectedFileId = sourceFileId;
+		const selectedUrl = sourceImageUrl;
+		const source = selectedFile ?? selectedUrl;
+		if (!source || sizeApplying || generating) return;
 		sizeApplying = true;
 		sourceError = '';
 		try {
-			const dimensions = sourceDimensions ?? (await readImageDimensions(sourceFile));
-			if (sourceFile) sourceDimensions = dimensions;
+			const dimensions = sourceDimensions ?? (await readImageDimensions(source));
+			if (sourceFile !== selectedFile || sourceFileId !== selectedFileId || sourceImageUrl !== selectedUrl) return;
+			sourceDimensions = dimensions;
 			const normalized = normalizedImageDimensions(dimensions);
 			width = normalized.width;
 			height = normalized.height;
@@ -317,6 +544,7 @@
 		sourceFile = null;
 		sourceFileId = '';
 		sourceImageUrl = '';
+		sourceStoredAsset = null;
 		sourceDimensions = null;
 		sourceMetadataLoading = false;
 		sizeApplying = false;
@@ -471,6 +699,10 @@
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
 	}
 
+	function storedSourceLabel(asset: StoredImageAsset) {
+		return asset.source_type === 'image_generation' ? '생성 이미지' : '업로드 콘텐츠';
+	}
+
 	function statusLabel(status: string) {
 		return {
 			queued: uploading ? '소스 이미지 업로드 중' : '대기 중',
@@ -572,13 +804,17 @@
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="i2i-settings-title">
 					<div class="flex items-center justify-between gap-4">
 						<div id="i2i-settings-title"><Typography as="h2" variant="h2">변환 설정</Typography></div>
-						{#if optionsLoading}<LoadingSpinner size="sm" label="모델 목록 불러오는 중" />{/if}
+						<div class="flex items-center gap-2">
+							<IconOutlinedButton ariaLabel="I2I 프리셋 저장" title="프리셋 저장" disabled={generating || optionsLoading} onclick={openImagePresetSave}><Save size={17} strokeWidth={1.8} /></IconOutlinedButton>
+							<IconOutlinedButton ariaLabel="I2I 프리셋 불러오기" title="프리셋 불러오기" loading={presetsLoading} disabled={generating} onclick={() => void openImagePresetLoad()}><FolderOpen size={17} strokeWidth={1.8} /></IconOutlinedButton>
+							{#if optionsLoading}<LoadingSpinner size="sm" label="모델 목록 불러오는 중" />{/if}
+						</div>
 					</div>
 
 					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
-							<label for="i2i-source" class="text-sm font-medium">소스 이미지</label>
-							<input id="i2i-source" bind:this={sourceInput} type="file" accept="image/*" class={fileInputClass} disabled={generating} onchange={handleSourceFile} />
+							<span class="text-sm font-medium">소스 이미지</span>
+							<OutlinedButton type="button" class="w-full" disabled={generating} onclick={openSourceSelection}><HardDrive size={16} />소스 이미지 선택</OutlinedButton>
 							{#if sourceFile}
 								<div class="overflow-hidden rounded-xl border border-border bg-muted/30">
 									<div class="relative">
@@ -595,18 +831,29 @@
 									</dl>
 									<OutlinedButton type="button" class="w-full rounded-none border-0 border-t" loading={sizeApplying} disabled={generating || sourceMetadataLoading || !sourceDimensions} onclick={() => void applySourceSize()}>이 사이즈 사용</OutlinedButton>
 								</div>
-							{:else if sourceImageUrl}
+							{:else if sourceFileId}
 								<div class="overflow-hidden rounded-xl border border-border bg-muted/30">
 									<div class="relative">
-										<IconOutlinedButton ariaLabel="소스 이미지 선택 해제" title="소스 이미지 선택 해제" class="absolute right-2 top-2 z-10 bg-card/90" disabled={generating} onclick={() => clearSource()}><X size={16} strokeWidth={2} /></IconOutlinedButton>
-										<ImageMedia source={sourceImageUrl} sourceType={imageSourceType(sourceImageUrl)} alt="기존 I2I 소스 이미지" class="max-h-80" />
+										<IconOutlinedButton ariaLabel="소스 이미지 선택 해제" title="소스 이미지 선택 해제" class="absolute right-2 top-2 z-10 bg-card/90" disabled={generating} onclick={clearSource}><X size={16} strokeWidth={2} /></IconOutlinedButton>
+										{#if sourceImageUrl}
+											<ImageMedia source={sourceImageUrl} sourceType={imageSourceType(sourceImageUrl)} alt="선택한 보관함 이미지 변환 소스" class="max-h-80" />
+										{:else}
+											<div class="flex min-h-48 flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground"><ImagePlus size={24} strokeWidth={1.7} /><span class="text-xs">미리보기를 불러올 수 없습니다.</span></div>
+										{/if}
 									</div>
-									<p class="border-t border-border px-3 py-3 text-xs text-muted-foreground">기존 보관함 이미지를 재사용합니다. 출력 크기는 저장된 생성 설정을 유지합니다.</p>
+									<dl class="grid gap-2 border-t border-border px-3 py-3 text-xs sm:grid-cols-2">
+										<div class="min-w-0"><dt class="text-muted-foreground">파일 이름</dt><dd class="mt-1 truncate font-medium" title={sourceStoredAsset?.filename ?? '기존 보관함 이미지'}>{sourceStoredAsset?.filename ?? '기존 보관함 이미지'}</dd></div>
+										<div><dt class="text-muted-foreground">파일 형식</dt><dd class="mt-1 font-medium">{sourceStoredAsset?.content_type ?? '알 수 없음'}</dd></div>
+										<div><dt class="text-muted-foreground">파일 크기</dt><dd class="mt-1 font-medium">{sourceStoredAsset ? formatFileSize(sourceStoredAsset.size) : '저장 정보 없음'}</dd></div>
+										<div><dt class="text-muted-foreground">원본 크기</dt><dd class="mt-1 font-medium" aria-live="polite">{sourceMetadataLoading ? '확인 중' : sourceDimensions ? `${sourceDimensions.width} × ${sourceDimensions.height}` : '확인 실패'}</dd></div>
+									</dl>
+									<OutlinedButton type="button" class="w-full rounded-none border-0 border-t" loading={sizeApplying} disabled={generating || sourceMetadataLoading || !sourceDimensions} onclick={() => void applySourceSize()}>이 사이즈 사용</OutlinedButton>
+									<p class="border-t border-border px-3 py-3 text-xs text-muted-foreground">보관함 이미지를 재사용합니다. 선택한 파일은 다시 업로드하지 않습니다.</p>
 								</div>
 							{:else}
 								<div class="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-4 text-center text-muted-foreground">
 									<ImagePlus size={24} strokeWidth={1.7} />
-									<span class="text-xs">기기에서 이미지 한 장을 선택해 주세요.</span>
+									<span class="text-xs">기기 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.</span>
 								</div>
 							{/if}
 						</div>
@@ -705,42 +952,149 @@
 		</div>
 	</Layout>
 
-	<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description={`${familyLabel}에서 사용할 설치된 체크포인트를 하나 선택하세요.`}>
-		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each options.checkpoints as value}
-				<button type="button" onclick={() => { checkpoint = value; checkpointModalOpen = false; }} aria-pressed={checkpoint === value} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
-					<span>{value}</span>
-					{#if checkpoint === value}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
-				</button>
-			{/each}
+	<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description={`${familyLabel}의 전체 또는 하위 folder에서 하나를 선택하세요.`}>
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="체크포인트 folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === ''} onclick={() => (checkpointFolder = '')}>전체</OutlinedButton>
+				{#if checkpointFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (checkpointFolder = parentModelFolder(checkpointFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each checkpointFolders as folder}
+					<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === folder} onclick={() => (checkpointFolder = folder)}>{folder}</OutlinedButton>
+				{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each visibleCheckpoints as value}
+					<button type="button" onclick={() => { checkpoint = value; checkpointModalOpen = false; }} aria-pressed={checkpoint === value} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
+						<span>{value}</span>
+						{#if checkpoint === value}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
 	</Modal>
 
-	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="설치된 LoRA를 최대 8개까지 선택하거나 선택 해제하세요.">
-		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each options.loras as value}
-				{@const selected = loras.some((lora) => lora.name === value)}
-				<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
-					<span>{value}</span>
-					{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
-				</button>
-			{/each}
+	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 최대 8개를 선택하세요.">
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LoRA folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>
+				{#if loraFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (loraFolder = parentModelFolder(loraFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each loraFolders as folder}
+					<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === folder} onclick={() => (loraFolder = folder)}>{folder}</OutlinedButton>
+				{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each visibleLoras as value}
+					{@const selected = loras.some((lora) => lora.name === value)}
+					<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
+						<span>{value}</span>
+						{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 	</Modal>
 
-	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="선택한 Embedding 토큰을 프롬프트에 추가합니다.">
-		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each options.embeddings as value}
-				<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
-			{/each}
+	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="전체 또는 하위 folder에서 Embedding token을 선택하세요.">
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="Embedding folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === ''} onclick={() => (embeddingFolder = '')}>전체</OutlinedButton>
+				{#if embeddingFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (embeddingFolder = parentModelFolder(embeddingFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each embeddingFolders as folder}
+					<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === folder} onclick={() => (embeddingFolder = folder)}>{folder}</OutlinedButton>
+				{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each visibleEmbeddings as value}
+					<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
+				{/each}
+			</div>
 		</div>
+	</Modal>
+
+	<Modal bind:open={sourceSelectionOpen} title="소스 이미지 선택" description="기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.">
+		<div class="space-y-5">
+			<Tab items={selectionSourceTabs} bind:value={selectionSource} ariaLabel="소스 이미지 선택 위치" onselect={selectSelectionSource} />
+			{#if selectionSource === 'device'}
+				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" class={fileInputClass} onchange={handleSourceFile} /></label>
+			{:else}
+				<div class="space-y-4">
+					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 이미지 종류" onselect={selectStoredAssetSource} />
+					{#if storedAssetSource === 'generated'}
+						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="생성 이미지 분류">
+							{#each imagePresetCategories as category (category.value)}
+								<OutlinedButton type="button" class="justify-center text-xs" active={storedImagePresetType === category.value} onclick={() => selectStoredImagePresetType(category.value)}>{category.label}</OutlinedButton>
+							{/each}
+						</div>
+					{/if}
+					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+						<SearchBar id="i2i-stored-search" bind:value={storedSearch} label="저장 이미지 검색" placeholder="파일명으로 검색" oninput={changeStoredFilter} />
+						<label class="flex items-center gap-2 text-sm" for="i2i-stored-sort"><span class="sr-only">정렬</span><select id="i2i-stored-sort" bind:value={storedSort} onchange={changeStoredFilter} class={numberInputClass}><option value="latest">최신순</option><option value="oldest">오래된순</option><option value="name">이름순</option></select></label>
+					</div>
+					{#if storedLoading}
+						<div class="flex min-h-48 items-center justify-center"><LoadingSpinner size="md" label="저장된 이미지를 불러오는 중" /></div>
+					{:else if storedAssets.length === 0}
+						<p class="py-8 text-center text-sm text-muted-foreground">선택할 이미지가 없습니다.</p>
+					{:else}
+						<div class="grid grid-cols-2 gap-3">
+							{#each storedAssets as asset (asset.file_id)}
+								<div class={`overflow-hidden rounded-xl border bg-card ${sourceFileId === asset.file_id ? 'border-primary ring-2 ring-primary/20' : 'border-border'}`}>
+									<div class="aspect-video bg-muted">
+										{#if asset.url}
+											<ImageMedia source={asset.url} sourceType={imageSourceType(asset.url)} alt={storedSourceLabel(asset)} class="h-full" />
+										{:else}
+											<div class="flex h-full items-center justify-center text-xs text-muted-foreground">미리보기 없음</div>
+										{/if}
+									</div>
+									<div class="space-y-2 p-2.5">
+										<div class="flex items-center justify-between gap-2 text-[11px] text-muted-foreground"><span>{storedSourceLabel(asset)}</span><span>{new Date(asset.created_at).toLocaleDateString('ko-KR')}</span></div>
+										<p class="truncate text-xs font-medium" title={asset.filename}>{asset.filename}</p>
+										<OutlinedButton type="button" class="w-full px-2 text-xs" active={sourceFileId === asset.file_id} onclick={() => selectStoredImage(asset)}>{sourceFileId === asset.file_id ? '선택됨' : '선택'}</OutlinedButton>
+									</div>
+								</div>
+							{/each}
+						</div>
+						{#if storedTotalPages > 1}
+							<nav class="flex items-center justify-center gap-4 pt-2" aria-label="저장 이미지 페이지 이동">
+								<button type="button" aria-label="이전 저장 이미지 페이지" disabled={storedPage <= 1} onclick={() => changeStoredPage(storedPage - 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={18} /></button>
+								<span class="text-sm font-medium text-muted-foreground">{storedPage} / {storedTotalPages}</span>
+								<button type="button" aria-label="다음 저장 이미지 페이지" disabled={storedPage >= storedTotalPages} onclick={() => changeStoredPage(storedPage + 1)} class="inline-flex size-10 items-center justify-center rounded-lg border border-border text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight size={18} /></button>
+							</nav>
+						{/if}
+					{/if}
+				</div>
+			{/if}
+		</div>
+		{#snippet footer()}<OutlinedButton onclick={() => (sourceSelectionOpen = false)}>닫기</OutlinedButton>{/snippet}
 	</Modal>
 
 	<SamplingSelectionModal bind:open={samplingModalOpen} samplers={options.samplers} schedulers={options.schedulers} bind:samplerName bind:scheduler />
 
+	<ImagePresetModal bind:open={presetOpen} preset={null} initialValues={imagePresetInitialValues()} presetType={presetType} options={options} onSaved={handlePresetSaved} />
+	<Modal bind:open={presetLoadOpen} title={`${routeTitle} 프리셋 불러오기`} description="같은 T2I/I2I와 모델 family로 저장한 설정만 표시합니다." closeOnBackdrop={!presetsLoading}>
+		{#if presetsLoading}
+			<div class="flex justify-center py-8"><LoadingSpinner size="md" label="프리셋 불러오는 중" /></div>
+		{:else if presetError}
+			<p class="py-4 text-sm text-destructive" role="alert">{presetError}</p>
+		{:else if presets.length === 0}
+			<p class="py-4 text-sm text-muted-foreground">저장된 {routeTitle} 프리셋이 없습니다.</p>
+		{:else}
+			<div class="space-y-2">
+				{#each presets as preset (preset.id)}
+					<div class="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
+						<p class="min-w-0 truncate text-sm font-semibold">{preset.name}</p>
+						<OutlinedButton class="shrink-0 px-3 text-xs" onclick={() => applyPreset(preset, true)}>불러오기</OutlinedButton>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</Modal>
+
 	{#if optionsError}
 		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="모델 목록 불러오기 실패" message={optionsError} onclose={() => (optionsError = '')} /></div>
+	{:else if presetError}
+		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="프리셋 처리 실패" message={presetError} onclose={() => (presetError = '')} /></div>
+	{:else if presetSuccess}
+		<div class="fixed right-4 top-4 z-50"><Toast state="positive" title="프리셋" message={presetSuccess} onclose={() => (presetSuccess = '')} /></div>
 	{:else if sourceError}
 		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="소스 이미지 확인 실패" message={sourceError} onclose={() => (sourceError = '')} /></div>
 	{:else if generationError}

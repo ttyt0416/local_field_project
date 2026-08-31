@@ -8,7 +8,7 @@ from app.presets import PresetCreateRequest, PresetUpdateRequest, PresetValues
 class PresetRequestTest(unittest.TestCase):
     def test_request_keeps_only_selected_values(self) -> None:
         payload = PresetCreateRequest(
-            type="t2i",
+            type="t2i_anima",
             name="  portrait  ",
             values=PresetValues(prompt="a portrait", cfg=5),
         )
@@ -18,12 +18,13 @@ class PresetRequestTest(unittest.TestCase):
 
     def test_default_flag_is_supported(self) -> None:
         create_payload = PresetCreateRequest(
-            type="t2i",
+            type="t2i_anima",
             name="portrait",
             values=PresetValues(prompt="a portrait"),
             is_default=True,
         )
         update_payload = PresetUpdateRequest(
+            type="t2i_anima",
             name="portrait",
             values=PresetValues(prompt="a portrait"),
             is_default=False,
@@ -31,11 +32,11 @@ class PresetRequestTest(unittest.TestCase):
 
         self.assertTrue(create_payload.is_default)
         self.assertFalse(update_payload.is_default)
-        self.assertEqual(update_payload.type, "t2i")
+        self.assertEqual(update_payload.type, "t2i_anima")
 
     def test_unknown_value_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
-            PresetCreateRequest.model_validate({"type": "t2i", "name": "portrait", "values": {"unknown": "value"}})
+            PresetCreateRequest.model_validate({"type": "t2i_anima", "name": "portrait", "values": {"unknown": "value"}})
 
     def test_image_and_video_types_are_supported(self) -> None:
         payload = PresetCreateRequest(
@@ -62,7 +63,7 @@ class PresetRequestTest(unittest.TestCase):
     def test_image_preset_accepts_sampler_scheduler_and_seed(self) -> None:
         payload = PresetCreateRequest.model_validate(
             {
-                "type": "t2i",
+                "type": "t2i_illustrious",
                 "name": "sampling",
                 "values": {"sampler_name": "euler", "scheduler": "normal", "seed": "123"},
             }
@@ -70,6 +71,14 @@ class PresetRequestTest(unittest.TestCase):
         self.assertEqual(payload.values.sampler_name, "euler")
         self.assertEqual(payload.values.scheduler, "normal")
         self.assertEqual(payload.values.seed, "123")
+
+    def test_all_image_namespaces_are_accepted(self) -> None:
+        preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious")
+        payload_types = [
+            PresetCreateRequest.model_validate({"type": preset_type, "name": preset_type, "values": {"prompt": "portrait"}}).type
+            for preset_type in preset_types
+        ]
+        self.assertEqual(payload_types, list(preset_types))
 
     def test_unknown_type_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):

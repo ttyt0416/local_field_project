@@ -22,6 +22,8 @@ from .vault import VideoEditRequest
 router = APIRouter(prefix="/uploads", tags=["media library"])
 UPLOADS_PAGE_SIZE = 10
 _MAX_IMAGE_BYTES = 50 * 1024 * 1024
+ImageGenerationMode = Literal["t2i", "i2i"]
+ImageModelFamily = Literal["anima", "illustrious"]
 
 
 class MediaAssetResponse(BaseModel):
@@ -222,7 +224,13 @@ def reusable_media(
     page: int = Query(default=1, ge=1),
     user: UserResponse = Depends(current_user),
     source: Literal["uploaded", "generated"] | None = None,
+    generation_mode: ImageGenerationMode | None = None,
+    model_family: ImageModelFamily | None = None,
 ) -> MediaAssetPage:
+    if (generation_mode is None) != (model_family is None):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="생성 이미지 분류를 모두 선택해 주세요.")
+    if generation_mode is not None and (source != "generated" or media_kind != "image"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="생성 이미지 분류는 생성 이미지에만 사용할 수 있습니다.")
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     result: list[MediaAssetResponse] = []
@@ -235,6 +243,9 @@ def reusable_media(
     }
     if source is not None:
         media_filters["source_type"] = source
+    if generation_mode is not None:
+        media_filters["generation_mode"] = generation_mode
+        media_filters["model_family"] = model_family
     assets, total_count = list_reusable_media(user.id, **media_filters)
     for asset in assets:
         url = None

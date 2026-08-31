@@ -20,6 +20,7 @@
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
+	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 
 	type ModelFamily = 'anima' | 'illustrious';
 	type ImageOptions = {
@@ -69,7 +70,7 @@
 	};
 	type Preset = {
 		id: string;
-		type: 't2i';
+		type: 't2i_anima' | 't2i_illustrious';
 		name: string;
 		values: PresetValues;
 		is_default: boolean;
@@ -83,8 +84,9 @@
 	type ImageSize = { width: number; height: number };
 
 	const modelFamily: ModelFamily = page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima';
+	const presetType: Preset['type'] = modelFamily === 'illustrious' ? 't2i_illustrious' : 't2i_anima';
 	const familyLabel = modelFamily === 'illustrious' ? 'Illustrious' : 'Anima';
-	const pageTitle = `텍스트를 이미지로 (${familyLabel})`;
+	const pageTitle = `T2I (${familyLabel})`;
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
@@ -182,6 +184,15 @@
 	let samplingModalOpen = $state(false);
 	let checkpointModalOpen = $state(false);
 	let loraModalOpen = $state(false);
+	let checkpointFolder = $state('');
+	let loraFolder = $state('');
+	let embeddingFolder = $state('');
+	let checkpointFolders = $derived(modelFolders(options.checkpoints));
+	let loraFolders = $derived(modelFolders(options.loras));
+	let embeddingFolders = $derived(modelFolders(options.embeddings));
+	let visibleCheckpoints = $derived(filterModelFolder(options.checkpoints, checkpointFolder));
+	let visibleLoras = $derived(filterModelFolder(options.loras, loraFolder));
+	let visibleEmbeddings = $derived(filterModelFolder(options.embeddings, embeddingFolder));
 	let embeddingModalOpen = $state(false);
 	let embeddingTarget = $state<'positive' | 'negative'>('positive');
 	let seed = $state('');
@@ -254,7 +265,7 @@
 		savePresetModalOpen = true;
 		presetsLoading = true;
 		try {
-			presets = await apiJson<Preset[]>('presets?type=t2i');
+			presets = await apiJson<Preset[]>(`presets?type=${presetType}`);
 		} catch (error) {
 			presetError = getErrorMessage(error);
 			presets = [];
@@ -268,7 +279,7 @@
 		presetsLoading = true;
 		presetError = '';
 		try {
-			presets = await apiJson<Preset[]>('presets?type=t2i');
+			presets = await apiJson<Preset[]>(`presets?type=${presetType}`);
 		} catch (error) {
 			presetError = getErrorMessage(error);
 			presets = [];
@@ -333,10 +344,11 @@
 		try {
 			await apiJson<Preset>(presetSaveMode === 'overwrite' ? `presets/${overwritePresetId}` : 'presets', {
 				method: presetSaveMode === 'overwrite' ? 'PUT' : 'POST',
-				json:
-					presetSaveMode === 'overwrite'
-						? { name: presetName.trim(), values: buildPresetValues() }
-						: { type: 't2i', name: presetName.trim(), values: buildPresetValues() }
+				json: {
+					type: presetType,
+					name: presetName.trim(),
+					values: buildPresetValues()
+				}
 			});
 			savePresetModalOpen = false;
 			presetSuccess =
@@ -469,7 +481,7 @@
 		ready = true;
 		try {
 			[presets, options] = await Promise.all([
-				apiJson<Preset[]>('presets?type=t2i'),
+				apiJson<Preset[]>(`presets?type=${presetType}`),
 				apiJson<ImageOptions>(`generation/image/options?family=${modelFamily}`)
 			]);
 			checkpoint = options.default_checkpoint;
@@ -851,35 +863,62 @@
 		</div>
 	</Layout>
 
-	<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="설치된 체크포인트에서 하나를 선택하세요.">
-		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each options.checkpoints as value}
-				<button type="button" onclick={() => { checkpoint = value; checkpointModalOpen = false; }} aria-pressed={checkpoint === value} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
-					<span>{value}</span>
-					{#if checkpoint === value}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
-				</button>
-			{/each}
+	<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="전체 또는 하위 folder에서 하나를 선택하세요.">
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="체크포인트 folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === ''} onclick={() => (checkpointFolder = '')}>전체</OutlinedButton>
+				{#if checkpointFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (checkpointFolder = parentModelFolder(checkpointFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each checkpointFolders as folder}
+					<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === folder} onclick={() => (checkpointFolder = folder)}>{folder}</OutlinedButton>
+				{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each visibleCheckpoints as value}
+					<button type="button" onclick={() => { checkpoint = value; checkpointModalOpen = false; }} aria-pressed={checkpoint === value} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
+						<span>{value}</span>
+						{#if checkpoint === value}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
 	</Modal>
 
-	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="설치된 LoRA를 최대 8개까지 선택하거나 선택 해제하세요.">
-		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each options.loras as value}
-				{@const selected = loras.some((lora) => lora.name === value)}
-				<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
-					<span>{value}</span>
-					{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
-				</button>
-			{/each}
+	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 최대 8개를 선택하세요.">
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LoRA folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>
+				{#if loraFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (loraFolder = parentModelFolder(loraFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each loraFolders as folder}
+					<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === folder} onclick={() => (loraFolder = folder)}>{folder}</OutlinedButton>
+				{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each visibleLoras as value}
+					{@const selected = loras.some((lora) => lora.name === value)}
+					<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
+						<span>{value}</span>
+						{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 	</Modal>
 
-	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="선택한 Embedding 토큰을 프롬프트에 추가합니다.">
-		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each options.embeddings as value}
-				<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
-			{/each}
+	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="전체 또는 하위 folder에서 Embedding token을 선택하세요.">
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="Embedding folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === ''} onclick={() => (embeddingFolder = '')}>전체</OutlinedButton>
+				{#if embeddingFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (embeddingFolder = parentModelFolder(embeddingFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each embeddingFolders as folder}
+					<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === folder} onclick={() => (embeddingFolder = folder)}>{folder}</OutlinedButton>
+				{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each visibleEmbeddings as value}
+					<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
+				{/each}
+			</div>
 		</div>
 	</Modal>
 
