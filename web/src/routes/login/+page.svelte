@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Moon, Sparkles, Sun } from '@lucide/svelte';
+	import { Eye, EyeOff, Moon, Sparkles, Sun } from '@lucide/svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import Input from '../../../components/inputs/input.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
@@ -21,6 +21,7 @@
 	let mode = $state<Mode>('login');
 	let username = $state('');
 	let password = $state('');
+	let passwordVisible = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 
@@ -106,15 +107,33 @@
 					bind:value={username}
 					required
 				/>
-				<Input
-					id="auth-password"
-					label="비밀번호"
-					type="password"
-					autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
-					placeholder="8자 이상 입력해 주세요"
-					bind:value={password}
-					required
-				/>
+				<div class="space-y-2">
+					<label for="auth-password" class="block text-sm font-medium text-foreground">비밀번호<span class="ml-1 text-destructive" aria-hidden="true">*</span></label>
+					<div class="relative">
+						<input
+							id="auth-password"
+							type={passwordVisible ? 'text' : 'password'}
+							autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+							placeholder="8자 이상 입력해 주세요"
+							bind:value={password}
+							required
+							class="h-11 w-full rounded-lg border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+						/>
+						<button
+							type="button"
+							class="absolute right-2 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							aria-label={passwordVisible ? '비밀번호 숨기기' : '비밀번호 표시'}
+							aria-pressed={passwordVisible}
+							onclick={() => (passwordVisible = !passwordVisible)}
+						>
+							{#if passwordVisible}
+								<EyeOff size={17} strokeWidth={1.8} />
+							{:else}
+								<Eye size={17} strokeWidth={1.8} />
+							{/if}
+						</button>
+					</div>
+				</div>
 
 				{#if error}
 					<p class="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">{error}</p>
