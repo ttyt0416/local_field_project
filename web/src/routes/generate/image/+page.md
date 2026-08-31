@@ -1,4 +1,6 @@
-# 이미지 생성 결과 표시
+# 텍스트를 이미지로 결과 표시
+
+`/generate/image?family=anima|illustrious`는 같은 T2I UI를 사용하되 query family에 맞는 checkpoint·LoRA options와 backend loader를 사용한다. Anima는 Diffusion Model, Illustrious는 full checkpoint다. 제목은 각각 `텍스트를 이미지로 (Anima)`와 `텍스트를 이미지로 (Illustrious)`다. 다른 family의 preset checkpoint·LoRA는 options allowlist에서 제외한다. Illustrious 긍정·부정 프롬프트의 Embedding picker는 `embeddings/Illustrious` 파일을 선택해 native `embedding:Illustrious/파일명` token을 해당 prompt에 삽입한다.
 
 이미지 생성 결과 응답에는 Storage 절대 URL 또는 기존 상대 URL을 사용한다. 생성 요청 후에는 전역 generation job store가 backend SSE를 구독하며, 서버 worker가 ComfyUI 결과를 처리하는 동안 route 이동과 무관하게 상태를 보존한다. 생성 화면은 store의 가장 최근 job을 결과 패널에 가져오지 않고, 해당 화면에서 새로 등록한 job만 표시해 이전 완료 결과를 초기화한다. 생성 상태는 처리 중일 때만 진행률을 표시하고 완료 시 퍼센트를 표시하지 않는다. 생성 중에는 경과 시간을 분·초로 표시하고 완료·실패 후에는 DB에 저장된 고정 소요 시간을 표시한다. 생성 진행 중 SSE 연결 상태 자체는 사용자 문구로 표시하지 않으며, 새 LoRA 슬롯의 strength 기본값은 `1.0`이고 최대·최소 제한은 없다. 가로와 세로 바꾸기 아이콘 버튼은 두 크기 값을 교환하고 이미지 비율을 `커스텀`으로 전환한다. Seed는 숫자 입력으로 제공하고 `무작위 시드`가 선택되면 입력을 비활성화해 서버가 무작위 seed를 선택하게 한다. 모바일 이미지 생성 버튼은 불투명 배경의 하단 고정 컨테이너 안에 표시하고 데스크톱에서는 기존 폼 흐름으로 표시한다. 프리셋 저장 모달이 열린 동안 배경 페이지 스크롤을 잠그며, 긴 모달 본문은 모달 내부에서 스크롤한다.
 

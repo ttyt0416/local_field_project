@@ -115,6 +115,7 @@ class ModelDownloadsTest(unittest.TestCase):
     def test_model_type_mapping_covers_requested_types(self) -> None:
         cases = {
             "checkpoint": ("Checkpoint", "Model"),
+            "diffusion_model": ("Checkpoint", "Model"),
             "lora": ("LoCon", "Model"),
             "text_encoder": ("TextEncoder", "Model"),
             "vae": ("VAE", "Model"),
@@ -139,6 +140,17 @@ class ModelDownloadsTest(unittest.TestCase):
         )
         self.assertTrue(_file_matches(version, version.files[0], "text_encoder"))
 
+    def test_model_storage_categories_are_distinct(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for folder in ("checkpoints", "diffusion_models", "loras", "embeddings"):
+                (root / folder).mkdir()
+            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
+                self.assertEqual(_model_target_directory("checkpoint", "Illustrious"), root / "checkpoints/Illustrious")
+                self.assertEqual(_model_target_directory("diffusion_model", "Anima"), root / "diffusion_models/Anima")
+                self.assertEqual(_model_target_directory("lora", "Illustrious"), root / "loras/Illustrious")
+                self.assertEqual(_model_target_directory("embedding", "Illustrious"), root / "embeddings/Illustrious")
+
     def test_safe_filename_removes_path_and_rejects_unsupported_files(self) -> None:
         self.assertEqual(_safe_filename("nested\\folder\\model.safetensors"), "model.safetensors")
         with self.assertRaises(CivitaiError):
@@ -150,19 +162,19 @@ class ModelDownloadsTest(unittest.TestCase):
         self.assertEqual(_safe_subfolder(" characters/anime "), "characters/anime")
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            (root / "diffusion_models").mkdir()
+            (root / "checkpoints").mkdir()
             with patch(
                 "app.model_downloads.settings",
                 replace(settings, comfyui_models_path=temporary_directory),
             ):
                 self.assertEqual(
                     _model_target_directory("checkpoint", "characters/anime"),
-                    root / "diffusion_models/characters/anime",
+                    root / "checkpoints/characters/anime",
                 )
 
                 outside = root / "outside"
                 outside.mkdir()
-                (root / "diffusion_models/linked").symlink_to(outside, target_is_directory=True)
+                (root / "checkpoints/linked").symlink_to(outside, target_is_directory=True)
                 with self.assertRaises(CivitaiError):
                     _model_target_directory("checkpoint", "linked/nested")
 
@@ -216,7 +228,7 @@ class ModelDownloadsTest(unittest.TestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             root.mkdir(exist_ok=True)
-            target = root / "diffusion_models/characters/anime/model.safetensors"
+            target = root / "checkpoints/characters/anime/model.safetensors"
             target.parent.mkdir(parents=True)
             row = {
                 "id": uuid.uuid4(),
@@ -249,7 +261,7 @@ class ModelDownloadsTest(unittest.TestCase):
         user = UserResponse(id=uuid.uuid4(), username="tester")
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            model_directory = root / "diffusion_models"
+            model_directory = root / "checkpoints"
             model_directory.mkdir()
             model = model_directory / "model.safetensors"
             model.write_bytes(b"model")
@@ -275,9 +287,9 @@ class ModelDownloadsTest(unittest.TestCase):
 
             linked_root = root / "linked-root"
             linked_root.mkdir()
-            linked_model_directory = root / "linked-diffusion_models"
+            linked_model_directory = root / "linked-checkpoints"
             linked_model_directory.mkdir()
-            (linked_root / "diffusion_models").symlink_to(linked_model_directory, target_is_directory=True)
+            (linked_root / "checkpoints").symlink_to(linked_model_directory, target_is_directory=True)
             with patch(
                 "app.model_downloads.settings",
                 replace(settings, comfyui_models_path=str(linked_root)),
@@ -293,7 +305,7 @@ class ModelDownloadsTest(unittest.TestCase):
     def test_cancelled_download_deletes_partial_file(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            target = root / "diffusion_models" / "model.safetensors"
+            target = root / "checkpoints" / "model.safetensors"
             target.parent.mkdir()
             partial = target.with_name(f".{target.name}.part")
             partial.write_bytes(b"partial")
@@ -343,7 +355,7 @@ class ModelDownloadsTest(unittest.TestCase):
     def test_cancel_endpoint_deletes_partial_file_before_returning(self) -> None:
         user = UserResponse(id=uuid.uuid4(), username="tester")
         with TemporaryDirectory() as temporary_directory:
-            target = Path(temporary_directory) / "diffusion_models" / "model.safetensors"
+            target = Path(temporary_directory) / "checkpoints" / "model.safetensors"
             partial = target.with_name(f".{target.name}.part")
             partial.parent.mkdir()
             partial.write_bytes(b"partial")

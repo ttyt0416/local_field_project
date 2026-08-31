@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { ArrowLeftRight, Check, FolderOpen, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
@@ -20,9 +21,12 @@
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 
+	type ModelFamily = 'anima' | 'illustrious';
 	type ImageOptions = {
+		model_family: ModelFamily;
 		checkpoints: string[];
 		loras: string[];
+		embeddings: string[];
 		samplers: string[];
 		schedulers: string[];
 		default_checkpoint: string;
@@ -78,6 +82,9 @@
 	type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 	type ImageSize = { width: number; height: number };
 
+	const modelFamily: ModelFamily = page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima';
+	const familyLabel = modelFamily === 'illustrious' ? 'Illustrious' : 'Anima';
+	const pageTitle = `텍스트를 이미지로 (${familyLabel})`;
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
@@ -152,8 +159,10 @@
 	let presetSaveMode = $state<PresetSaveMode>('new');
 	let overwritePresetId = $state('');
 	let options = $state<ImageOptions>({
+		model_family: modelFamily,
 		checkpoints: [],
 		loras: [],
+		embeddings: [],
 		samplers: [],
 		schedulers: [],
 		default_checkpoint: '',
@@ -173,6 +182,8 @@
 	let samplingModalOpen = $state(false);
 	let checkpointModalOpen = $state(false);
 	let loraModalOpen = $state(false);
+	let embeddingModalOpen = $state(false);
+	let embeddingTarget = $state<'positive' | 'negative'>('positive');
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let aspectRatio = $state<AspectRatio>('custom');
@@ -202,6 +213,28 @@
 			return;
 		}
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
+	}
+
+	function openEmbeddingPicker(target: 'positive' | 'negative') {
+		embeddingTarget = target;
+		embeddingModalOpen = true;
+	}
+
+	function insertEmbedding(name: string) {
+		const token = `embedding:${name.replace(/\.(safetensors|pt|bin)$/i, '')}`;
+		const current = embeddingTarget === 'positive' ? prompt : negativePrompt;
+		if (current.includes(token)) {
+			embeddingModalOpen = false;
+			return;
+		}
+		const next = current.trim() ? `${current.trim()}, ${token}` : token;
+		if (next.length > 5000) {
+			generationError = 'Embedding을 추가하면 프롬프트 길이 제한을 초과합니다.';
+			return;
+		}
+		if (embeddingTarget === 'positive') prompt = next;
+		else negativePrompt = next;
+		embeddingModalOpen = false;
 	}
 
 	function selectedPresetFieldCount() {
@@ -325,8 +358,10 @@
 		if (values.improved_prompt !== undefined) {
 			improvedPrompt = values.improved_prompt;
 		}
-		if (values.checkpoint !== undefined) checkpoint = values.checkpoint;
-		if (values.loras !== undefined) loras = values.loras.map(({ name, strength }) => ({ name, strength }));
+		if (values.checkpoint !== undefined && options.checkpoints.includes(values.checkpoint)) checkpoint = values.checkpoint;
+		if (values.loras !== undefined) {
+			loras = values.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
+		}
 		if (values.aspect_ratio !== undefined) aspectRatio = values.aspect_ratio;
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
@@ -355,8 +390,8 @@
 	function applyGenerationParameters(parameters: ImageGenerationParameters) {
 		prompt = parameters.prompt;
 		negativePrompt = parameters.negative_prompt;
-		checkpoint = parameters.checkpoint;
-		loras = parameters.loras.map(({ name, strength }) => ({ name, strength }));
+		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
+		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
 		cfg = parameters.cfg;
 		steps = parameters.steps;
 		samplerName = parameters.sampler_name;
@@ -435,7 +470,7 @@
 		try {
 			[presets, options] = await Promise.all([
 				apiJson<Preset[]>('presets?type=t2i'),
-				apiJson<ImageOptions>('generation/image/options')
+				apiJson<ImageOptions>(`generation/image/options?family=${modelFamily}`)
 			]);
 			checkpoint = options.default_checkpoint;
 			samplerName = options.default_sampler;
@@ -491,6 +526,7 @@
 			const queued = await apiJson<{ prompt_id: string; client_id: string; generation_id: string; created_at: string; elapsed_seconds: number }>('generation/image', {
 				method: 'POST',
 				json: {
+					model_family: modelFamily,
 					prompt: prompt.trim(),
 					prompt_enhancement_enabled: promptEnhancementEnabled,
 					improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
@@ -605,18 +641,18 @@
 </script>
 
 <svelte:head>
-	<title>이미지 생성 · Local Field</title>
-	<meta name="description" content="프롬프트와 파라미터를 사용한 이미지 생성" />
+	<title>{pageTitle} · Local Field</title>
+	<meta name="description" content={`${familyLabel} 프롬프트를 사용한 텍스트 이미지 생성`} />
 </svelte:head>
 
 {#if !ready}
 	<div class="flex min-h-screen items-center justify-center bg-background">
-		<LoadingSpinner size="lg" label="이미지 생성 페이지를 불러오는 중" />
+		<LoadingSpinner size="lg" label={`${pageTitle} 페이지를 불러오는 중`} />
 	</div>
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<Typography as="h1" variant="display">이미지 생성</Typography>
+			<Typography as="h1" variant="display">{pageTitle}</Typography>
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="result-title">
@@ -688,6 +724,7 @@
 							<div class="flex items-center justify-between gap-3">
 								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
 								<div class="flex items-center gap-2">
+									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
 									<label for="prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} class="peer sr-only" />
 										<span>프롬프트 개선</span>
@@ -717,10 +754,13 @@
 							{/if}
 						</div>
 
-						<label class="block space-y-2" for="negative-prompt">
-							<span class="text-sm font-medium">부정 프롬프트</span>
+						<div class="space-y-2">
+							<div class="flex items-center justify-between gap-3">
+								<label for="negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
+								{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
+							</div>
 							<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
-						</label>
+						</div>
 
 						<div class="space-y-2">
 							<span class="text-sm font-medium">체크포인트</span>
@@ -833,6 +873,14 @@
 			{/each}
 		</div>
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
+	</Modal>
+
+	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="선택한 Embedding 토큰을 프롬프트에 추가합니다.">
+		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+			{#each options.embeddings as value}
+				<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
+			{/each}
+		</div>
 	</Modal>
 
 	<SamplingSelectionModal

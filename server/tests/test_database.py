@@ -69,8 +69,13 @@ class VideoGenerationStatusTest(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn("image_generations", connection.calls[0][0])
+        self.assertIn("source_file_id", connection.calls[0][0])
         self.assertIn("video_generations", connection.calls[0][0])
-        self.assertEqual(connection.calls[0][1][2], generation_ids)
+        parameters = connection.calls[0][1]
+        self.assertEqual(parameters[0:2], ("file-1", "file-1"))
+        self.assertEqual(parameters[3], generation_ids)
+        self.assertEqual(parameters[6], generation_ids)
+        self.assertEqual(parameters[10], generation_ids)
 
     def test_create_image_generation_reads_returning_cursor(self) -> None:
         generation_id = uuid4()

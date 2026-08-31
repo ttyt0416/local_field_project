@@ -62,7 +62,10 @@ class VaultImageSummary(BaseModel):
     status: str
     prompt: str
     checkpoint: str
+    model_family: Literal["anima", "illustrious"]
+    generation_mode: Literal["t2i", "i2i"]
     image_url: str | None
+    source_image_url: str | None
     view_count: int
     is_favorite: bool
     created_at: datetime
@@ -88,6 +91,9 @@ class VaultImageDetail(VaultImageSummary):
     width: int
     height: int
     seed: int
+    source_file_id: str | None
+    source_filename: str | None
+    denoise: float
     file_path: str | None
     filename: str | None
     subfolder: str
@@ -761,13 +767,23 @@ def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool =
 
 
 def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultImageSummary:
+    source_image_url = None
+    source_file_id = generation.get("source_file_id")
+    if storage_enabled() and isinstance(source_file_id, str) and source_file_id:
+        try:
+            source_image_url = storage_read_url(file_id=source_file_id, owner_id=str(user_id))
+        except StorageError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultImageSummary(
         id=generation["id"],
         media_type="image",
         status=generation["status"],
         prompt=generation["prompt"],
         checkpoint=generation["checkpoint"],
+        model_family=generation["model_family"],
+        generation_mode=generation["generation_mode"],
         image_url=_image_url(generation, user_id),
+        source_image_url=source_image_url,
         view_count=generation["view_count"],
         is_favorite=generation["is_favorite"],
         created_at=generation["created_at"],
@@ -791,6 +807,9 @@ def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
         width=generation["width"],
         height=generation["height"],
         seed=generation["seed"],
+        source_file_id=generation["source_file_id"],
+        source_filename=generation["source_filename"],
+        denoise=generation["denoise"],
         file_path=generation["file_path"],
         filename=generation["filename"],
         subfolder=generation["subfolder"],

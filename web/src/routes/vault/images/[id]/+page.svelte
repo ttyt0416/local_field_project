@@ -28,6 +28,12 @@
 		prompt: string;
 		negative_prompt: string;
 		checkpoint: string;
+		model_family: 'anima' | 'illustrious';
+		generation_mode: 't2i' | 'i2i';
+		source_file_id: string | null;
+		source_filename: string | null;
+		source_image_url: string | null;
+		denoise: number;
 		loras: { name: string; strength: number }[];
 		cfg: number;
 		steps: number;
@@ -84,7 +90,7 @@
 		try {
 			generation = await apiJson<VaultImageDetail>(`vault/images/${generationId}`);
 			try {
-				imageOptions = await apiJson<ImageOptions>('generation/image/options');
+				imageOptions = await apiJson<ImageOptions>(`generation/image/options?family=${generation.model_family}`);
 			} catch (reason) {
 				presetError = reason instanceof Error ? reason.message : '프리셋 저장 옵션을 불러오지 못했습니다.';
 			}
@@ -134,6 +140,11 @@
 	async function generateFromParameters() {
 		if (!generation) return;
 		imageGenerationStore.set({
+			model_family: generation.model_family,
+			generation_mode: generation.generation_mode,
+			source_file_id: generation.source_file_id,
+			source_image_url: generation.source_image_url,
+			denoise: generation.denoise,
 			prompt: generation.prompt,
 			negative_prompt: generation.negative_prompt,
 			checkpoint: generation.checkpoint,
@@ -147,7 +158,8 @@
 			loras: generation.loras.map(({ name, strength }) => ({ name, strength }))
 		});
 		try {
-			await goto('/generate/image');
+			const route = generation.generation_mode === 'i2i' ? '/generate/image-to-image' : '/generate/image';
+			await goto(`${route}?family=${generation.model_family}`);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '이미지 생성 페이지로 이동하지 못했습니다.';
 		}
@@ -290,7 +302,7 @@
 						<Typography as="h2" variant="h2">생성 파라미터</Typography>
 					</div>
 					<dl class="mt-5 space-y-4 text-sm">
-						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.media_type}</dd></div>
+						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.generation_mode.toUpperCase()} · {generation.model_family === 'illustrious' ? 'Illustrious' : 'Anima'}</dd></div>
 						<div><dt class="text-muted-foreground">체크포인트</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint}</dd></div>
 						<div>
 							<dt class="text-muted-foreground">LoRA</dt>
@@ -307,6 +319,7 @@
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
 						<div><dt class="text-muted-foreground">샘플러 / 스케줄러</dt><dd class="mt-1 break-all font-medium">{generation.sampler_name} / {generation.scheduler}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
+						{#if generation.generation_mode === 'i2i'}<div><dt class="text-muted-foreground">Denoise</dt><dd class="mt-1 font-medium">{generation.denoise}</dd></div>{/if}
 						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 					</dl>

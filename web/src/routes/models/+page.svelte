@@ -12,7 +12,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 
-	type ModelType = 'checkpoint' | 'lora' | 'text_encoder' | 'vae' | 'embedding';
+	type ModelType = 'checkpoint' | 'diffusion_model' | 'lora' | 'text_encoder' | 'vae' | 'embedding';
 	type FileInfo = {
 		index: number;
 		name: string;
@@ -60,13 +60,15 @@
 
 	const modelTypes: { value: ModelType; label: string }[] = [
 		{ value: 'checkpoint', label: '체크포인트' },
+		{ value: 'diffusion_model', label: 'Diffusion Model' },
 		{ value: 'lora', label: 'LoRA' },
 		{ value: 'text_encoder', label: '텍스트 인코더' },
 		{ value: 'vae', label: 'VAE' },
 		{ value: 'embedding', label: '임베딩' }
 	];
 	const modelFolders: Record<ModelType, string> = {
-		checkpoint: 'diffusion_models',
+		checkpoint: 'checkpoints',
+		diffusion_model: 'diffusion_models',
 		lora: 'loras',
 		text_encoder: 'text_encoders',
 		vae: 'vae',

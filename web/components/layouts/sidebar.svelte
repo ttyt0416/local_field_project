@@ -76,12 +76,40 @@
 			<span>즐겨찾기</span>
 		</a>
 		<a
-			href="/generate/image"
+			href="/generate/image?family=anima"
+			data-sveltekit-reload
 			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>이미지 생성</span>
+			<span>텍스트를 이미지로 (Anima)</span>
+		</a>
+		<a
+			href="/generate/image-to-image?family=anima"
+			data-sveltekit-reload
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<ImagePlus size={18} strokeWidth={1.8} />
+			<span>이미지를 이미지로 (Anima)</span>
+		</a>
+		<a
+			href="/generate/image?family=illustrious"
+			data-sveltekit-reload
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<ImagePlus size={18} strokeWidth={1.8} />
+			<span>텍스트를 이미지로 (Illustrious)</span>
+		</a>
+		<a
+			href="/generate/image-to-image?family=illustrious"
+			data-sveltekit-reload
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<ImagePlus size={18} strokeWidth={1.8} />
+			<span>이미지를 이미지로 (Illustrious)</span>
 		</a>
 		<a
 			href="/generate/video"

@@ -38,9 +38,10 @@ from .database import (
 
 
 router = APIRouter(prefix="/models", tags=["model downloads"])
-ModelType = Literal["checkpoint", "lora", "text_encoder", "vae", "embedding"]
+ModelType = Literal["checkpoint", "diffusion_model", "lora", "text_encoder", "vae", "embedding"]
 _MODEL_TARGETS: dict[ModelType, tuple[str, str]] = {
-    "checkpoint": ("체크포인트", "diffusion_models"),
+    "checkpoint": ("체크포인트", "checkpoints"),
+    "diffusion_model": ("Diffusion Model", "diffusion_models"),
     "lora": ("LoRA", "loras"),
     "text_encoder": ("텍스트 인코더", "text_encoders"),
     "vae": ("VAE", "vae"),
@@ -656,7 +657,7 @@ def _file_matches(version: CivitaiVersion, file: CivitaiFile, model_type: ModelT
         return False
     version_type = _normalized_label(version.model_type)
     file_type = _normalized_label(file.file_type)
-    if model_type == "checkpoint":
+    if model_type in {"checkpoint", "diffusion_model"}:
         return version_type == "checkpoint"
     if model_type == "lora":
         return version_type in {"lora", "locon", "dora"}

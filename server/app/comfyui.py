@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import json
+from pathlib import Path
 import re
 import secrets
 import threading
@@ -17,8 +18,8 @@ from urllib.request import urlopen
 
 from websockets.asyncio.client import connect as websocket_connect
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import RedirectResponse, StreamingResponse
 
 from .auth import UserResponse, current_user
@@ -26,8 +27,10 @@ from .configs.constants import settings
 from .danbooru import DanbooruError, search_danbooru_tags, validate_danbooru_tags
 from .database import (
     create_image_generation as create_image_generation_record,
+    create_media_asset,
     generation_elapsed_seconds,
     get_image_generation,
+    get_reusable_media,
     update_image_generation_status,
 )
 from .generation_events import generation_event_broker, generation_key
@@ -37,7 +40,13 @@ from .prompts import (
     IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT,
 )
-from .storage import StorageError, enabled as storage_enabled, read_url as storage_read_url, upload_file as storage_upload_file
+from .storage import (
+    StorageError,
+    download_file as storage_download_file,
+    enabled as storage_enabled,
+    read_url as storage_read_url,
+    upload_file as storage_upload_file,
+)
 
 
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
@@ -46,6 +55,8 @@ _COMFYUI_TIMEOUT_SECONDS = 30
 _VLLM_TIMEOUT_SECONDS = 600
 _SSE_HEARTBEAT_SECONDS = 15
 _MAX_SEED = 2**63 - 1
+_MAX_IMAGE_INPUT_SIZE = 50 * 1024 * 1024
+_FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_SAMPLER = "er_sde"
 _DEFAULT_SCHEDULER = "simple"
 _PROGRESS_UNSET = object()
@@ -58,7 +69,22 @@ class LoraSelection(BaseModel):
     strength: float = Field(default=1.0)
 
 
+ModelFamily = Literal["anima", "illustrious"]
+
+
+class ImageSource(BaseModel):
+    file_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    file_index: int | None = Field(default=None, ge=0, le=0)
+
+    @model_validator(mode="after")
+    def exactly_one_source(self) -> "ImageSource":
+        if (self.file_id is None) == (self.file_index is None):
+            raise ValueError("source에는 file_id 또는 file_index 하나만 필요합니다.")
+        return self
+
+
 class ImageGenerationRequest(BaseModel):
+    model_family: ModelFamily = "anima"
     prompt: str = Field(min_length=1, max_length=5000)
     prompt_enhancement_enabled: bool = False
     improved_prompt: str | None = Field(default=None, max_length=5000)
@@ -74,9 +100,16 @@ class ImageGenerationRequest(BaseModel):
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
 
 
+class ImageToImageGenerationRequest(ImageGenerationRequest):
+    source: ImageSource
+    denoise: float = Field(default=0.65, ge=0, le=1)
+
+
 class ImageGenerationOptions(BaseModel):
+    model_family: ModelFamily
     checkpoints: list[str]
     loras: list[str]
+    embeddings: list[str]
     samplers: list[str]
     schedulers: list[str]
     default_checkpoint: str
@@ -271,9 +304,12 @@ class PromptEnhancementResponse(BaseModel):
 
 
 @router.get("/options", response_model=ImageGenerationOptions)
-def image_options(_: UserResponse = Depends(current_user)) -> ImageGenerationOptions:
+def image_options(
+    family: ModelFamily = Query(default="anima"),
+    _: UserResponse = Depends(current_user),
+) -> ImageGenerationOptions:
     try:
-        return _image_options()
+        return _image_options(family)
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -294,10 +330,53 @@ def create_image_generation(
     payload: ImageGenerationRequest,
     user: UserResponse = Depends(current_user),
 ) -> ImageGenerationAccepted:
+    return _submit_image_generation(payload, user)
+
+
+@router.post("/i2i", response_model=ImageGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
+async def create_image_to_image_generation(
+    payload: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+    user: UserResponse = Depends(current_user),
+) -> ImageGenerationAccepted:
     try:
-        options = _image_options()
+        request = ImageToImageGenerationRequest.model_validate_json(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
+    try:
+        _validate_model_choice(request, _image_options(request.model_family))
+    except _ComfyUIError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    source_file_id, source_filename, content, media_type = await _resolve_image_source(request.source, files, user)
+    try:
+        comfy_filename = _upload_comfy_input(content, source_filename, media_type)
+    except _ComfyUIError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return _submit_image_generation(
+        request,
+        user,
+        input_image=comfy_filename,
+        source_file_id=source_file_id,
+        source_filename=source_filename,
+        generation_mode="i2i",
+        denoise=request.denoise,
+    )
+
+
+def _submit_image_generation(
+    payload: ImageGenerationRequest,
+    user: UserResponse,
+    *,
+    input_image: str | None = None,
+    source_file_id: str | None = None,
+    source_filename: str | None = None,
+    generation_mode: Literal["t2i", "i2i"] = "t2i",
+    denoise: float = 1.0,
+) -> ImageGenerationAccepted:
+    try:
+        options = _image_options(payload.model_family)
         _validate_model_choice(payload, options)
-        prompt, seed = _build_prompt(payload)
+        prompt, seed = _build_prompt(payload, input_image=input_image, denoise=denoise)
         client_id = str(uuid.uuid4())
         response = _request_json(
             "POST",
@@ -325,6 +404,11 @@ def create_image_generation(
         width=payload.width,
         height=payload.height,
         seed=seed,
+        model_family=payload.model_family,
+        generation_mode=generation_mode,
+        source_file_id=source_file_id,
+        source_filename=source_filename,
+        denoise=denoise,
     )
     return ImageGenerationAccepted(
         prompt_id=prompt_id,
@@ -335,6 +419,98 @@ def create_image_generation(
         created_at=created_at,
         elapsed_seconds=0,
     )
+
+
+async def _resolve_image_source(
+    source: ImageSource,
+    files: list[UploadFile],
+    user: UserResponse,
+) -> tuple[str, str, bytes, str]:
+    if not storage_enabled():
+        raise HTTPException(status_code=503, detail="Storage가 설정되지 않아 I2I 입력 이미지를 저장할 수 없습니다.")
+    if source.file_id:
+        if files:
+            raise HTTPException(status_code=422, detail="기존 이미지 참조와 새 파일을 함께 보낼 수 없습니다.")
+        record = get_reusable_media(source.file_id, user.id)
+        if record is None or record["media_kind"] != "image":
+            raise HTTPException(status_code=404, detail="선택한 이미지를 찾을 수 없습니다.")
+        try:
+            content, stored_type = storage_download_file(file_id=source.file_id, owner_id=str(user.id))
+        except StorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        media_type = record["content_type"] or stored_type
+        if not media_type.startswith("image/"):
+            raise HTTPException(status_code=415, detail="이미지 파일만 사용할 수 있습니다.")
+        create_media_asset(
+            user_id=user.id,
+            storage_file_id=source.file_id,
+            filename=record["filename"],
+            content_type=media_type,
+            media_kind="image",
+            size=len(content),
+        )
+        return source.file_id, record["filename"], content, media_type
+    if source.file_index != 0 or len(files) != 1:
+        raise HTTPException(status_code=422, detail="I2I에는 입력 이미지 한 개가 필요합니다.")
+    upload = files[0]
+    media_type = upload.content_type or ""
+    if not media_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="이미지 파일만 사용할 수 있습니다.")
+    content = await upload.read(_MAX_IMAGE_INPUT_SIZE + 1)
+    if not content:
+        raise HTTPException(status_code=422, detail="빈 이미지 파일은 사용할 수 없습니다.")
+    if len(content) > _MAX_IMAGE_INPUT_SIZE:
+        raise HTTPException(status_code=413, detail="I2I 입력 이미지는 50MB 이하여야 합니다.")
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "_", (upload.filename or "image.png").split("/")[-1])[:255]
+    try:
+        file_id = storage_upload_file(content=content, media_type=media_type, owner_id=str(user.id))
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    create_media_asset(
+        user_id=user.id,
+        storage_file_id=file_id,
+        filename=filename,
+        content_type=media_type,
+        media_kind="image",
+        size=len(content),
+    )
+    return file_id, filename, content, media_type
+
+
+def _upload_comfy_input(content: bytes, filename: str, media_type: str) -> str:
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+    if extension not in {"png", "jpg", "jpeg", "webp"}:
+        extension = "png"
+    comfy_filename = f"local_field_i2i_{uuid.uuid4().hex}.{extension}"
+    boundary = f"----LocalField{uuid.uuid4().hex}"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image"; filename="{comfy_filename}"\r\n'
+        f"Content-Type: {media_type}\r\n\r\n"
+    ).encode() + content + (
+        f"\r\n--{boundary}\r\n"
+        'Content-Disposition: form-data; name="overwrite"\r\n\r\n'
+        "true\r\n"
+        f"--{boundary}--\r\n"
+    ).encode()
+    request = UrlRequest(
+        _comfy_url("/upload/image"),
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
+            result = json.loads(response.read())
+    except UrlHTTPError as exc:
+        raise _ComfyUIError(f"ComfyUI 입력 이미지 업로드가 실패했습니다. (HTTP {exc.code})") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise _ComfyUIError("ComfyUI 입력 이미지 업로드에 연결할 수 없습니다.") from exc
+    name = result.get("name") if isinstance(result, dict) else None
+    subfolder = result.get("subfolder", "") if isinstance(result, dict) else ""
+    if not isinstance(name, str) or not name or not isinstance(subfolder, str):
+        raise _ComfyUIError("ComfyUI 입력 이미지 업로드 응답이 올바르지 않습니다.")
+    return f"{subfolder}/{name}" if subfolder else name
 
 
 @router.get("/{prompt_id}/events")
@@ -648,24 +824,29 @@ def view_generated_image(
     return Response(content=content, media_type=media_type or "image/png")
 
 
-def _image_options() -> ImageGenerationOptions:
+def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOptions:
     data = _request_json("GET", "/object_info")
-    checkpoints = _anima_choices(data, "UNETLoader", "unet_name")
-    loras = _anima_choices(data, "LoraLoaderModelOnly", "lora_name")
+    if model_family == "anima":
+        checkpoints = _family_choices(data, "UNETLoader", "unet_name", "Anima/")
+        loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "Anima/")
+        preferred_checkpoint = "Anima/anima_aestheticV11.safetensors"
+    else:
+        checkpoints = _family_choices(data, "CheckpointLoaderSimple", "ckpt_name", "Illustrious/")
+        loras = _family_choices(data, "LoraLoader", "lora_name", "Illustrious/")
+        preferred_checkpoint = "Illustrious/unholyDesireMixSinister_v80.safetensors"
     samplers = _node_choices(data, "KSampler", "sampler_name")
     schedulers = _node_choices(data, "KSampler", "scheduler")
+    embeddings = _installed_family_files("embeddings", f"{model_family.title()}/")
     if not checkpoints:
-        raise _ComfyUIError("ComfyUI에서 Anima 체크포인트를 찾을 수 없습니다.")
+        raise _ComfyUIError(f"ComfyUI에서 {model_family.title()} 체크포인트를 찾을 수 없습니다.")
     if not samplers or not schedulers:
         raise _ComfyUIError("ComfyUI에서 sampler 또는 scheduler 목록을 찾을 수 없습니다.")
-    default_checkpoint = (
-        "Anima/anima_aestheticV11.safetensors"
-        if "Anima/anima_aestheticV11.safetensors" in checkpoints
-        else checkpoints[0]
-    )
+    default_checkpoint = preferred_checkpoint if preferred_checkpoint in checkpoints else checkpoints[0]
     return ImageGenerationOptions(
+        model_family=model_family,
         checkpoints=checkpoints,
         loras=loras,
+        embeddings=embeddings,
         samplers=samplers,
         schedulers=schedulers,
         default_checkpoint=default_checkpoint,
@@ -674,8 +855,24 @@ def _image_options() -> ImageGenerationOptions:
     )
 
 
-def _anima_choices(data: dict[str, Any], node_name: str, input_name: str) -> list[str]:
-    return [value for value in _node_choices(data, node_name, input_name) if value.startswith("Anima/")]
+def _family_choices(
+    data: dict[str, Any], node_name: str, input_name: str, prefix: str
+) -> list[str]:
+    return [value for value in _node_choices(data, node_name, input_name) if value.startswith(prefix)]
+
+
+def _installed_family_files(category: str, prefix: str) -> list[str]:
+    directory = Path(settings.comfyui_models_path) / category
+    if not directory.is_dir():
+        return []
+    return sorted(
+        path.relative_to(directory).as_posix()
+        for path in directory.rglob("*")
+        if path.is_file()
+        and not path.is_symlink()
+        and path.suffix.casefold() in {".safetensors", ".pt", ".bin"}
+        and path.relative_to(directory).as_posix().startswith(prefix)
+    )
 
 
 def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list[str]:
@@ -689,13 +886,14 @@ def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list
 
 
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
-    if payload.checkpoint not in options.checkpoints:
-        raise HTTPException(status_code=422, detail="선택한 Anima 체크포인트를 찾을 수 없습니다.")
+    family_name = "Anima" if payload.model_family == "anima" else "Illustrious"
+    if options.model_family != payload.model_family or payload.checkpoint not in options.checkpoints:
+        raise HTTPException(status_code=422, detail=f"선택한 {family_name} 체크포인트를 찾을 수 없습니다.")
     lora_names = [lora.name for lora in payload.loras]
     if len(lora_names) != len(set(lora_names)):
         raise HTTPException(status_code=422, detail="같은 LoRA를 중복 선택할 수 없습니다.")
     if any(name not in options.loras for name in lora_names):
-        raise HTTPException(status_code=422, detail="선택한 Anima LoRA를 찾을 수 없습니다.")
+        raise HTTPException(status_code=422, detail=f"선택한 {family_name} LoRA를 찾을 수 없습니다.")
     if payload.sampler_name not in options.samplers:
         raise HTTPException(status_code=422, detail="선택한 sampler를 찾을 수 없습니다.")
     if payload.scheduler not in options.schedulers:
@@ -714,74 +912,136 @@ def _effective_positive_prompt(payload: ImageGenerationRequest) -> str:
     return improved_prompt
 
 
-def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, Any]], int]:
+def _build_prompt(
+    payload: ImageGenerationRequest,
+    *,
+    input_image: str | None = None,
+    denoise: float = 1.0,
+) -> tuple[dict[str, dict[str, Any]], int]:
     seed = payload.seed if payload.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     positive_prompt = _effective_positive_prompt(payload)
-    model: list[Any] = ["1", 0]
-    prompt: dict[str, dict[str, Any]] = {
-        "1": {
-            "class_type": "UNETLoader",
-            "inputs": {"unet_name": payload.checkpoint, "weight_dtype": "default"},
-        },
-        "3": {
-            "class_type": "CLIPLoader",
-            "inputs": {
-                "clip_name": "qwen_3_06b_base.safetensors",
-                "type": "stable_diffusion",
-                "device": "default",
-            },
-        },
-        "4": {
-            "class_type": "VAELoader",
-            "inputs": {"vae_name": "qwen_image_vae.safetensors"},
-        },
-        "5": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": positive_prompt, "clip": ["3", 0]},
-        },
-        "6": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": payload.negative_prompt, "clip": ["3", 0]},
-        },
-        "7": {
+    prompt: dict[str, dict[str, Any]] = {}
+    if payload.model_family == "anima":
+        prompt.update(
+            {
+                "1": {
+                    "class_type": "UNETLoader",
+                    "inputs": {"unet_name": payload.checkpoint, "weight_dtype": "default"},
+                },
+                "3": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {
+                        "clip_name": "qwen_3_06b_base.safetensors",
+                        "type": "stable_diffusion",
+                        "device": "default",
+                    },
+                },
+                "4": {
+                    "class_type": "VAELoader",
+                    "inputs": {"vae_name": "qwen_image_vae.safetensors"},
+                },
+            }
+        )
+        model: list[Any] = ["1", 0]
+        clip: list[Any] = ["3", 0]
+        vae: list[Any] = ["4", 0]
+        for index, lora in enumerate(payload.loras, start=20):
+            prompt[str(index)] = {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "model": model,
+                    "lora_name": lora.name,
+                    "strength_model": lora.strength,
+                },
+            }
+            model = [str(index), 0]
+    else:
+        prompt["1"] = {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": payload.checkpoint},
+        }
+        model = ["1", 0]
+        clip = ["1", 1]
+        vae = ["1", 2]
+        for index, lora in enumerate(payload.loras, start=20):
+            prompt[str(index)] = {
+                "class_type": "LoraLoader",
+                "inputs": {
+                    "model": model,
+                    "clip": clip,
+                    "lora_name": lora.name,
+                    "strength_model": lora.strength,
+                    "strength_clip": lora.strength,
+                },
+            }
+            model = [str(index), 0]
+            clip = [str(index), 1]
+
+    prompt["5"] = {
+        "class_type": "CLIPTextEncode",
+        "inputs": {"text": positive_prompt, "clip": clip},
+    }
+    prompt["6"] = {
+        "class_type": "CLIPTextEncode",
+        "inputs": {"text": payload.negative_prompt, "clip": clip},
+    }
+    if input_image:
+        prompt.update(
+            {
+                "7": {"class_type": "LoadImage", "inputs": {"image": input_image}},
+                "11": {
+                    "class_type": "ImageScale",
+                    "inputs": {
+                        "image": ["7", 0],
+                        "upscale_method": "lanczos",
+                        "width": payload.width,
+                        "height": payload.height,
+                        "crop": "disabled",
+                    },
+                },
+                "12": {
+                    "class_type": "VAEEncode",
+                    "inputs": {"pixels": ["11", 0], "vae": vae},
+                },
+            }
+        )
+        latent: list[Any] = ["12", 0]
+    else:
+        prompt["7"] = {
             "class_type": "EmptyLatentImage",
             "inputs": {"width": payload.width, "height": payload.height, "batch_size": 1},
-        },
-        "8": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": model,
-                "seed": seed,
-                "steps": payload.steps,
-                "cfg": payload.cfg,
-                "sampler_name": payload.sampler_name,
-                "scheduler": payload.scheduler,
-                "positive": ["5", 0],
-                "negative": ["6", 0],
-                "latent_image": ["7", 0],
-                "denoise": 1.0,
+        }
+        latent = ["7", 0]
+    prompt.update(
+        {
+            "8": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": model,
+                    "seed": seed,
+                    "steps": payload.steps,
+                    "cfg": payload.cfg,
+                    "sampler_name": payload.sampler_name,
+                    "scheduler": payload.scheduler,
+                    "positive": ["5", 0],
+                    "negative": ["6", 0],
+                    "latent_image": latent,
+                    "denoise": denoise,
+                },
             },
-        },
-        "9": {
-            "class_type": "VAEDecode",
-            "inputs": {"samples": ["8", 0], "vae": ["4", 0]},
-        },
-        "10": {
-            "class_type": "SaveImage",
-            "inputs": {"filename_prefix": "LocalField_Anima", "images": ["9", 0]},
-        },
-    }
-    for index, lora in enumerate(payload.loras, start=11):
-        prompt[str(index)] = {
-            "class_type": "LoraLoaderModelOnly",
-            "inputs": {
-                "model": model,
-                "lora_name": lora.name,
-                "strength_model": lora.strength,
+            "9": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["8", 0], "vae": vae},
+            },
+            "10": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "filename_prefix": f"LocalField_{payload.model_family.title()}_{'I2I' if input_image else 'T2I'}",
+                    "images": ["9", 0],
+                },
             },
         }
-        model = [str(index), 0]
-    prompt["8"]["inputs"]["model"] = model
+    )
     return prompt, seed
 
 

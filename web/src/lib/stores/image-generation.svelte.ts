@@ -1,4 +1,9 @@
 export type ImageGenerationParameters = {
+	model_family?: 'anima' | 'illustrious';
+	generation_mode?: 't2i' | 'i2i';
+	source_file_id?: string | null;
+	source_image_url?: string | null;
+	denoise?: number;
 	prompt: string;
 	negative_prompt: string;
 	checkpoint: string;

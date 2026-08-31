@@ -38,7 +38,10 @@
 		status: string;
 		prompt: string;
 		checkpoint: string;
+		model_family: 'anima' | 'illustrious';
+		generation_mode: 't2i' | 'i2i';
 		image_url: string | null;
+		source_image_url: string | null;
 		view_count: number;
 		is_favorite: boolean;
 		created_at: string;
@@ -556,7 +559,7 @@
 							<div class="space-y-3 p-4">
 								<a href={`/vault/images/${image.id}`} aria-label={`${image.prompt || image.checkpoint} 콘텐츠 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
 									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-										<span>{image.status === 'completed' ? 'IMAGE' : `IMAGE · ${statusLabel(image.status)}`}</span>
+										<span>{image.generation_mode.toUpperCase()} · {image.model_family === 'illustrious' ? 'Illustrious' : 'Anima'}{image.status === 'completed' ? '' : ` · ${statusLabel(image.status)}`}</span>
 										<span>{formatKstDateTime(image.created_at)}</span>
 									</div>
 									<p class="line-clamp-2 text-sm leading-5 text-foreground transition hover:text-primary">{image.prompt}</p>

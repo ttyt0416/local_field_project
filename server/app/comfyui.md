@@ -9,3 +9,7 @@ Storage가 설정된 생성 결과는 만료 읽기 URL을 사용한다. 기존 
 lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하지 않는다. 생성 seed는 PostgreSQL `BIGINT`에 저장 가능한 signed 64-bit 범위로 제한한다.
 
 공통 Comfy progress state는 현재 실행 node ID도 보존한다. image/video caller는 기존 progress 계약을 그대로 사용하고, TRELLIS.2 router는 node ID를 background cleanup·structure·shape·texture·mesh stage로 매핑한다.
+
+`GET /generation/image/options?family=anima|illustrious`는 family별 checkpoint와 LoRA, Illustrious embedding 파일 목록을 반환한다. Anima는 `diffusion_models/Anima`의 split model을 `UNETLoader`로, Illustrious는 `checkpoints/Illustrious`의 full checkpoint를 `CheckpointLoaderSimple`로 사용한다. T2I/I2I UI의 긍정·부정 prompt picker는 선택한 파일을 `embedding:Illustrious/파일명` token으로 prompt에 삽입하고, backend는 prompt를 그대로 CLIPTextEncode에 전달한다. 기존 JSON `POST /generation/image`는 T2I이며 기본 family는 `anima`라 기존 caller가 그대로 동작한다.
+
+`POST /generation/image/i2i`는 multipart `payload`와 이미지 한 개를 받는다. local file은 submit 시에만 Storage·`media_assets`에 저장하고 기존 `file_id`는 ownership을 확인해 재사용한다. model 선택을 먼저 검증한 뒤 Comfy input에 올리고 `LoadImage → ImageScale → VAEEncode → KSampler`로 연결하며 `denoise`는 `0..1` 범위다.
