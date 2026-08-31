@@ -5,6 +5,7 @@
 	type Props = {
 		children: Snippet;
 		ariaLabel: string;
+		title?: string;
 		type?: 'button' | 'submit' | 'reset';
 		disabled?: boolean;
 		loading?: boolean;
@@ -17,6 +18,7 @@
 	let {
 		children,
 		ariaLabel,
+		title,
 		type = 'button',
 		disabled = false,
 		loading = false,
@@ -38,6 +40,7 @@
 	} ${className}`}
 	disabled={disabled || loading}
 	aria-label={ariaLabel}
+	{title}
 	aria-pressed={pressed}
 	aria-busy={loading}
 	{onclick}

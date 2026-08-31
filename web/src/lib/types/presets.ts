@@ -15,6 +15,8 @@ export type PresetValues = {
 	height?: number;
 	cfg?: number;
 	steps?: number;
+	sampler_name?: string;
+	scheduler?: string;
 	mode?: VideoMode;
 	duration?: number;
 	fps?: number;
@@ -36,5 +38,9 @@ export type Preset = {
 export type ImageOptions = {
 	checkpoints: string[];
 	loras: string[];
+	samplers: string[];
+	schedulers: string[];
 	default_checkpoint: string;
+	default_sampler: string;
+	default_scheduler: string;
 };

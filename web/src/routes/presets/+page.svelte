@@ -28,7 +28,7 @@
 		{ value: 't2i', label: 'IMAGE GEN' },
 		{ value: 'video', label: 'VIDEO GEN' }
 	];
-	let options = $state<ImageOptions>({ checkpoints: [], loras: [], default_checkpoint: '' });
+	let options = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
 	let editingPreset = $state<Preset | null>(null);
 	let imageEditorOpen = $state(false);
 	let videoEditorOpen = $state(false);

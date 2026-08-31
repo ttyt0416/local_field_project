@@ -59,6 +59,18 @@ class PresetRequestTest(unittest.TestCase):
         self.assertEqual(payload.values.duration, 100)
         self.assertEqual(payload.values.loras[0].strength, -100)
 
+    def test_image_preset_accepts_sampler_scheduler_and_seed(self) -> None:
+        payload = PresetCreateRequest.model_validate(
+            {
+                "type": "t2i",
+                "name": "sampling",
+                "values": {"sampler_name": "euler", "scheduler": "normal", "seed": "123"},
+            }
+        )
+        self.assertEqual(payload.values.sampler_name, "euler")
+        self.assertEqual(payload.values.scheduler, "normal")
+        self.assertEqual(payload.values.seed, "123")
+
     def test_unknown_type_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
             PresetCreateRequest.model_validate({"type": "i2v", "name": "portrait", "values": {"prompt": "a portrait"}})

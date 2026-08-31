@@ -17,8 +17,8 @@
 	import Tab from '../../../components/tabs/tab.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
-import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
-import { downloadMedia } from '$lib/utils/download';
+	import { formatElapsedSeconds, formatKstDateTime } from '$lib/utils/generation';
+	import { downloadMedia } from '$lib/utils/download';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
 	const vaultMediaTabs = [
@@ -85,6 +85,8 @@ import { downloadMedia } from '$lib/utils/download';
 	let videoTotalPages = $state(0);
 	let imageCompletedCount = $state(0);
 	let videoCompletedCount = $state(0);
+	let imageTotalCount = $state(0);
+	let videoTotalCount = $state(0);
 	let error = $state('');
 	let deleteTarget = $state<VaultImage | null>(null);
 	let videoDeleteTarget = $state<VaultVideo | null>(null);
@@ -94,6 +96,8 @@ import { downloadMedia } from '$lib/utils/download';
 	let videoDeletingId = $state('');
 	let bulkDeleteModalOpen = $state(false);
 	let bulkDeleting = $state(false);
+	let filteredDeleteModalOpen = $state(false);
+	let filteredDeleting = $state(false);
 	let selectedIds = $state<Set<string>>(new Set());
 	let favoriteUpdatingId = $state('');
 	let videoFavoriteUpdatingId = $state('');
@@ -102,6 +106,7 @@ import { downloadMedia } from '$lib/utils/download';
 	let contentCount = $derived(imageCompletedCount);
 	let videoCount = $derived(videoCompletedCount);
 	let selectedCount = $derived(selectedIds.size);
+	let filteredCount = $derived(mediaTab === 'images' ? imageTotalCount : videoTotalCount);
 	let allVisibleSelected = $derived(images.length > 0 && images.every((image) => selectedIds.has(image.id)));
 
 	onMount(() => {
@@ -134,6 +139,7 @@ import { downloadMedia } from '$lib/utils/download';
 				imagePage = result.page;
 				imageTotalPages = result.total_pages;
 				imageCompletedCount = result.completed_count;
+				imageTotalCount = result.total_count;
 				selectedIds = new Set();
 			} else {
 				const result = await apiJson<VaultPage<VaultVideo>>(`vault/videos?${params.toString()}`);
@@ -141,6 +147,7 @@ import { downloadMedia } from '$lib/utils/download';
 				videoPage = result.page;
 				videoTotalPages = result.total_pages;
 				videoCompletedCount = result.completed_count;
+				videoTotalCount = result.total_count;
 			}
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '보관함을 불러오지 못했습니다.';
@@ -215,6 +222,27 @@ import { downloadMedia } from '$lib/utils/download';
 			error = reason instanceof Error ? reason.message : '선택한 콘텐츠를 삭제하지 못했습니다.';
 		} finally {
 			bulkDeleting = false;
+		}
+	}
+
+	async function deleteFilteredContents() {
+		if (filteredDeleting || filteredCount === 0) return;
+		filteredDeleting = true;
+		try {
+			const params = new URLSearchParams();
+			if (searchQuery.trim()) params.set('search', searchQuery.trim());
+			if (favoritesOnly) params.set('favorites_only', 'true');
+			params.set('expected_count', String(filteredCount));
+			params.set('confirmed', 'true');
+			const path = `vault/${mediaTab}/filtered${params.size ? `?${params.toString()}` : ''}`;
+			await apiJson<BulkDeleteResponse>(path, { method: 'DELETE' });
+			filteredDeleteModalOpen = false;
+			selectedIds = new Set();
+			await loadVault(1);
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '필터 결과를 삭제하지 못했습니다.';
+		} finally {
+			filteredDeleting = false;
 		}
 	}
 
@@ -366,9 +394,17 @@ import { downloadMedia } from '$lib/utils/download';
 				<LoadingSpinner size="lg" label="보관함을 불러오는 중" />
 			</section>
 		{:else}
-			<div class="flex items-center justify-between border-b border-border pb-4">
+			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
 				<p class="text-sm font-medium text-muted-foreground">{favoritesOnly ? '즐겨찾기 콘텐츠' : '생성된 콘텐츠'}</p>
-				<p class="text-2xl font-semibold tracking-tight">{mediaTab === 'images' ? contentCount : videoCount}</p>
+				<div class="flex items-center gap-3">
+					<p class="text-2xl font-semibold tracking-tight">{mediaTab === 'images' ? contentCount : videoCount}</p>
+					{#if filteredCount > 0}
+						<OutlinedButton class="min-h-9 px-3 py-1 text-xs text-destructive" onclick={() => (filteredDeleteModalOpen = true)}>
+							<Trash2 size={14} strokeWidth={2} />
+							<span>필터 결과 전체 삭제</span>
+						</OutlinedButton>
+					{/if}
+				</div>
 			</div>
 
 			{#if mediaTab === 'images'}
@@ -553,6 +589,22 @@ import { downloadMedia } from '$lib/utils/download';
 			>
 				<Trash2 size={16} strokeWidth={2} />
 				<span>선택된 콘텐츠 제거</span>
+			</PrimaryButton>
+		{/snippet}
+	</Modal>
+
+	<Modal
+		bind:open={filteredDeleteModalOpen}
+		title="필터 결과를 전부 삭제하시겠습니까?"
+		description="현재 검색어와 즐겨찾기 필터에 포함된 모든 콘텐츠를 삭제합니다."
+		closeOnBackdrop={!filteredDeleting}
+	>
+		<p class="text-sm leading-6 text-muted-foreground">현재 {mediaTab === 'images' ? '이미지' : '동영상'} 필터 결과 {filteredCount}개와 파일 스토리지 원본을 모두 삭제합니다. 다른 필터의 콘텐츠는 유지됩니다.</p>
+		{#snippet footer()}
+			<OutlinedButton disabled={filteredDeleting} onclick={() => (filteredDeleteModalOpen = false)}>취소</OutlinedButton>
+			<PrimaryButton loading={filteredDeleting} variant="destructive" onclick={() => void deleteFilteredContents()}>
+				<Trash2 size={16} strokeWidth={2} />
+				<span>필터 결과 전체 삭제</span>
 			</PrimaryButton>
 		{/snippet}
 	</Modal>

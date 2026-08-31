@@ -3,6 +3,7 @@
 	import Modal from '../modals/modal.svelte';
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
+	import CropSelector from './crop-selector.svelte';
 	import { apiJson } from '$lib/utils/api';
 
 	type Props = {
@@ -101,19 +102,31 @@
 
 <Modal bind:open title="동영상 편집" description="구간, crop과 회전 결과를 새 콘텐츠로 저장합니다." closeOnBackdrop={!saving}>
 	<div class="space-y-5">
-		<video
-			bind:this={video}
-			src={videoUrl}
-			controls
-			playsinline
-			preload="metadata"
-			onloadedmetadata={loadMetadata}
-			onerror={() => onerror?.('영상 원본을 불러오지 못했습니다.')}
-			class="max-h-[34dvh] w-full rounded-xl bg-black object-contain"
+		<CropSelector
+			naturalWidth={videoWidth || 16}
+			naturalHeight={videoHeight || 9}
+			bind:cropX
+			bind:cropY
+			bind:cropWidth
+			bind:cropHeight
+			minSize={2}
+			maxHeightDvh={34}
+			onchange={clampValues}
 		>
-			<track kind="captions" srclang="ko" label="자막 없음" src="data:text/vtt,WEBVTT" />
-			영상을 재생할 수 없습니다.
-		</video>
+			<video
+				bind:this={video}
+				src={videoUrl}
+				controls
+				playsinline
+				preload="metadata"
+				onloadedmetadata={loadMetadata}
+				onerror={() => onerror?.('영상 원본을 불러오지 못했습니다.')}
+				class="h-full w-full bg-black object-fill"
+			>
+				<track kind="captions" srclang="ko" label="자막 없음" src="data:text/vtt,WEBVTT" />
+				영상을 재생할 수 없습니다.
+			</video>
+		</CropSelector>
 		{#if duration > 0}
 			<div class="grid grid-cols-2 gap-3 text-sm">
 				<label class="space-y-1"><span class="text-muted-foreground">시작 시간(초)</span><input type="number" min="0" max={duration} step="0.1" bind:value={startSeconds} oninput={clampValues} class="h-10 w-full rounded-lg border border-input bg-background px-3" /></label>

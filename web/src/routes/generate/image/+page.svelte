@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ArrowLeftRight, FolderOpen, ImagePlus, Plus, Save, Sparkles, X } from '@lucide/svelte';
+	import { ArrowLeftRight, Check, FolderOpen, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
@@ -12,6 +12,7 @@
 	import Select from '../../../../components/inputs/select.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
+	import SamplingSelectionModal from '../../../../components/presets/sampling-selection-modal.svelte';
 	import { SERVER_URL } from '$lib/configs/constants';
 	import { apiJson } from '$lib/utils/api';
 	import { authStore } from '$lib/stores/auth.svelte';
@@ -22,7 +23,11 @@
 	type ImageOptions = {
 		checkpoints: string[];
 		loras: string[];
+		samplers: string[];
+		schedulers: string[];
 		default_checkpoint: string;
+		default_sampler: string;
+		default_scheduler: string;
 	};
 
 	type LoraSelection = {
@@ -38,6 +43,8 @@
 		| 'aspect_ratio'
 		| 'cfg'
 		| 'steps'
+		| 'sampling'
+		| 'seed'
 		| 'prompt_enhancement';
 	type PresetValues = {
 		prompt?: string;
@@ -51,6 +58,10 @@
 		height?: number;
 		cfg?: number;
 		steps?: number;
+		sampler_name?: string;
+		scheduler?: string;
+		seed?: string;
+		random_seed?: boolean;
 	};
 	type Preset = {
 		id: string;
@@ -93,6 +104,8 @@
 		{ key: 'aspect_ratio', label: '이미지 비율·크기' },
 		{ key: 'cfg', label: 'CFG' },
 		{ key: 'steps', label: 'Steps' },
+		{ key: 'sampling', label: '샘플러 / 스케줄러' },
+		{ key: 'seed', label: 'Seed' },
 		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
 	];
 	const defaultPresetFieldSelection: Record<PresetField, boolean> = {
@@ -103,6 +116,8 @@
 		aspect_ratio: true,
 		cfg: true,
 		steps: true,
+		sampling: true,
+		seed: true,
 		prompt_enhancement: true
 	};
 
@@ -139,7 +154,11 @@
 	let options = $state<ImageOptions>({
 		checkpoints: [],
 		loras: [],
-		default_checkpoint: ''
+		samplers: [],
+		schedulers: [],
+		default_checkpoint: '',
+		default_sampler: '',
+		default_scheduler: ''
 	});
 	let prompt = $state('');
 	let promptEnhancementEnabled = $state(false);
@@ -149,14 +168,17 @@
 	let loras = $state<LoraSelection[]>([]);
 	let cfg = $state(4);
 	let steps = $state(30);
+	let samplerName = $state('');
+	let scheduler = $state('');
+	let samplingModalOpen = $state(false);
+	let checkpointModalOpen = $state(false);
+	let loraModalOpen = $state(false);
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let aspectRatio = $state<AspectRatio>('custom');
 	let width = $state(1024);
 	let height = $state(1024);
 
-	let checkpointOptions = $derived(options.checkpoints.map((value) => ({ value, label: value })));
-	let loraOptions = $derived(options.loras.map((value) => ({ value, label: value })));
 	let explicitAspectSize: ImageSize | null = null;
 
 	$effect(() => {
@@ -173,18 +195,13 @@
 		height = preset.height;
 	});
 
-	function availableLoraOptions(index: number) {
-		const selected = new Set(loras.filter((_, currentIndex) => currentIndex !== index).map((lora) => lora.name));
-		return loraOptions.filter((option) => option.value === loras[index]?.name || !selected.has(option.value));
-	}
-
-	function addLora() {
-		if (loras.some((lora) => !lora.name) || loras.length >= loraOptions.length) return;
-		loras = [...loras, { name: '', strength: 1.0 }];
-	}
-
-	function removeLora(index: number) {
-		loras = loras.filter((_, currentIndex) => currentIndex !== index);
+	function toggleLora(name: string) {
+		const selected = loras.some((lora) => lora.name === name);
+		if (!selected && loras.length >= 8) {
+			generationError = 'LoRA는 최대 8개까지 선택할 수 있습니다.';
+			return;
+		}
+		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
 	}
 
 	function selectedPresetFieldCount() {
@@ -242,6 +259,14 @@
 		}
 		if (selectedPresetFields.cfg) values.cfg = cfg;
 		if (selectedPresetFields.steps) values.steps = steps;
+		if (selectedPresetFields.sampling) {
+			values.sampler_name = samplerName;
+			values.scheduler = scheduler;
+		}
+		if (selectedPresetFields.seed) {
+			values.random_seed = randomSeed;
+			if (!randomSeed && seed.trim()) values.seed = seed.trim();
+		}
 		if (selectedPresetFields.prompt_enhancement) {
 			values.prompt_enhancement_enabled = promptEnhancementEnabled;
 			if (improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
@@ -310,6 +335,13 @@
 		}
 		if (values.cfg !== undefined) cfg = values.cfg;
 		if (values.steps !== undefined) steps = values.steps;
+		if (values.sampler_name !== undefined) samplerName = values.sampler_name;
+		if (values.scheduler !== undefined) scheduler = values.scheduler;
+		if (values.random_seed !== undefined) randomSeed = values.random_seed;
+		if (values.seed !== undefined) {
+			seed = values.seed;
+			randomSeed = false;
+		}
 		if (announce) {
 			loadPresetModalOpen = false;
 			presetSuccess = `'${preset.name}' 프리셋을 불러왔습니다. 저장된 항목만 적용했습니다.`;
@@ -327,6 +359,8 @@
 		loras = parameters.loras.map(({ name, strength }) => ({ name, strength }));
 		cfg = parameters.cfg;
 		steps = parameters.steps;
+		samplerName = parameters.sampler_name;
+		scheduler = parameters.scheduler;
 		width = parameters.width;
 		height = parameters.height;
 		seed = parameters.seed;
@@ -343,6 +377,15 @@
 			fields.delete('prompt_enhancement_enabled');
 			fields.delete('improved_prompt');
 			fields.add('prompt_enhancement');
+		}
+		if (fields.has('sampler_name') || fields.has('scheduler')) {
+			fields.delete('sampler_name');
+			fields.delete('scheduler');
+			fields.add('sampling');
+		}
+		if (fields.has('seed') || fields.has('random_seed')) {
+			fields.delete('random_seed');
+			fields.add('seed');
 		}
 		const labels: Record<string, string> = Object.fromEntries(presetFieldOptions.map(({ key, label }) => [key, label]));
 		return [...fields].map((field) => labels[field] ?? field).join(', ');
@@ -395,6 +438,8 @@
 				apiJson<ImageOptions>('generation/image/options')
 			]);
 			checkpoint = options.default_checkpoint;
+			samplerName = options.default_sampler;
+			scheduler = options.default_scheduler;
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 			} else {
@@ -454,6 +499,8 @@
 					loras: loras.filter(({ name }) => name).map(({ name, strength }) => ({ name, strength })),
 					cfg,
 					steps,
+					sampler_name: samplerName,
+					scheduler,
 					width,
 					height,
 					seed: randomSeed ? null : seed.trim() || null
@@ -626,10 +673,10 @@
 							<div id="settings-title"><Typography as="h2" variant="h2">파라미터 설정</Typography></div>
 						</div>
 						<div class="flex items-center gap-2">
-							<IconOutlinedButton ariaLabel="프리셋 저장" loading={presetsLoading} disabled={optionsLoading || generating} onclick={() => void openSavePreset()}>
+							<IconOutlinedButton ariaLabel="프리셋 저장" title="프리셋 저장" loading={presetsLoading} disabled={optionsLoading || generating} onclick={() => void openSavePreset()}>
 								<Save size={17} strokeWidth={1.8} />
 							</IconOutlinedButton>
-							<IconOutlinedButton ariaLabel="프리셋 불러오기" loading={presetsLoading} disabled={optionsLoading || generating} onclick={() => void openLoadPreset()}>
+							<IconOutlinedButton ariaLabel="프리셋 불러오기" title="프리셋 불러오기" loading={presetsLoading} disabled={optionsLoading || generating} onclick={() => void openLoadPreset()}>
 								<FolderOpen size={17} strokeWidth={1.8} />
 							</IconOutlinedButton>
 							{#if optionsLoading}<LoadingSpinner size="sm" label="모델 목록 불러오는 중" />{/if}
@@ -675,40 +722,41 @@
 							<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 						</label>
 
-						<Select id="checkpoint" label="체크포인트" options={checkpointOptions} bind:value={checkpoint} autocomplete disabled={optionsLoading || checkpointOptions.length === 0} required />
+						<div class="space-y-2">
+							<span class="text-sm font-medium">체크포인트</span>
+							<button type="button" onclick={() => (checkpointModalOpen = true)} disabled={optionsLoading || options.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
+								<span class="min-w-0 truncate">{checkpoint || '체크포인트를 선택해 주세요'}</span>
+								<span class="shrink-0 text-xs font-semibold text-primary">선택</span>
+							</button>
+						</div>
 						<div class="space-y-3">
 							<div class="flex items-center justify-between gap-3">
 								<span class="text-sm font-medium">LoRA</span>
-								<button type="button" onclick={addLora} disabled={optionsLoading || loraOptions.length === 0 || loras.length >= loraOptions.length || loras.some((lora) => !lora.name)} class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
-									<Plus size={14} strokeWidth={2} />
-									<span>LoRA 추가</span>
+								<button type="button" onclick={() => (loraModalOpen = true)} disabled={optionsLoading || options.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
+									LoRA 선택
 								</button>
 							</div>
 							{#if loras.length === 0}
 								<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>
 							{:else}
 								<div class="space-y-3">
-									{#each loras as lora, index (lora.name)}
+									{#each loras as lora (lora.name)}
 										<div class="rounded-lg border border-border p-3">
-											<div class="flex items-start gap-2">
-												<div class="min-w-0 flex-1">
-													<Select id={`lora-${index}`} label={`LoRA ${index + 1}`} options={availableLoraOptions(index)} bind:value={lora.name} autocomplete disabled={optionsLoading} />
-												</div>
-												<button type="button" aria-label={`LoRA ${index + 1} 제거`} onclick={() => removeLora(index)} class="mt-7 inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-													<X size={16} strokeWidth={1.8} />
-												</button>
-												</div>
-												{#if lora.name}
-													<label class="mt-3 block space-y-2" for={`lora-strength-${index}`}>
-														<span class="text-sm font-medium">Strength</span>
-														<input id={`lora-strength-${index}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} />
-													</label>
-												{/if}
+											<p class="break-all text-sm font-medium">{lora.name}</p>
+											<label class="mt-3 block space-y-2" for={`lora-strength-${lora.name}`}>
+												<span class="text-sm font-medium">Strength</span>
+												<input id={`lora-strength-${lora.name}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} />
+											</label>
 										</div>
 									{/each}
 								</div>
 							{/if}
 						</div>
+
+						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={optionsLoading || !samplerName || !scheduler} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
+							<span class="text-sm font-medium">샘플러 / 스케줄러</span>
+							<span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName} / {scheduler}</span>
+						</button>
 
 						<Select id="aspect-ratio" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} />
 
@@ -762,6 +810,38 @@
 			</div>
 		</div>
 	</Layout>
+
+	<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="설치된 체크포인트에서 하나를 선택하세요.">
+		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+			{#each options.checkpoints as value}
+				<button type="button" onclick={() => { checkpoint = value; checkpointModalOpen = false; }} aria-pressed={checkpoint === value} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
+					<span>{value}</span>
+					{#if checkpoint === value}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
+				</button>
+			{/each}
+		</div>
+	</Modal>
+
+	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="설치된 LoRA를 최대 8개까지 선택하거나 선택 해제하세요.">
+		<div class="grid max-h-[60dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+			{#each options.loras as value}
+				{@const selected = loras.some((lora) => lora.name === value)}
+				<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}>
+					<span>{value}</span>
+					{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}
+				</button>
+			{/each}
+		</div>
+		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
+	</Modal>
+
+	<SamplingSelectionModal
+		bind:open={samplingModalOpen}
+		samplers={options.samplers}
+		schedulers={options.schedulers}
+		bind:samplerName
+		bind:scheduler
+	/>
 
 	<Modal bind:open={savePresetModalOpen} title="프리셋 저장" closeOnBackdrop={!savingPreset}>
 		<div class="space-y-5">

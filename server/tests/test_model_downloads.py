@@ -21,6 +21,8 @@ from app.model_downloads import (
     _file_matches,
     _installed_model_path,
     _model_target_directory,
+    _fetch_model_versions,
+    _parse_civitai_source,
     _parse_version,
     _process_model_download,
     _safe_subfolder,
@@ -28,13 +30,63 @@ from app.model_downloads import (
     _select_file_index,
     ModelType,
     cancel_download,
+    create_model_folder,
     delete_installed_model,
     download_civitai_model,
     ModelDownloadRequest,
+    ModelFolderRequest,
+    list_model_folders,
 )
 
 
 class ModelDownloadsTest(unittest.TestCase):
+    def test_model_page_source_and_version_paths_are_distinct(self) -> None:
+        self.assertEqual(
+            _parse_civitai_source("https://civitai.red/models/1145743/example"),
+            (1145743, None),
+        )
+        self.assertEqual(
+            _parse_civitai_source("https://civitai.com/models/1145743/example?modelVersionId=3271822"),
+            (1145743, 3271822),
+        )
+        self.assertEqual(
+            _parse_civitai_source("https://civitai.com/api/download/models/3271822"),
+            (None, 3271822),
+        )
+        with self.assertRaises(CivitaiError):
+            _parse_civitai_source("https://example.com/models/1145743/example")
+
+    def test_model_versions_use_latest_compatible_published_version(self) -> None:
+        payload = {
+            "id": 1145743,
+            "name": "Example",
+            "type": "LORA",
+            "modelVersions": [
+                {
+                    "id": 10,
+                    "name": "Older",
+                    "publishedAt": "2026-01-01T00:00:00Z",
+                    "files": [{"name": "older.safetensors", "type": "Model", "downloadUrl": "https://civitai.com/file/10"}],
+                },
+                {
+                    "id": 30,
+                    "name": "Unsupported newest",
+                    "publishedAt": "2026-03-01T00:00:00Z",
+                    "files": [{"name": "archive.zip", "type": "Model", "downloadUrl": "https://civitai.com/file/30"}],
+                },
+                {
+                    "id": 20,
+                    "name": "Latest compatible",
+                    "publishedAt": "2026-02-01T00:00:00Z",
+                    "files": [{"name": "latest.safetensors", "type": "Model", "downloadUrl": "https://civitai.com/file/20"}],
+                },
+            ],
+        }
+        with patch("app.model_downloads._fetch_civitai_payload", return_value=payload):
+            versions = _fetch_model_versions(1145743, "lora")
+
+        self.assertEqual([version.version_id for version in versions], [20, 10])
+
     def test_parses_civitai_version_file_contract(self) -> None:
         version = _parse_version(
             {
@@ -118,6 +170,29 @@ class ModelDownloadsTest(unittest.TestCase):
             with self.assertRaises(CivitaiError):
                 _safe_subfolder(invalid)
 
+    def test_existing_folders_can_be_listed_and_new_folder_created(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "loras"
+            (root / "character/anime").mkdir(parents=True)
+            (root / ".cache/internal").mkdir(parents=True)
+            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
+                folders = list_model_folders("lora", user)
+                created = create_model_folder(ModelFolderRequest(model_type="lora", parent="character", name="realistic"), user)
+                with self.assertRaises(HTTPException) as duplicate:
+                    create_model_folder(ModelFolderRequest(model_type="lora", parent="character", name="realistic"), user)
+                with self.assertRaises(HTTPException) as invalid_name:
+                    create_model_folder(ModelFolderRequest(model_type="lora", name="style/anime"), user)
+                with self.assertRaises(HTTPException) as hidden_parent:
+                    create_model_folder(ModelFolderRequest(model_type="lora", parent=".cache", name="new"), user)
+
+            self.assertEqual([folder.subfolder for folder in folders], ["", "character", "character/anime"])
+            self.assertEqual(created.subfolder, "character/realistic")
+            self.assertTrue((root / "character/realistic").is_dir())
+            self.assertEqual(duplicate.exception.status_code, 409)
+            self.assertEqual(invalid_name.exception.status_code, 400)
+            self.assertEqual(hidden_parent.exception.status_code, 400)
+
     def test_download_request_uses_subfolder_in_target_path(self) -> None:
         user = UserResponse(id=uuid.uuid4(), username="tester")
         version = CivitaiVersion(
@@ -142,6 +217,7 @@ class ModelDownloadsTest(unittest.TestCase):
             root = Path(temporary_directory)
             root.mkdir(exist_ok=True)
             target = root / "diffusion_models/characters/anime/model.safetensors"
+            target.parent.mkdir(parents=True)
             row = {
                 "id": uuid.uuid4(),
                 "version_id": 1,

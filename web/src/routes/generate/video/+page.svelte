@@ -792,12 +792,14 @@
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-settings-title">
 					<div class="flex items-center justify-between gap-4">
 						<div id="video-settings-title"><Typography as="h2" variant="h2">동영상 설정</Typography></div>
-						<IconOutlinedButton ariaLabel="동영상 프리셋 저장" disabled={generating} onclick={openVideoPresetSave}>
-							<Save size={17} strokeWidth={1.8} />
-						</IconOutlinedButton>
-						<IconOutlinedButton ariaLabel="동영상 프리셋 불러오기" loading={videoPresetsLoading} disabled={generating} onclick={() => void openVideoPresetLoad()}>
-							<FolderOpen size={17} strokeWidth={1.8} />
-						</IconOutlinedButton>
+						<div class="flex items-center gap-2">
+							<IconOutlinedButton ariaLabel="동영상 프리셋 저장" title="프리셋 저장" disabled={generating} onclick={openVideoPresetSave}>
+								<Save size={17} strokeWidth={1.8} />
+							</IconOutlinedButton>
+							<IconOutlinedButton ariaLabel="동영상 프리셋 불러오기" title="프리셋 불러오기" loading={videoPresetsLoading} disabled={generating} onclick={() => void openVideoPresetLoad()}>
+								<FolderOpen size={17} strokeWidth={1.8} />
+							</IconOutlinedButton>
+						</div>
 					</div>
 					<Tab items={modeTabs} bind:value={mode} ariaLabel="동영상 생성 방식" onselect={selectMode} class="mt-5" />
 					<p class="mt-2 text-xs text-muted-foreground">{modes.find((item) => item.value === mode)?.description}</p>

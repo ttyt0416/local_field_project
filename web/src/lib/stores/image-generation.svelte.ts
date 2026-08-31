@@ -5,6 +5,8 @@ export type ImageGenerationParameters = {
 	loras: { name: string; strength: number }[];
 	cfg: number;
 	steps: number;
+	sampler_name: string;
+	scheduler: string;
 	width: number;
 	height: number;
 	seed: string;

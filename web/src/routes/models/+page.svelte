@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Download, FileDown, Folder, RefreshCw, Trash2 } from '@lucide/svelte';
+	import { Download, FileDown, Folder, Plus, RefreshCw, Trash2 } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
@@ -21,6 +21,12 @@
 		sha256: string | null;
 		primary: boolean;
 	};
+	type VersionOption = {
+		version_id: number;
+		version_name: string;
+		base_model: string | null;
+		published_at: string | null;
+	};
 	type Lookup = {
 		version_id: number;
 		model_id: number | null;
@@ -30,6 +36,7 @@
 		base_model: string | null;
 		files: FileInfo[];
 		selected_file_index: number;
+		versions: VersionOption[];
 	};
 	type DownloadJob = {
 		id: string;
@@ -37,12 +44,10 @@
 		model_type: ModelType;
 		subfolder: string;
 		filename: string;
-		status: 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled' | string;
+		status: 'queued' | 'downloading';
 		downloaded_bytes: number;
 		total_bytes: number | null;
-		error_message: string | null;
 		created_at: string;
-		completed_at: string | null;
 	};
 	type InstalledModel = {
 		model_type: ModelType;
@@ -50,6 +55,7 @@
 		size_bytes: number;
 		modified_at: string;
 	};
+	type ModelFolder = { model_type: ModelType; subfolder: string };
 	type ToastData = { state: 'positive' | 'negative' | 'info'; title: string; message: string };
 
 	const modelTypes: { value: ModelType; label: string }[] = [
@@ -68,10 +74,7 @@
 	};
 	const statusLabels: Record<string, string> = {
 		queued: '대기 중',
-		downloading: '다운로드 중',
-		completed: '완료',
-		failed: '실패',
-		cancelled: '중단됨'
+		downloading: '다운로드 중'
 	};
 
 	let ready = $state(false);
@@ -79,10 +82,19 @@
 	let modelType = $state<ModelType>('checkpoint');
 	let subfolder = $state('');
 	let lookup = $state<Lookup | null>(null);
+	let versionOptions = $state<VersionOption[]>([]);
+	let versionModalOpen = $state(false);
+	let versionLoadingId = $state<number | null>(null);
 	let selectedFileIndex = $state<number | null>(null);
 	let lookupLoading = $state(false);
 	let downloadLoading = $state(false);
 	let jobs = $state<DownloadJob[]>([]);
+	let folderModalOpen = $state(false);
+	let folders = $state<ModelFolder[]>([]);
+	let foldersLoading = $state(false);
+	let creatingFolder = $state(false);
+	let folderCreating = $state(false);
+	let newFolderName = $state('');
 	let installed = $state<InstalledModel[]>([]);
 	let deleteTarget = $state<InstalledModel | null>(null);
 	let deleteModalOpen = $state(false);
@@ -108,7 +120,7 @@
 		try {
 			await refresh();
 			pollTimer = setInterval(() => {
-				if (jobs.some((job) => job.status === 'queued' || job.status === 'downloading')) void loadJobs();
+				if (jobs.length > 0) void loadJobs();
 			}, 2000);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '모델 정보를 불러오지 못했습니다.';
@@ -122,7 +134,7 @@
 	}
 
 	async function loadJobs() {
-		jobs = await apiJson<DownloadJob[]>('models/downloads');
+		jobs = await apiJson<DownloadJob[]>('models/downloads?active_only=true');
 	}
 
 	async function loadInstalled() {
@@ -130,22 +142,61 @@
 	}
 
 	async function lookupModel() {
-		if (!source.trim()) {
-			error = 'Civitai 모델 버전 ID 또는 링크를 입력해 주세요.';
+		const requestedSource = source.trim();
+		const requestedType = modelType;
+		if (!requestedSource) {
+			error = 'Civitai 모델 링크, 버전 ID 또는 버전 링크를 입력해 주세요.';
 			return;
 		}
 		lookupLoading = true;
 		error = '';
 		try {
-			lookup = await apiJson<Lookup>(
-				`models/civitai/lookup?source=${encodeURIComponent(source.trim())}&model_type=${modelType}`
+			const result = await apiJson<Lookup>(
+				`models/civitai/lookup?source=${encodeURIComponent(requestedSource)}&model_type=${requestedType}`
 			);
-			selectedFileIndex = lookup.selected_file_index;
+			if (source.trim() !== requestedSource || modelType !== requestedType) return;
+			lookup = result;
+			versionOptions = result.versions;
+			selectedFileIndex = result.selected_file_index;
 		} catch (reason) {
 			lookup = null;
 			error = reason instanceof Error ? reason.message : 'Civitai 모델 정보를 조회하지 못했습니다.';
 		} finally {
 			lookupLoading = false;
+		}
+	}
+
+	function clearLookupSelection() {
+		lookup = null;
+		versionOptions = [];
+		versionModalOpen = false;
+		selectedFileIndex = null;
+		subfolder = '';
+	}
+
+	async function selectVersion(versionId: number) {
+		if (!lookup || versionLoadingId !== null) return;
+		if (versionId === lookup.version_id) {
+			versionModalOpen = false;
+			return;
+		}
+		const requestedType = modelType;
+		versionLoadingId = versionId;
+		error = '';
+		try {
+			const result = await apiJson<Lookup>(
+				`models/civitai/lookup?source=${versionId}&model_type=${requestedType}`
+			);
+			if (modelType !== requestedType) return;
+			lookup = result;
+			selectedFileIndex = result.selected_file_index;
+			versionModalOpen = false;
+		} catch (reason) {
+			const message = reason instanceof Error ? reason.message : '모델 버전을 불러오지 못했습니다.';
+			error = message;
+			showToast('negative', '모델 버전 선택 실패', message);
+		} finally {
+			versionLoadingId = null;
 		}
 	}
 
@@ -156,10 +207,15 @@
 		try {
 			const job = await apiJson<DownloadJob>('models/civitai/download', {
 				method: 'POST',
-				json: { source: source.trim(), model_type: modelType, file_index: selectedFileIndex, subfolder: subfolder.trim() }
+				json: { source: String(lookup.version_id), model_type: modelType, file_index: selectedFileIndex, subfolder: subfolder.trim() }
 			});
 			jobs = [job, ...jobs.filter((item) => item.id !== job.id)];
 			lookup = null;
+			versionOptions = [];
+			source = '';
+			selectedFileIndex = null;
+			subfolder = '';
+			folderModalOpen = false;
 			showToast('positive', '다운로드 요청 완료', '모델 다운로드가 대기열에 추가되었습니다.');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '모델 다운로드를 요청하지 못했습니다.';
@@ -168,14 +224,41 @@
 		}
 	}
 
-	async function retryJob(downloadId: string) {
+	async function openFolderModal() {
+		if (!lookup || selectedFileIndex === null) return;
+		folderModalOpen = true;
+		creatingFolder = false;
+		newFolderName = '';
+		foldersLoading = true;
 		error = '';
 		try {
-			const job = await apiJson<DownloadJob>(`models/downloads/${downloadId}/retry`, { method: 'POST' });
-			jobs = jobs.map((item) => (item.id === job.id ? job : item));
-			showToast('positive', '재시도 요청 완료', '모델 다운로드를 다시 시작했습니다.');
+			folders = await apiJson<ModelFolder[]>(`models/folders?model_type=${modelType}`);
+			if (!folders.some((folder) => folder.subfolder === subfolder)) subfolder = '';
 		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '다운로드를 다시 시도하지 못했습니다.';
+			error = reason instanceof Error ? reason.message : '모델 폴더를 불러오지 못했습니다.';
+			folderModalOpen = false;
+		} finally {
+			foldersLoading = false;
+		}
+	}
+
+	async function createFolder() {
+		if (!newFolderName.trim() || folderCreating) return;
+		folderCreating = true;
+		error = '';
+		try {
+			const folder = await apiJson<ModelFolder>('models/folders', {
+				method: 'POST',
+				json: { model_type: modelType, parent: subfolder, name: newFolderName.trim() }
+			});
+			folders = [...folders.filter((item) => item.subfolder !== folder.subfolder), folder].sort((a, b) => a.subfolder.localeCompare(b.subfolder));
+			subfolder = folder.subfolder;
+			creatingFolder = false;
+			newFolderName = '';
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '새 모델 폴더를 만들지 못했습니다.';
+		} finally {
+			folderCreating = false;
 		}
 	}
 
@@ -184,8 +267,8 @@
 		cancelLoadingId = downloadId;
 		error = '';
 		try {
-			const job = await apiJson<DownloadJob>(`models/downloads/${downloadId}/cancel`, { method: 'POST' });
-			jobs = jobs.map((item) => (item.id === job.id ? job : item));
+			await apiJson<DownloadJob>(`models/downloads/${downloadId}/cancel`, { method: 'POST' });
+			jobs = jobs.filter((item) => item.id !== downloadId);
 			showToast('positive', '다운로드 중단 완료', '다운로드를 중단하고 임시 파일을 삭제했습니다.');
 		} catch (reason) {
 			const message = reason instanceof Error ? reason.message : '다운로드를 중단하지 못했습니다.';
@@ -233,7 +316,11 @@
 	function chooseType(value: ModelType) {
 		modelType = value;
 		lookup = null;
+		versionOptions = [];
+		versionModalOpen = false;
 		selectedFileIndex = null;
+		folderModalOpen = false;
+		subfolder = '';
 	}
 
 	function showToast(state: ToastData['state'], title: string, message: string) {
@@ -250,6 +337,10 @@
 			unit += 1;
 		}
 		return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+	}
+
+	function formatDate(value: string | null) {
+		return value ? new Date(value).toLocaleDateString('ko-KR') : '날짜 정보 없음';
 	}
 
 	function progress(job: DownloadJob) {
@@ -286,15 +377,18 @@
 					{/each}
 				</div>
 				<form class="flex flex-col gap-3 md:flex-row" onsubmit={(event) => { event.preventDefault(); void lookupModel(); }}>
-					<label class="sr-only" for="civitai-source">Civitai 모델 버전 ID 또는 링크</label>
-					<input id="civitai-source" bind:value={source} placeholder="Civitai 모델 버전 ID 또는 링크" class="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
+					<label class="sr-only" for="civitai-source">Civitai 모델 링크, 버전 ID 또는 버전 링크</label>
+					<input id="civitai-source" bind:value={source} oninput={clearLookupSelection} placeholder="Civitai 모델 링크, 버전 ID 또는 버전 링크" class="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
 					<button type="submit" disabled={lookupLoading} class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">{#if lookupLoading}<LoadingSpinner size="sm" label="조회 중" />{:else}<Download size={16} />모델 조회{/if}</button>
 				</form>
 			</section>
 
 			{#if lookup}
 				<section class="space-y-4 rounded-2xl border border-primary/30 bg-primary/5 p-5">
-					<div><p class="text-lg font-semibold">{lookup.model_name}</p><p class="mt-1 text-sm text-muted-foreground">{lookup.version_name}{#if lookup.base_model} · {lookup.base_model}{/if}</p></div>
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div><p class="text-lg font-semibold">{lookup.model_name}</p><p class="mt-1 text-sm text-muted-foreground">{lookup.version_name}{#if lookup.base_model} · {lookup.base_model}{/if}</p></div>
+						{#if versionOptions.length > 1}<OutlinedButton disabled={versionLoadingId !== null} onclick={() => (versionModalOpen = true)}>버전 선택</OutlinedButton>{/if}
+					</div>
 					<div class="space-y-2">
 						<p class="text-sm font-semibold">다운로드할 파일</p>
 						{#each lookup.files as file}
@@ -304,21 +398,29 @@
 							</button>
 						{/each}
 					</div>
-					<label class="block space-y-2" for="civitai-subfolder">
-						<span class="text-sm font-semibold">저장 하위폴더 <span class="font-normal text-muted-foreground">(선택)</span></span>
-						<input id="civitai-subfolder" bind:value={subfolder} maxlength="255" placeholder="예: character/anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring" />
-						<span class="text-xs text-muted-foreground">선택한 모델 종류 폴더 아래에 저장합니다. 예: {modelFolders[modelType]}/character/anime</span>
-					</label>
-					<div class="flex justify-end"><button type="button" disabled={downloadLoading || selectedFileIndex === null} onclick={() => void startDownload()} class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">{#if downloadLoading}<LoadingSpinner size="sm" label="요청 중" />{:else}<FileDown size={16} />다운로드 시작{/if}</button></div>
+					<div class="flex justify-end"><button type="button" disabled={downloadLoading || selectedFileIndex === null} onclick={() => void openFolderModal()} class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"><FileDown size={16} />다운로드</button></div>
 				</section>
 			{/if}
 
 			{#if error}<div class="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">{error}</div>{/if}
 
 			<section class="space-y-3">
-				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">다운로드 상태</Typography></div>
-				{#if jobs.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">요청한 모델 다운로드가 없습니다.</div>
-				{:else}<div class="space-y-3">{#each jobs as job (job.id)}<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm"><div class="flex flex-wrap items-start justify-between gap-3"><div class="min-w-0"><p class="truncate text-sm font-semibold" title={`${job.subfolder ? `${job.subfolder}/` : ''}${job.filename}`}>{job.subfolder ? `${job.subfolder}/` : ''}{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div><span class={`rounded-full px-2.5 py-1 text-xs font-semibold ${job.status === 'completed' ? 'bg-success/10 text-success' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : job.status === 'cancelled' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>{statusLabels[job.status] ?? job.status}</span></div>{#if job.status === 'queued' || job.status === 'downloading'}<div class="flex items-center gap-3"><div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><button type="button" disabled={cancelLoadingId !== ''} onclick={() => void cancelJob(job.id)} class="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">{#if cancelLoadingId === job.id}<LoadingSpinner size="sm" label="중단 중" />{:else}중단{/if}</button></div><p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>{:else if job.status === 'failed' || job.status === 'cancelled'}<div class="flex flex-wrap items-center justify-between gap-3"><p class={`text-xs ${job.status === 'cancelled' ? 'text-muted-foreground' : 'text-destructive'}`}>{job.status === 'cancelled' ? '다운로드가 중단되었습니다. 임시 파일은 삭제되었습니다.' : job.error_message ?? '다운로드에 실패했습니다.'}</p><button type="button" class="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted" onclick={() => void retryJob(job.id)}>다시 시도</button></div>{/if}</article>{/each}</div>{/if}
+				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">다운로드 중인 콘텐츠</Typography></div>
+				{#if jobs.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">다운로드 중인 콘텐츠가 없습니다.</div>
+								{:else}
+									<div class="space-y-3">
+										{#each jobs as job (job.id)}
+											<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm">
+												<div class="flex flex-wrap items-start justify-between gap-3">
+													<div class="min-w-0"><p class="truncate text-sm font-semibold" title={`${job.subfolder ? `${job.subfolder}/` : ''}${job.filename}`}>{job.subfolder ? `${job.subfolder}/` : ''}{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div>
+													<span class="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">{statusLabels[job.status] ?? job.status}</span>
+												</div>
+												<div class="flex items-center gap-3"><div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><button type="button" disabled={cancelLoadingId !== ''} onclick={() => void cancelJob(job.id)} class="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">{#if cancelLoadingId === job.id}<LoadingSpinner size="sm" label="중단 중" />{:else}중단{/if}</button></div>
+												<p class="text-xs text-muted-foreground">{formatSize(job.downloaded_bytes)}{#if job.total_bytes} / {formatSize(job.total_bytes)} · {progress(job)}%{/if}</p>
+											</article>
+										{/each}
+									</div>
+								{/if}
 			</section>
 
 			<section class="space-y-3">
@@ -330,6 +432,54 @@
 	</Layout>
 	{#if toast}<div class="fixed right-4 top-4 z-50"><Toast state={toast.state} title={toast.title} message={toast.message} onclose={() => (toast = null)} /></div>{/if}
 {/if}
+
+<Modal bind:open={versionModalOpen} title="모델 버전 선택" description="최신 호환 버전이 기본으로 선택됩니다. 다른 버전을 선택하면 파일 목록도 함께 바뀝니다." closeOnBackdrop={versionLoadingId === null}>
+	<div class="grid max-h-[55dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+		{#each versionOptions as version (version.version_id)}
+			<button
+				type="button"
+				disabled={versionLoadingId !== null}
+				onclick={() => void selectVersion(version.version_id)}
+				class={`min-w-0 rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${lookup?.version_id === version.version_id ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'border-border hover:bg-muted'}`}
+			>
+				<span class="flex items-start justify-between gap-2"><span class="text-sm font-semibold leading-5">{version.version_name}</span>{#if versionLoadingId === version.version_id}<LoadingSpinner size="sm" label="버전 불러오는 중" />{:else if lookup?.version_id === version.version_id}<span class="shrink-0 text-xs text-primary">선택됨</span>{/if}</span>
+				<span class="mt-1 block text-xs leading-5 text-muted-foreground">{version.base_model ?? 'Base model 정보 없음'} · {formatDate(version.published_at)}</span>
+			</button>
+		{/each}
+	</div>
+	{#snippet footer()}
+		<OutlinedButton disabled={versionLoadingId !== null} onclick={() => (versionModalOpen = false)}>닫기</OutlinedButton>
+	{/snippet}
+</Modal>
+
+<Modal bind:open={folderModalOpen} title="저장 폴더 선택" description={`${modelFolders[modelType]} 아래의 기존 폴더를 선택하거나 새 폴더를 만드세요.`} closeOnBackdrop={!downloadLoading && !folderCreating}>
+	{#if foldersLoading}
+		<div class="flex min-h-40 items-center justify-center"><LoadingSpinner size="lg" label="폴더를 불러오는 중" /></div>
+	{:else}
+		<div class="space-y-4">
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each folders as folder (folder.subfolder)}
+					<button type="button" onclick={() => (subfolder = folder.subfolder)} class={`flex min-w-0 items-center gap-2 rounded-xl border p-3 text-left transition ${subfolder === folder.subfolder ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'border-border hover:bg-muted'}`}>
+						<Folder size={17} class="shrink-0 text-primary" />
+						<span class="truncate text-sm font-medium" title={folder.subfolder || '기본 폴더'}>{folder.subfolder || '기본 폴더'}</span>
+					</button>
+				{/each}
+			</div>
+			{#if creatingFolder}
+				<form class="space-y-3 rounded-xl border border-border bg-muted/30 p-3" onsubmit={(event) => { event.preventDefault(); void createFolder(); }}>
+					<label class="block space-y-2" for="new-model-folder"><span class="text-sm font-semibold">{subfolder ? `${subfolder} 아래 새 폴더 이름` : '새 폴더 이름'}</span><input id="new-model-folder" bind:value={newFolderName} maxlength="120" placeholder="예: anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
+					<div class="flex justify-end gap-2"><OutlinedButton disabled={folderCreating} onclick={() => (creatingFolder = false)}>취소</OutlinedButton><PrimaryButton type="submit" loading={folderCreating} disabled={!newFolderName.trim()}>폴더 추가</PrimaryButton></div>
+				</form>
+			{:else}
+				<button type="button" onclick={() => (creatingFolder = true)} class="inline-flex items-center gap-2 rounded-lg border border-dashed border-primary px-3 py-2 text-sm font-semibold text-primary hover:bg-primary/10"><Plus size={16} />새 폴더</button>
+			{/if}
+		</div>
+	{/if}
+	{#snippet footer()}
+		<OutlinedButton disabled={downloadLoading || folderCreating} onclick={() => (folderModalOpen = false)}>취소</OutlinedButton>
+		<PrimaryButton loading={downloadLoading} disabled={foldersLoading || folderCreating} onclick={() => void startDownload()}><FileDown size={16} /><span>선택한 폴더에 다운로드</span></PrimaryButton>
+	{/snippet}
+</Modal>
 
 {#if deleteTarget}
 	<Modal bind:open={deleteModalOpen} title="설치된 모델을 삭제하시겠습니까?" description="삭제한 모델 파일은 복구할 수 없습니다." closeOnBackdrop={!deleteLoading} onclose={cancelDelete}>

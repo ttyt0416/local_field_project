@@ -8,4 +8,6 @@
 
 동영상 상세의 편집 버튼은 시작·종료 시간, crop 좌표, 90도 단위 회전을 입력받아 `POST /vault/videos/{generation_id}/edit`에서 FFmpeg로 새 H.264/AAC MP4를 저장한다. 모든 편집은 원본 generation과 Storage 파일을 보존한다.
 
-`DELETE /vault/images/bulk`와 단일 삭제 API는 기존 사용자 소유권·Storage 보존 규칙을 유지한다. 생성 결과가 다른 generation의 input으로 재사용된 경우 해당 Storage 파일은 보존한다.
+`DELETE /vault/images/bulk`와 단일 삭제 API는 기존 사용자 소유권·Storage 보존 규칙을 유지한다. `DELETE /vault/images/filtered`와 `DELETE /vault/videos/filtered`는 현재 `search`·`favorites_only` 조건에 맞는 모든 page의 row를 snapshot으로 조회한다. `confirmed=true`와 화면에서 확인한 `expected_count`가 일치해야 삭제하며, 개수가 바뀌면 `409`로 중단한다.
+
+Bulk 삭제는 삭제 가능한 Storage 파일을 먼저 모두 지운 뒤 DB row를 삭제한다. Storage 삭제 하나라도 실패하면 DB row를 유지한다. 해당 파일이 `media_assets` 또는 snapshot 밖의 다른 image/video generation에서 참조되면 Storage 원본은 보존한다.

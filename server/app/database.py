@@ -249,6 +249,29 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'image_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'sampler_name'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN sampler_name VARCHAR(64) NOT NULL DEFAULT 'er_sde';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'image_generations' AND column_name = 'scheduler'
+            ) THEN
+                ALTER TABLE image_generations ADD COLUMN scheduler VARCHAR(64) NOT NULL DEFAULT 'simple';
+            END IF;
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -324,6 +347,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         loras JSONB NOT NULL DEFAULT '[]'::jsonb,
         cfg DOUBLE PRECISION NOT NULL,
         steps INTEGER NOT NULL,
+        sampler_name VARCHAR(64) NOT NULL DEFAULT 'er_sde',
+        scheduler VARCHAR(64) NOT NULL DEFAULT 'simple',
         width INTEGER NOT NULL,
         height INTEGER NOT NULL,
         seed BIGINT NOT NULL,
@@ -505,7 +530,7 @@ def initialize_database() -> None:
 
 _IMAGE_GENERATION_FIELDS = (
     "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
-    "loras, cfg, steps, width, height, seed, file_path, storage_file_id, filename, "
+    "loras, cfg, steps, sampler_name, scheduler, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
     "source_generation_id, is_edited, size_bytes"
 )
@@ -525,6 +550,8 @@ def create_image_generation(
     width: int,
     height: int,
     seed: int,
+    sampler_name: str = "er_sde",
+    scheduler: str = "simple",
 ) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
@@ -532,8 +559,8 @@ def create_image_generation(
             """
             INSERT INTO image_generations
                 (id, user_id, prompt_id, client_id, prompt, negative_prompt, checkpoint,
-                 loras, cfg, steps, width, height, seed)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+                 loras, cfg, steps, sampler_name, scheduler, width, height, seed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
             """,
             (
@@ -547,6 +574,8 @@ def create_image_generation(
                 json.dumps(loras, ensure_ascii=False),
                 cfg,
                 steps,
+                sampler_name,
+                scheduler,
                 width,
                 height,
                 seed,
@@ -576,10 +605,10 @@ def create_image_edit(
             """
             INSERT INTO image_generations
                 (id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint,
-                 loras, cfg, steps, width, height, seed, storage_file_id, filename, subfolder,
+                 loras, cfg, steps, sampler_name, scheduler, width, height, seed, storage_file_id, filename, subfolder,
                  image_type, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes)
             SELECT %s, user_id, %s, %s, 'completed', prompt, negative_prompt, checkpoint,
-                   loras, cfg, steps, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
+                   loras, cfg, steps, sampler_name, scheduler, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s
             FROM image_generations
             WHERE id = %s AND user_id = %s AND status = 'completed'
@@ -716,6 +745,27 @@ def list_image_generations(
     )
 
 
+def list_filtered_image_generations(
+    user_id: uuid.UUID,
+    *,
+    search: str = "",
+    favorites_only: bool = False,
+) -> list[dict[str, Any]]:
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    if search.strip():
+        filters.append("prompt ILIKE %s")
+        parameters.append(f"%{search.strip()}%")
+    if favorites_only:
+        filters.append("is_favorite = TRUE")
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {' AND '.join(filters)}",
+            parameters,
+        ).fetchall()
+    return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
+
+
 def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     with get_connection() as connection:
         row = connection.execute(
@@ -772,6 +822,34 @@ def has_media_asset(storage_file_id: str, user_id: uuid.UUID) -> bool:
             (storage_file_id, user_id),
         ).fetchone()
     return row is not None
+
+
+def has_generation_storage_reference_outside(
+    storage_file_id: str,
+    user_id: uuid.UUID,
+    excluded_generation_ids: list[uuid.UUID],
+) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM image_generations
+                WHERE storage_file_id = %s AND user_id = %s AND NOT (id = ANY(%s))
+                UNION ALL
+                SELECT 1 FROM video_generations
+                WHERE storage_file_id = %s AND user_id = %s AND NOT (id = ANY(%s))
+            )
+            """,
+            (
+                storage_file_id,
+                user_id,
+                excluded_generation_ids,
+                storage_file_id,
+                user_id,
+                excluded_generation_ids,
+            ),
+        ).fetchone()
+    return bool(row[0])
 
 
 def list_reusable_media(
@@ -881,10 +959,16 @@ def get_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, 
     return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
-def list_model_downloads(user_id: uuid.UUID, limit: int = 20) -> list[dict[str, Any]]:
+def list_model_downloads(
+    user_id: uuid.UUID,
+    limit: int = 20,
+    *,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    active_filter = " AND status IN ('queued', 'downloading')" if active_only else ""
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
+            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE user_id = %s{active_filter} ORDER BY created_at DESC LIMIT %s",
             (user_id, limit),
         ).fetchall()
     return [dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True)) for row in rows]
@@ -1229,6 +1313,27 @@ def list_video_generations(
     )
 
 
+def list_filtered_video_generations(
+    user_id: uuid.UUID,
+    *,
+    search: str = "",
+    favorites_only: bool = False,
+) -> list[dict[str, Any]]:
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    if search.strip():
+        filters.append("prompt ILIKE %s")
+        parameters.append(f"%{search.strip()}%")
+    if favorites_only:
+        filters.append("is_favorite = TRUE")
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE {' AND '.join(filters)}",
+            parameters,
+        ).fetchall()
+    return [generation for row in rows if (generation := _video_generation_row(row)) is not None]
+
+
 def delete_video_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     with get_connection() as connection:
         row = connection.execute(
@@ -1236,6 +1341,15 @@ def delete_video_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> boo
             (generation_id, user_id),
         ).fetchone()
     return row is not None
+
+
+def delete_video_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID) -> int:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "DELETE FROM video_generations WHERE id = ANY(%s) AND user_id = %s RETURNING id",
+            (generation_ids, user_id),
+        ).fetchall()
+    return len(rows)
 
 
 def update_video_generation_status(

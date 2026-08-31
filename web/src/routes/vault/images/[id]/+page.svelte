@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Copy, Crop, Download, Heart, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { ArrowLeft, Copy, Crop, Download, Heart, Save, SlidersHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import ImageMedia from '../../../../../components/media/image.svelte';
 	import ImageEditor from '../../../../../components/media/image-editor.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
@@ -12,11 +12,13 @@
 	import Toast from '../../../../../components/feedback/toast.svelte';
 	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
+	import ImagePresetModal from '../../../../../components/presets/image-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
-import { downloadMedia } from '$lib/utils/download';
+	import type { ImageOptions, Preset, PresetValues } from '$lib/types/presets';
+	import { downloadMedia } from '$lib/utils/download';
 
 	type VaultImageDetail = {
 		id: string;
@@ -29,6 +31,8 @@ import { downloadMedia } from '$lib/utils/download';
 		loras: { name: string; strength: number }[];
 		cfg: number;
 		steps: number;
+		sampler_name: string;
+		scheduler: string;
 		width: number;
 		height: number;
 		seed: number;
@@ -56,6 +60,10 @@ import { downloadMedia } from '$lib/utils/download';
 	let downloading = $state(false);
 	let imageEditorOpen = $state(false);
 	let editError = $state('');
+	let presetError = $state('');
+	let presetSuccess = $state('');
+	let presetOpen = $state(false);
+	let imageOptions = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
 
 	onMount(() => {
 		void loadDetail();
@@ -75,6 +83,11 @@ import { downloadMedia } from '$lib/utils/download';
 		}
 		try {
 			generation = await apiJson<VaultImageDetail>(`vault/images/${generationId}`);
+			try {
+				imageOptions = await apiJson<ImageOptions>('generation/image/options');
+			} catch (reason) {
+				presetError = reason instanceof Error ? reason.message : '프리셋 저장 옵션을 불러오지 못했습니다.';
+			}
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '콘텐츠 상세 정보를 불러오지 못했습니다.';
 		} finally {
@@ -126,6 +139,8 @@ import { downloadMedia } from '$lib/utils/download';
 			checkpoint: generation.checkpoint,
 			cfg: generation.cfg,
 			steps: generation.steps,
+			sampler_name: generation.sampler_name,
+			scheduler: generation.scheduler,
 			width: generation.width,
 			height: generation.height,
 			seed: String(generation.seed),
@@ -151,6 +166,30 @@ import { downloadMedia } from '$lib/utils/download';
 		} finally {
 			deleting = false;
 		}
+	}
+
+	function presetValues(): PresetValues {
+		if (!generation) return {};
+		return {
+			prompt: generation.prompt,
+			negative_prompt: generation.negative_prompt,
+			checkpoint: generation.checkpoint,
+			loras: generation.loras.map(({ name, strength }) => ({ name, strength })),
+			aspect_ratio: 'custom',
+			width: generation.width,
+			height: generation.height,
+			cfg: generation.cfg,
+			steps: generation.steps,
+			sampler_name: generation.sampler_name,
+			scheduler: generation.scheduler,
+			seed: String(generation.seed),
+			random_seed: false,
+			prompt_enhancement_enabled: false
+		};
+	}
+
+	function handlePresetSaved(preset: Preset) {
+		presetSuccess = `'${preset.name}' 프리셋을 저장했습니다.`;
 	}
 
 	function imageSource(image: VaultImageDetail) {
@@ -266,6 +305,7 @@ import { downloadMedia } from '$lib/utils/download';
 							{/if}
 						</div>
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
+						<div><dt class="text-muted-foreground">샘플러 / 스케줄러</dt><dd class="mt-1 break-all font-medium">{generation.sampler_name} / {generation.scheduler}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
@@ -295,6 +335,10 @@ import { downloadMedia } from '$lib/utils/download';
 			</section>
 
 			<section class="flex flex-col justify-end gap-3 sm:flex-row">
+				<OutlinedButton disabled={imageOptions.checkpoints.length === 0} onclick={() => (presetOpen = true)}>
+					<Save size={16} strokeWidth={1.9} />
+					<span>프리셋 저장</span>
+				</OutlinedButton>
 				<OutlinedButton disabled={!generation.image_url} onclick={() => (imageEditorOpen = true)}>
 					<Crop size={16} strokeWidth={1.9} />
 					<span>이미지 편집</span>
@@ -352,11 +396,22 @@ import { downloadMedia } from '$lib/utils/download';
 		onsaved={(generationId) => void goto(`/vault/images/${generationId}`)}
 		onerror={(message) => (editError = message)}
 	/>
+	<ImagePresetModal
+		bind:open={presetOpen}
+		preset={null}
+		initialValues={presetValues()}
+		options={imageOptions}
+		onSaved={handlePresetSaved}
+	/>
 {/if}
 
 {#if error}
 	<div class="fixed right-4 top-4 z-50">
 		<Toast state="negative" title="상세 조회 실패" message={error} onclose={() => (error = '')} />
+	</div>
+{:else if presetError}
+	<div class="fixed right-4 top-4 z-50">
+		<Toast state="negative" title="프리셋 저장 준비 실패" message={presetError} onclose={() => (presetError = '')} />
 	</div>
 {:else if editError}
 	<div class="fixed right-4 top-4 z-50">
@@ -369,5 +424,9 @@ import { downloadMedia } from '$lib/utils/download';
 {:else if copySuccess}
 	<div class="fixed right-4 top-4 z-50">
 		<Toast state="positive" title="프롬프트 복사" message={copySuccess} onclose={() => (copySuccess = '')} />
+	</div>
+{:else if presetSuccess}
+	<div class="fixed right-4 top-4 z-50">
+		<Toast state="positive" title="프리셋 저장" message={presetSuccess} onclose={() => (presetSuccess = '')} />
 	</div>
 {/if}

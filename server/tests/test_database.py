@@ -38,7 +38,40 @@ class ReturningConnection(FakeConnection):
         return ReturningCursor(self.row)
 
 
+class RowsCursor:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self.rows = rows
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self.rows
+
+
+class RowsConnection(FakeConnection):
+    def execute(self, query: str, parameters: tuple[object, ...]) -> RowsCursor:
+        self.calls.append((query, parameters))
+        return RowsCursor([])
+
+
 class VideoGenerationStatusTest(unittest.TestCase):
+    def test_model_download_active_filter_is_explicit(self) -> None:
+        connection = RowsConnection()
+        with patch.object(database, "get_connection", return_value=connection):
+            database.list_model_downloads(uuid4(), active_only=True)
+
+        self.assertIn("status IN ('queued', 'downloading')", connection.calls[0][0])
+
+    def test_shared_generation_storage_reference_excludes_snapshot_ids(self) -> None:
+        connection = ReturningConnection((True,))
+        user_id = uuid4()
+        generation_ids = [uuid4()]
+        with patch.object(database, "get_connection", return_value=connection):
+            result = database.has_generation_storage_reference_outside("file-1", user_id, generation_ids)
+
+        self.assertTrue(result)
+        self.assertIn("image_generations", connection.calls[0][0])
+        self.assertIn("video_generations", connection.calls[0][0])
+        self.assertEqual(connection.calls[0][1][2], generation_ids)
+
     def test_create_image_generation_reads_returning_cursor(self) -> None:
         generation_id = uuid4()
         created_at = datetime.now(timezone.utc)

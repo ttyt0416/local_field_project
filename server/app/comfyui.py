@@ -46,6 +46,8 @@ _COMFYUI_TIMEOUT_SECONDS = 30
 _VLLM_TIMEOUT_SECONDS = 600
 _SSE_HEARTBEAT_SECONDS = 15
 _MAX_SEED = 2**63 - 1
+_DEFAULT_SAMPLER = "er_sde"
+_DEFAULT_SCHEDULER = "simple"
 _PROGRESS_UNSET = object()
 _progress_lock = threading.Lock()
 _progress_states: dict[str, dict[str, Any]] = {}
@@ -65,6 +67,8 @@ class ImageGenerationRequest(BaseModel):
     loras: list[LoraSelection] = Field(default_factory=list, max_length=8)
     cfg: float = Field(default=4, ge=0, le=20)
     steps: int = Field(default=30, ge=1, le=100)
+    sampler_name: str = Field(default=_DEFAULT_SAMPLER, min_length=1, max_length=64)
+    scheduler: str = Field(default=_DEFAULT_SCHEDULER, min_length=1, max_length=64)
     width: int = Field(default=1024, ge=64, le=2048)
     height: int = Field(default=1024, ge=64, le=2048)
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
@@ -73,7 +77,11 @@ class ImageGenerationRequest(BaseModel):
 class ImageGenerationOptions(BaseModel):
     checkpoints: list[str]
     loras: list[str]
+    samplers: list[str]
+    schedulers: list[str]
     default_checkpoint: str
+    default_sampler: str
+    default_scheduler: str
 
 
 class ImageOutput(BaseModel):
@@ -293,6 +301,8 @@ def create_image_generation(
         loras=[lora.model_dump() for lora in payload.loras],
         cfg=payload.cfg,
         steps=payload.steps,
+        sampler_name=payload.sampler_name,
+        scheduler=payload.scheduler,
         width=payload.width,
         height=payload.height,
         seed=seed,
@@ -623,8 +633,12 @@ def _image_options() -> ImageGenerationOptions:
     data = _request_json("GET", "/object_info")
     checkpoints = _anima_choices(data, "UNETLoader", "unet_name")
     loras = _anima_choices(data, "LoraLoaderModelOnly", "lora_name")
+    samplers = _node_choices(data, "KSampler", "sampler_name")
+    schedulers = _node_choices(data, "KSampler", "scheduler")
     if not checkpoints:
         raise _ComfyUIError("ComfyUI에서 Anima 체크포인트를 찾을 수 없습니다.")
+    if not samplers or not schedulers:
+        raise _ComfyUIError("ComfyUI에서 sampler 또는 scheduler 목록을 찾을 수 없습니다.")
     default_checkpoint = (
         "Anima/anima_aestheticV11.safetensors"
         if "Anima/anima_aestheticV11.safetensors" in checkpoints
@@ -633,18 +647,26 @@ def _image_options() -> ImageGenerationOptions:
     return ImageGenerationOptions(
         checkpoints=checkpoints,
         loras=loras,
+        samplers=samplers,
+        schedulers=schedulers,
         default_checkpoint=default_checkpoint,
+        default_sampler=_DEFAULT_SAMPLER if _DEFAULT_SAMPLER in samplers else samplers[0],
+        default_scheduler=_DEFAULT_SCHEDULER if _DEFAULT_SCHEDULER in schedulers else schedulers[0],
     )
 
 
 def _anima_choices(data: dict[str, Any], node_name: str, input_name: str) -> list[str]:
+    return [value for value in _node_choices(data, node_name, input_name) if value.startswith("Anima/")]
+
+
+def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list[str]:
     node = data.get(node_name)
     if not isinstance(node, dict):
         return []
     required = node.get("input", {}).get("required", {})
     values = required.get(input_name, []) if isinstance(required, dict) else []
     choices = values[0] if values and isinstance(values[0], list) else []
-    return sorted(value for value in choices if isinstance(value, str) and value.startswith("Anima/"))
+    return sorted(value for value in choices if isinstance(value, str))
 
 
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
@@ -655,6 +677,10 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
         raise HTTPException(status_code=422, detail="같은 LoRA를 중복 선택할 수 없습니다.")
     if any(name not in options.loras for name in lora_names):
         raise HTTPException(status_code=422, detail="선택한 Anima LoRA를 찾을 수 없습니다.")
+    if payload.sampler_name not in options.samplers:
+        raise HTTPException(status_code=422, detail="선택한 sampler를 찾을 수 없습니다.")
+    if payload.scheduler not in options.schedulers:
+        raise HTTPException(status_code=422, detail="선택한 scheduler를 찾을 수 없습니다.")
     if payload.width % 8 or payload.height % 8:
         raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
 
@@ -709,8 +735,8 @@ def _build_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[str, 
                 "seed": seed,
                 "steps": payload.steps,
                 "cfg": payload.cfg,
-                "sampler_name": "er_sde",
-                "scheduler": "simple",
+                "sampler_name": payload.sampler_name,
+                "scheduler": payload.scheduler,
                 "positive": ["5", 0],
                 "negative": ["6", 0],
                 "latent_image": ["7", 0],

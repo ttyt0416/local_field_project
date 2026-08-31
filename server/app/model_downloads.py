@@ -49,6 +49,7 @@ _MODEL_TARGETS: dict[ModelType, tuple[str, str]] = {
 _MODEL_EXTENSIONS = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft"}
 _CIVITAI_API_BASE = "https://civitai.com/api/v1"
 _CIVITAI_HOST = "civitai.com"
+_CIVITAI_SOURCE_HOSTS = {"civitai.com", "www.civitai.com", "civitai.red", "www.civitai.red"}
 _DOWNLOAD_REDIRECT_CODES = {301, 302, 303, 307, 308}
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 _DOWNLOAD_PROGRESS_INTERVAL = 1.0
@@ -92,6 +93,7 @@ class CivitaiVersion:
     version_name: str
     base_model: str | None
     files: tuple[CivitaiFile, ...]
+    published_at: datetime | None = None
 
 
 class CivitaiFileResponse(BaseModel):
@@ -103,6 +105,13 @@ class CivitaiFileResponse(BaseModel):
     primary: bool
 
 
+class CivitaiVersionOption(BaseModel):
+    version_id: int
+    version_name: str
+    base_model: str | None
+    published_at: datetime | None
+
+
 class CivitaiLookupResponse(BaseModel):
     version_id: int
     model_id: int | None
@@ -112,6 +121,7 @@ class CivitaiLookupResponse(BaseModel):
     base_model: str | None
     files: list[CivitaiFileResponse]
     selected_file_index: int
+    versions: list[CivitaiVersionOption]
 
 
 class ModelDownloadRequest(BaseModel):
@@ -140,6 +150,17 @@ class InstalledModelResponse(BaseModel):
     filename: str
     size_bytes: int
     modified_at: datetime
+
+
+class ModelFolderRequest(BaseModel):
+    model_type: ModelType
+    parent: str = Field(default="", max_length=255)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class ModelFolderResponse(BaseModel):
+    model_type: ModelType
+    subfolder: str
 
 
 @router.get("/installed", response_model=list[InstalledModelResponse])
@@ -208,12 +229,68 @@ def _installed_model_path(model_type: ModelType, filename: str) -> Path:
     return candidate
 
 
+@router.get("/folders", response_model=list[ModelFolderResponse])
+def list_model_folders(
+    model_type: ModelType = Query(...),
+    _: UserResponse = Depends(current_user),
+) -> list[ModelFolderResponse]:
+    base = _model_target_directory(model_type, "")
+    folders = [""]
+    if base.is_dir():
+        for path in base.rglob("*"):
+            if not path.is_dir() or path.is_symlink():
+                continue
+            try:
+                relative = path.relative_to(base).as_posix()
+                if any(part.startswith(".") for part in Path(relative).parts):
+                    continue
+                _model_target_directory(model_type, relative)
+            except (CivitaiError, ValueError):
+                continue
+            folders.append(relative)
+    return [ModelFolderResponse(model_type=model_type, subfolder=folder) for folder in sorted(folders)]
+
+
+@router.post("/folders", response_model=ModelFolderResponse, status_code=status.HTTP_201_CREATED)
+def create_model_folder(
+    payload: ModelFolderRequest,
+    _: UserResponse = Depends(current_user),
+) -> ModelFolderResponse:
+    try:
+        parent = _safe_folder_selection(payload.parent) if payload.parent else ""
+        name = payload.name.strip()
+        if (
+            not name
+            or name in {".", ".."}
+            or name.startswith(".")
+            or "/" in name
+            or "\\" in name
+            or any(ord(character) < 32 for character in name)
+        ):
+            raise CivitaiError("새 폴더 이름이 올바르지 않습니다.", status_code=status.HTTP_400_BAD_REQUEST)
+        parent_path = _model_target_directory(payload.model_type, parent)
+        if not parent_path.is_dir():
+            raise CivitaiError("상위 모델 폴더를 찾을 수 없습니다.", status_code=status.HTTP_404_NOT_FOUND)
+        subfolder = f"{parent}/{name}" if parent else name
+        target = _model_target_directory(payload.model_type, subfolder)
+        target.mkdir(exist_ok=False)
+        _model_target_directory(payload.model_type, subfolder)
+    except CivitaiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="모델 폴더가 이미 있습니다.") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 폴더를 만들 수 없습니다.") from exc
+    return ModelFolderResponse(model_type=payload.model_type, subfolder=subfolder)
+
+
 @router.get("/downloads", response_model=list[ModelDownloadResponse])
 def model_downloads(
     user: UserResponse = Depends(current_user),
     limit: int = Query(default=20, ge=1, le=100),
+    active_only: bool = False,
 ) -> list[ModelDownloadResponse]:
-    return [_download_response(row) for row in list_model_downloads(user.id, limit)]
+    return [_download_response(row) for row in list_model_downloads(user.id, limit, active_only=active_only)]
 
 
 @router.post("/downloads/{download_id}/retry", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -244,11 +321,10 @@ def lookup_civitai_model(
     _: UserResponse = Depends(current_user),
 ) -> CivitaiLookupResponse:
     try:
-        version = _fetch_version(_parse_version_id(source))
-        selected_index = _select_file_index(version, model_type, file_index)
+        version, selected_index, versions = _resolve_civitai_source(source, model_type, file_index)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return _lookup_response(version, selected_index)
+    return _lookup_response(version, selected_index, versions)
 
 
 @router.post("/civitai/download", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -262,24 +338,18 @@ def download_civitai_model(
     if not root.is_dir():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더를 찾을 수 없습니다.")
     try:
-        version = _fetch_version(_parse_version_id(payload.source))
-        selected_index = _select_file_index(version, payload.model_type, payload.file_index)
+        version, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index)
         selected_file = version.files[selected_index]
         filename = _safe_filename(selected_file.name)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     try:
-        subfolder = _safe_subfolder(payload.subfolder)
+        subfolder = _safe_folder_selection(payload.subfolder)
         target_directory = _model_target_directory(payload.model_type, subfolder)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    try:
-        target_directory.mkdir(parents=True, exist_ok=True)
-        target_directory = _model_target_directory(payload.model_type, subfolder)
-    except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더에 쓸 수 없습니다.") from exc
-    except CivitaiError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if not target_directory.is_dir():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="선택한 모델 폴더를 찾을 수 없습니다.")
     target_path = target_directory / filename
     if target_path.exists() or target_path.is_symlink():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
@@ -329,6 +399,13 @@ def _safe_subfolder(raw_subfolder: str) -> str:
     return "/".join(parts)
 
 
+def _safe_folder_selection(raw_subfolder: str) -> str:
+    value = _safe_subfolder(raw_subfolder)
+    if any(part.startswith(".") for part in Path(value).parts):
+        raise CivitaiError("Hidden 모델 폴더는 선택할 수 없습니다.", status.HTTP_400_BAD_REQUEST)
+    return value
+
+
 def _model_target_directory(model_type: ModelType, subfolder: str) -> Path:
     root = Path(settings.comfyui_models_path).resolve()
     base = root / _MODEL_TARGETS[model_type][1]
@@ -375,7 +452,11 @@ def _validated_model_target(model_type: ModelType, raw_target_path: str | Path) 
         raise CivitaiError("모델 저장 경로가 올바르지 않습니다.") from exc
 
 
-def _lookup_response(version: CivitaiVersion, selected_index: int) -> CivitaiLookupResponse:
+def _lookup_response(
+    version: CivitaiVersion,
+    selected_index: int,
+    versions: tuple[CivitaiVersion, ...],
+) -> CivitaiLookupResponse:
     return CivitaiLookupResponse(
         version_id=version.version_id,
         model_id=version.model_id,
@@ -395,29 +476,108 @@ def _lookup_response(version: CivitaiVersion, selected_index: int) -> CivitaiLoo
             for index, file in enumerate(version.files)
         ],
         selected_file_index=selected_index,
+        versions=[
+            CivitaiVersionOption(
+                version_id=item.version_id,
+                version_name=item.version_name,
+                base_model=item.base_model,
+                published_at=item.published_at,
+            )
+            for item in versions
+        ],
     )
 
 
-def _parse_version_id(source: str) -> int:
+def _resolve_civitai_source(
+    source: str,
+    model_type: ModelType,
+    file_index: int | None,
+) -> tuple[CivitaiVersion, int, tuple[CivitaiVersion, ...]]:
+    model_id, version_id = _parse_civitai_source(source)
+    if model_id is not None:
+        versions = _fetch_model_versions(model_id, model_type)
+        if version_id is None:
+            version = versions[0]
+        else:
+            version = next((item for item in versions if item.version_id == version_id), None)
+            if version is None:
+                raise CivitaiError(
+                    "선택한 모델 버전에서 해당 모델 타입 파일을 찾지 못했습니다.",
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                )
+    else:
+        if version_id is None:
+            raise CivitaiError("Civitai 모델 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+        version = _fetch_version(version_id)
+        versions = (version,)
+    return version, _select_file_index(version, model_type, file_index), versions
+
+
+def _parse_civitai_source(source: str) -> tuple[int | None, int | None]:
     value = source.strip()
     if value.isdigit():
         version_id = int(value)
-    else:
-        parsed = urlparse(value if "://" in value else f"https://{value}")
-        query_value = parse_qs(parsed.query).get("modelVersionId", [""])[0]
-        match = re.search(r"/(?:model-versions|api/download/models)/(\d+)(?:/|$)", parsed.path)
-        raw_id = query_value or (match.group(1) if match else "")
-        if not raw_id.isdigit():
-            raise CivitaiError("Civitai 모델 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
-        version_id = int(raw_id)
-    if version_id < 1:
+        if version_id < 1:
+            raise CivitaiError("올바른 Civitai 모델 버전 ID를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+        return None, version_id
+
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    if (parsed.hostname or "").casefold() not in _CIVITAI_SOURCE_HOSTS:
+        raise CivitaiError("Civitai 모델 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    query_values = parse_qs(parsed.query).get("modelVersionId", [])
+    query_version = query_values[0] if query_values else ""
+    if query_values and not query_version.isdigit():
         raise CivitaiError("올바른 Civitai 모델 버전 ID를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    version_match = re.search(r"/(?:model-versions|api/download/models)/(\d+)(?:/|$)", parsed.path)
+    model_match = None if version_match else re.search(r"/(?:api/v1/)?models/(\d+)(?:/|$)", parsed.path)
+    version_id = int(query_version or (version_match.group(1) if version_match else 0)) or None
+    model_id = int(model_match.group(1)) if model_match else None
+    if model_id is None and version_id is None:
+        raise CivitaiError("Civitai 모델 ID, 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    return model_id, version_id
+
+
+def _parse_version_id(source: str) -> int:
+    _, version_id = _parse_civitai_source(source)
+    if version_id is None:
+        raise CivitaiError("Civitai 모델 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
     return version_id
 
 
 def _fetch_version(version_id: int) -> CivitaiVersion:
+    return _parse_version(
+        _fetch_civitai_payload(f"model-versions/{version_id}", "Civitai 모델 버전을 찾을 수 없습니다."),
+        version_id,
+    )
+
+
+def _fetch_model_versions(model_id: int, model_type: ModelType) -> tuple[CivitaiVersion, ...]:
+    payload = _fetch_civitai_payload(f"models/{model_id}", "Civitai 모델을 찾을 수 없습니다.")
+    raw_versions = payload.get("modelVersions")
+    model = {"id": payload.get("id"), "name": payload.get("name"), "type": payload.get("type")}
+    versions: list[CivitaiVersion] = []
+    for item in raw_versions if isinstance(raw_versions, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), int):
+            continue
+        try:
+            version = _parse_version({**item, "model": model}, item["id"])
+            _select_file_index(version, model_type, None)
+        except CivitaiError:
+            continue
+        versions.append(version)
+    versions.sort(
+        key=lambda item: (item.published_at or datetime.min.replace(tzinfo=timezone.utc), item.version_id),
+        reverse=True,
+    )
+    if not versions:
+        label = _MODEL_TARGETS[model_type][0]
+        raise CivitaiError(f"이 Civitai 모델에서 다운로드 가능한 {label} 버전을 찾지 못했습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
+    return tuple(versions)
+
+
+def _fetch_civitai_payload(path: str, not_found_message: str) -> dict[str, Any]:
     request = UrlRequest(
-        f"{_CIVITAI_API_BASE}/model-versions/{version_id}",
+        f"{_CIVITAI_API_BASE}/{path}",
         headers={"Accept": "application/json", "User-Agent": "LocalField/0.1"},
     )
     try:
@@ -425,7 +585,7 @@ def _fetch_version(version_id: int) -> CivitaiVersion:
             payload = json.loads(response.read())
     except UrlHTTPError as exc:
         if exc.code == 404:
-            raise CivitaiError("Civitai 모델 버전을 찾을 수 없습니다.", status.HTTP_404_NOT_FOUND) from exc
+            raise CivitaiError(not_found_message, status.HTTP_404_NOT_FOUND) from exc
         if exc.code in {401, 403}:
             raise CivitaiError("Civitai API 요청 권한이 없습니다.", status.HTTP_502_BAD_GATEWAY) from exc
         raise CivitaiError("Civitai 모델 정보를 조회하지 못했습니다.") from exc
@@ -433,7 +593,7 @@ def _fetch_version(version_id: int) -> CivitaiVersion:
         raise CivitaiError("Civitai에 연결할 수 없습니다.") from exc
     if not isinstance(payload, dict):
         raise CivitaiError("Civitai 모델 정보 형식이 올바르지 않습니다.")
-    return _parse_version(payload, version_id)
+    return payload
 
 
 def _parse_version(payload: dict[str, Any], version_id: int) -> CivitaiVersion:
@@ -472,6 +632,7 @@ def _parse_version(payload: dict[str, Any], version_id: int) -> CivitaiVersion:
         version_name=str(payload.get("name") or "알 수 없는 버전"),
         base_model=_string_or_none(payload.get("baseModel")),
         files=tuple(files),
+        published_at=_datetime_or_none(payload.get("publishedAt") or payload.get("createdAt")),
     )
 
 
@@ -491,6 +652,8 @@ def _select_file_index(version: CivitaiVersion, model_type: ModelType, file_inde
 
 
 def _file_matches(version: CivitaiVersion, file: CivitaiFile, model_type: ModelType) -> bool:
+    if Path(file.name).suffix.casefold() not in _MODEL_EXTENSIONS:
+        return False
     version_type = _normalized_label(version.model_type)
     file_type = _normalized_label(file.file_type)
     if model_type == "checkpoint":
@@ -535,6 +698,16 @@ def _size_bytes(value: Any) -> int | None:
 
 def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _datetime_or_none(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _open_download(url: str, token: str, resume_from: int):

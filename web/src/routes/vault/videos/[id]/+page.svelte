@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Crop, Download, Heart, Trash2, Video } from '@lucide/svelte';
+	import { ArrowLeft, Crop, Download, Heart, Save, Trash2, Video } from '@lucide/svelte';
 	import VideoMedia from '../../../../../components/media/video.svelte';
 	import VideoEditor from '../../../../../components/media/video-editor.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
@@ -12,16 +12,21 @@
 	import Toast from '../../../../../components/feedback/toast.svelte';
 	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
+	import VideoPresetModal from '../../../../../components/presets/video-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
+	import type { Preset, PresetValues } from '$lib/types/presets';
 
 	type VaultVideoDetail = {
 		id: string;
 		media_type: string;
 		mode: 'i2v' | 'fl2v' | 'r2v';
 		fps: number;
+		width: number;
+		height: number;
+		seed: number;
 		status: string;
 		prompt: string;
 		video_url: string | null;
@@ -44,6 +49,8 @@
 	let downloading = $state(false);
 	let videoEditorOpen = $state(false);
 	let editError = $state('');
+	let presetOpen = $state(false);
+	let presetSuccess = $state('');
 
 	onMount(() => {
 		void loadDetail();
@@ -112,6 +119,24 @@
 		}
 	}
 
+	function presetValues(): PresetValues {
+		if (!generation) return {};
+		return {
+			prompt: generation.prompt,
+			mode: generation.mode,
+			width: generation.width,
+			height: generation.height,
+			duration: generation.duration_seconds ?? 0,
+			fps: generation.fps,
+			seed: String(generation.seed),
+			random_seed: false
+		};
+	}
+
+	function handlePresetSaved(preset: Preset) {
+		presetSuccess = `'${preset.name}' 프리셋을 저장했습니다.`;
+	}
+
 	function statusLabel(status: string) {
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패' }[status] ?? status;
 	}
@@ -161,6 +186,8 @@
 						<div><dt class="text-muted-foreground">생성 방식</dt><dd class="mt-1 font-medium">{generation.mode.toUpperCase()}</dd></div>
 						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
+						<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
+						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 						<div><dt class="text-muted-foreground">재생 시간</dt><dd class="mt-1 font-medium">{formatElapsedSeconds(generation.duration_seconds ?? 0)}</dd></div>
 						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 					</dl>
@@ -173,6 +200,7 @@
 			</section>
 
 			<section class="flex flex-wrap justify-end gap-3">
+				<OutlinedButton onclick={() => (presetOpen = true)}><Save size={16} strokeWidth={1.9} /><span>프리셋 저장</span></OutlinedButton>
 				<OutlinedButton disabled={!generation.video_url} onclick={() => (videoEditorOpen = true)}><Crop size={16} strokeWidth={1.9} /><span>동영상 편집</span></OutlinedButton>
 				<PrimaryButton loading={deleting} disabled={deleting} variant="destructive" onclick={() => (deleteModalOpen = true)}><Trash2 size={16} strokeWidth={2} /><span>콘텐츠 삭제</span></PrimaryButton>
 			</section>
@@ -195,7 +223,9 @@
 		onsaved={(generationId) => void goto(`/vault/videos/${generationId}`)}
 		onerror={(message) => (editError = message)}
 	/>
+	<VideoPresetModal bind:open={presetOpen} preset={null} initialValues={presetValues()} onSaved={handlePresetSaved} />
 {/if}
 
 {#if error}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="동영상 상세 처리 실패" message={error} onclose={() => (error = '')} /></div>
-{:else if editError}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="편집 실패" message={editError} onclose={() => (editError = '')} /></div>{/if}
+{:else if editError}<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="편집 실패" message={editError} onclose={() => (editError = '')} /></div>
+{:else if presetSuccess}<div class="fixed right-4 top-4 z-50"><Toast state="positive" title="프리셋 저장" message={presetSuccess} onclose={() => (presetSuccess = '')} /></div>{/if}

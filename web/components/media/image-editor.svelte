@@ -5,6 +5,7 @@
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
 	import LoadingSpinner from '../loadings/loading-spinner.svelte';
+	import CropSelector from './crop-selector.svelte';
 	import { apiBlob, apiForm } from '$lib/utils/api';
 
 	type Props = {
@@ -37,7 +38,7 @@
 	let cropHeight = $state(0);
 	let rotation = $state<0 | 90 | 180 | 270>(0);
 	let zoom = $state(1);
-	let objectUrl = '';
+	let objectUrl = $state('');
 
 	$effect(() => {
 		if (!open || !browser || !generationId) return;
@@ -168,6 +169,21 @@
 		<div class="flex min-h-64 items-center justify-center"><LoadingSpinner size="lg" label="이미지 원본을 불러오는 중" /></div>
 	{:else if image}
 		<div class="space-y-5">
+			<div class="space-y-2">
+				<p class="text-sm font-medium">crop 영역</p>
+				<CropSelector
+					naturalWidth={imageWidth}
+					naturalHeight={imageHeight}
+					bind:cropX
+					bind:cropY
+					bind:cropWidth
+					bind:cropHeight
+					onchange={drawPreview}
+				>
+					<img src={objectUrl} alt="crop 영역을 선택할 이미지 원본" draggable="false" class="h-full w-full select-none object-fill" />
+				</CropSelector>
+			</div>
+			<p class="text-sm font-medium">결과 미리보기</p>
 			<div class="flex min-h-56 items-center justify-center overflow-auto rounded-xl bg-black p-3">
 				<canvas bind:this={canvas} class="max-h-[38dvh] max-w-full object-contain" aria-label="이미지 편집 미리보기"></canvas>
 			</div>

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -17,12 +18,16 @@ from .database import (
     delete_image_generation,
     delete_image_generations,
     delete_video_generation,
+    delete_video_generations,
     get_image_generation_by_id,
     get_image_generations_by_ids,
     get_video_generation_by_id,
+    has_generation_storage_reference_outside,
     has_media_asset,
     increment_image_generation_view_count,
     increment_video_generation_view_count,
+    list_filtered_image_generations,
+    list_filtered_video_generations,
     list_image_generations,
     list_video_generations,
     update_image_favorite,
@@ -71,6 +76,8 @@ class VaultImageDetail(VaultImageSummary):
     loras: list[VaultLora]
     cfg: float
     steps: int
+    sampler_name: str
+    scheduler: str
     width: int
     height: int
     seed: int
@@ -114,6 +121,12 @@ class VaultVideoPage(BaseModel):
     total_count: int
     completed_count: int
     total_pages: int
+
+
+class VaultVideoDetail(VaultVideoSummary):
+    width: int
+    height: int
+    seed: int
 
 
 class FavoriteRequest(BaseModel):
@@ -209,6 +222,38 @@ def vault_images(
     )
 
 
+@router.delete("/videos/filtered", response_model=BulkDeleteResponse)
+def delete_filtered_vault_videos(
+    search: str = Query(default="", max_length=500),
+    favorites_only: bool = False,
+    expected_count: int = Query(ge=0),
+    confirmed: bool = False,
+    user: UserResponse = Depends(current_user),
+) -> BulkDeleteResponse:
+    generations = list_filtered_video_generations(user.id, search=search, favorites_only=favorites_only)
+    _validate_filtered_delete(len(generations), expected_count, confirmed)
+    generation_ids = [generation["id"] for generation in generations]
+    return BulkDeleteResponse(
+        deleted_count=_delete_generation_rows(generations, generation_ids, delete_video_generations, user)
+    )
+
+
+@router.delete("/images/filtered", response_model=BulkDeleteResponse)
+def delete_filtered_vault_images(
+    search: str = Query(default="", max_length=500),
+    favorites_only: bool = False,
+    expected_count: int = Query(ge=0),
+    confirmed: bool = False,
+    user: UserResponse = Depends(current_user),
+) -> BulkDeleteResponse:
+    generations = list_filtered_image_generations(user.id, search=search, favorites_only=favorites_only)
+    _validate_filtered_delete(len(generations), expected_count, confirmed)
+    generation_ids = [generation["id"] for generation in generations]
+    return BulkDeleteResponse(
+        deleted_count=_delete_generation_rows(generations, generation_ids, delete_image_generations, user)
+    )
+
+
 @router.post("/videos/{generation_id}/edit", response_model=VideoEditResponse, status_code=status.HTTP_201_CREATED)
 def edit_vault_video(
     generation_id: UUID,
@@ -278,15 +323,20 @@ def edit_vault_video(
     return VideoEditResponse(generation_id=edited_id)
 
 
-@router.get("/videos/{generation_id}", response_model=VaultVideoSummary)
+@router.get("/videos/{generation_id}", response_model=VaultVideoDetail)
 def vault_video_detail(
     generation_id: UUID,
     user: UserResponse = Depends(current_user),
-) -> VaultVideoSummary:
+) -> VaultVideoDetail:
     generation = increment_video_generation_view_count(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
-    return _video_summary(generation, user.id, include_file_size=True)
+    return VaultVideoDetail(
+        **_video_summary(generation, user.id, include_file_size=True).model_dump(),
+        width=generation["width"],
+        height=generation["height"],
+        seed=generation["seed"],
+    )
 
 
 @router.patch("/videos/{generation_id}/favorite", response_model=FavoriteResponse)
@@ -330,7 +380,20 @@ def delete_vault_images(
     generations = get_image_generations_by_ids(payload.generation_ids, user.id)
     if len(generations) != len(payload.generation_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
+    deleted_count = _delete_generation_rows(generations, payload.generation_ids, delete_image_generations, user)
+    if deleted_count != len(payload.generation_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
+    return BulkDeleteResponse(deleted_count=deleted_count)
 
+
+def _delete_generation_rows(
+    generations: list[dict],
+    generation_ids: list[UUID],
+    delete_records: Callable[[list[UUID], UUID], int],
+    user: UserResponse,
+) -> int:
+    if not generation_ids:
+        return 0
     storage_file_ids = list(
         dict.fromkeys(
             generation["storage_file_id"]
@@ -338,29 +401,36 @@ def delete_vault_images(
             if isinstance(generation.get("storage_file_id"), str)
             and generation["storage_file_id"]
             and not has_media_asset(generation["storage_file_id"], user.id)
+            and not has_generation_storage_reference_outside(
+                generation["storage_file_id"], user.id, generation_ids
+            )
         )
     )
     if storage_file_ids and not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     try:
         if storage_file_ids:
-            with ThreadPoolExecutor(max_workers=min(len(storage_file_ids) + 1, 8)) as executor:
-                database_future = executor.submit(delete_image_generations, payload.generation_ids, user.id)
+            with ThreadPoolExecutor(max_workers=min(len(storage_file_ids), 8)) as executor:
                 storage_futures = [
                     executor.submit(storage_delete_file, file_id=file_id, owner_id=str(user.id))
                     for file_id in storage_file_ids
                 ]
-                deleted_count = database_future.result()
                 for future in storage_futures:
                     future.result()
-        else:
-            deleted_count = delete_image_generations(payload.generation_ids, user.id)
+        deleted_count = delete_records(generation_ids, user.id)
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return deleted_count
 
-    if deleted_count != len(payload.generation_ids):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
-    return BulkDeleteResponse(deleted_count=deleted_count)
+
+def _validate_filtered_delete(actual_count: int, expected_count: int, confirmed: bool) -> None:
+    if not confirmed:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="전체 삭제 확인이 필요합니다.")
+    if actual_count != expected_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="필터 결과가 변경되었습니다. 목록을 새로고침한 뒤 다시 확인해 주세요.",
+        )
 
 
 @router.get("/images/{generation_id}/source")
@@ -549,6 +619,8 @@ def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
         loras=_loras(generation),
         cfg=generation["cfg"],
         steps=generation["steps"],
+        sampler_name=generation["sampler_name"],
+        scheduler=generation["scheduler"],
         width=generation["width"],
         height=generation["height"],
         seed=generation["seed"],

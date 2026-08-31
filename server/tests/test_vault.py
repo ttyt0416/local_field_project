@@ -3,8 +3,11 @@ from threading import Event
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 from app import vault
 from app.auth import UserResponse
+from app.storage import StorageError
 
 
 class VaultRouteTest(unittest.TestCase):
@@ -66,27 +69,27 @@ class VaultRouteTest(unittest.TestCase):
         self.assertTrue(result.is_favorite)
         update.assert_called_once_with(generation_id, self.user.id, True)
 
-    def test_bulk_delete_starts_database_and_storage_deletes_in_parallel(self) -> None:
+    def test_bulk_delete_finishes_storage_before_database_delete(self) -> None:
         generation_ids = [uuid4(), uuid4()]
-        database_started = Event()
-        storage_started = Event()
+        storage_finished = Event()
+        storage_calls: list[str] = []
 
         def delete_database(*_: object) -> int:
-            database_started.set()
-            if not storage_started.wait(1):
-                raise AssertionError("Storage 삭제가 병렬로 시작되지 않았습니다.")
+            if not storage_finished.is_set():
+                raise AssertionError("Storage 삭제 완료 전에 DB 삭제가 시작됐습니다.")
             return len(generation_ids)
 
-        def delete_storage(**_: object) -> None:
-            storage_started.set()
-            if not database_started.wait(1):
-                raise AssertionError("DB 삭제가 병렬로 시작되지 않았습니다.")
+        def delete_storage(*, file_id: str, **_: object) -> None:
+            storage_calls.append(file_id)
+            if len(storage_calls) == 2:
+                storage_finished.set()
 
         stored = [{"storage_file_id": "file-1"}, {"storage_file_id": "file-2"}]
         with (
             patch.object(vault, "get_image_generations_by_ids", return_value=stored),
             patch.object(vault, "storage_enabled", return_value=True),
             patch.object(vault, "has_media_asset", return_value=False),
+            patch.object(vault, "has_generation_storage_reference_outside", return_value=False),
             patch.object(vault, "delete_image_generations", side_effect=delete_database) as delete_database_mock,
             patch.object(vault, "storage_delete_file", side_effect=delete_storage) as delete_storage_mock,
         ):
@@ -95,6 +98,48 @@ class VaultRouteTest(unittest.TestCase):
         self.assertEqual(result.deleted_count, 2)
         delete_database_mock.assert_called_once_with(generation_ids, self.user.id)
         self.assertEqual(delete_storage_mock.call_count, 2)
+
+    def test_filtered_video_delete_deletes_every_matching_row(self) -> None:
+        generation_ids = [uuid4(), uuid4()]
+        rows = [{"id": generation_id, "storage_file_id": None} for generation_id in generation_ids]
+        with (
+            patch.object(vault, "list_filtered_video_generations", return_value=rows) as list_filtered,
+            patch.object(vault, "delete_video_generations", return_value=2) as delete_rows,
+        ):
+            result = vault.delete_filtered_vault_videos("portrait", True, 2, True, self.user)
+
+        self.assertEqual(result.deleted_count, 2)
+        list_filtered.assert_called_once_with(self.user.id, search="portrait", favorites_only=True)
+        delete_rows.assert_called_once_with(generation_ids, self.user.id)
+
+    def test_bulk_storage_failure_keeps_database_rows(self) -> None:
+        generation_id = uuid4()
+        stored = [{"storage_file_id": "file-1"}]
+        with (
+            patch.object(vault, "get_image_generations_by_ids", return_value=stored),
+            patch.object(vault, "storage_enabled", return_value=True),
+            patch.object(vault, "has_media_asset", return_value=False),
+            patch.object(vault, "has_generation_storage_reference_outside", return_value=False),
+            patch.object(vault, "storage_delete_file", side_effect=StorageError("storage failed")),
+            patch.object(vault, "delete_image_generations") as delete_rows,
+            self.assertRaises(HTTPException) as raised,
+        ):
+            vault.delete_vault_images(vault.BulkDeleteRequest(generation_ids=[generation_id]), self.user)
+
+        self.assertEqual(raised.exception.status_code, 503)
+        delete_rows.assert_not_called()
+
+    def test_filtered_delete_rejects_changed_result_count(self) -> None:
+        rows = [{"id": uuid4(), "storage_file_id": None}]
+        with (
+            patch.object(vault, "list_filtered_video_generations", return_value=rows),
+            patch.object(vault, "delete_video_generations") as delete_rows,
+            self.assertRaises(HTTPException) as raised,
+        ):
+            vault.delete_filtered_vault_videos("", False, 2, True, self.user)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        delete_rows.assert_not_called()
 
 
 if __name__ == "__main__":

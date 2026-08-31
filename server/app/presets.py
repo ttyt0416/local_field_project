@@ -38,6 +38,8 @@ class PresetValues(BaseModel):
     height: int | None = Field(default=None, ge=32, le=2048)
     cfg: float | None = Field(default=None, ge=0, le=20)
     steps: int | None = Field(default=None, ge=1, le=100)
+    sampler_name: str | None = Field(default=None, min_length=1, max_length=64)
+    scheduler: str | None = Field(default=None, min_length=1, max_length=64)
     mode: PresetVideoMode | None = None
     duration: float | None = None
     fps: float | None = Field(default=None, ge=1, le=120)

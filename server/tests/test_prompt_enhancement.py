@@ -25,6 +25,18 @@ class PromptEnhancementTest(unittest.TestCase):
             _, seed = _build_prompt(payload)
         self.assertEqual(seed, _MAX_SEED)
 
+    def test_sampler_and_scheduler_are_written_to_workflow(self) -> None:
+        payload = ImageGenerationRequest(
+            prompt="a red apple",
+            checkpoint="Anima/test.safetensors",
+            sampler_name="euler",
+            scheduler="normal",
+        )
+        workflow, _ = _build_prompt(payload)
+        sampler = next(node for node in workflow.values() if node["class_type"] == "KSampler")
+        self.assertEqual(sampler["inputs"]["sampler_name"], "euler")
+        self.assertEqual(sampler["inputs"]["scheduler"], "normal")
+
     def test_seed_above_postgres_bigint_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
             ImageGenerationRequest(

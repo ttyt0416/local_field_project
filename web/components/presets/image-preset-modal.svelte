@@ -4,6 +4,7 @@
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
 	import Select from '../inputs/select.svelte';
+	import SamplingSelectionModal from './sampling-selection-modal.svelte';
 	import { apiJson } from '$lib/utils/api';
 	import type { AspectRatio, ImageOptions, LoraSelection, Preset, PresetValues } from '$lib/types/presets';
 
@@ -15,15 +16,18 @@
 		| 'aspect_ratio'
 		| 'cfg'
 		| 'steps'
+		| 'sampling'
+		| 'seed'
 		| 'prompt_enhancement';
 	type Props = {
 		open?: boolean;
 		preset: Preset | null;
+		initialValues?: PresetValues;
 		options: ImageOptions;
 		onSaved: (preset: Preset) => void;
 	};
 
-	let { open = $bindable(false), preset, options, onSaved }: Props = $props();
+	let { open = $bindable(false), preset, initialValues = {}, options, onSaved }: Props = $props();
 
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
@@ -51,6 +55,8 @@
 		{ key: 'aspect_ratio', label: '이미지 비율·크기' },
 		{ key: 'cfg', label: 'CFG' },
 		{ key: 'steps', label: 'Steps' },
+		{ key: 'sampling', label: '샘플러 / 스케줄러' },
+		{ key: 'seed', label: 'Seed' },
 		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
 	];
 	const allFields: Record<PresetField, boolean> = {
@@ -61,6 +67,8 @@
 		aspect_ratio: true,
 		cfg: true,
 		steps: true,
+		sampling: true,
+		seed: true,
 		prompt_enhancement: true
 	};
 
@@ -77,6 +85,11 @@
 	let height = $state(1024);
 	let cfg = $state(4);
 	let steps = $state(30);
+	let samplerName = $state('');
+	let scheduler = $state('');
+	let samplingOpen = $state(false);
+	let seed = $state('');
+	let randomSeed = $state(true);
 	let selectedFields = $state<Record<PresetField, boolean>>({ ...allFields });
 	let saving = $state(false);
 	let error = $state('');
@@ -94,7 +107,7 @@
 
 	$effect(() => {
 		if (!open) return;
-		const values = preset?.values ?? {};
+		const values = preset?.values ?? initialValues;
 		const fields = new Set(preset?.saved_fields ?? Object.keys(allFields));
 		editingId = preset?.id ?? null;
 		presetName = preset?.name ?? '';
@@ -109,6 +122,10 @@
 		height = values.height ?? 1024;
 		cfg = values.cfg ?? 4;
 		steps = values.steps ?? 30;
+		samplerName = values.sampler_name ?? options.default_sampler;
+		scheduler = values.scheduler ?? options.default_scheduler;
+		seed = values.seed ?? '';
+		randomSeed = values.random_seed ?? !values.seed;
 		selectedFields = {
 			prompt: fields.has('prompt'),
 			negative_prompt: fields.has('negative_prompt'),
@@ -117,6 +134,8 @@
 			aspect_ratio: fields.has('aspect_ratio'),
 			cfg: fields.has('cfg'),
 			steps: fields.has('steps'),
+			sampling: fields.has('sampler_name') || fields.has('scheduler') || fields.has('sampling'),
+			seed: fields.has('seed') || fields.has('random_seed'),
 			prompt_enhancement: fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt')
 		};
 		error = '';
@@ -153,6 +172,14 @@
 		}
 		if (selectedFields.cfg) values.cfg = cfg;
 		if (selectedFields.steps) values.steps = steps;
+		if (selectedFields.sampling) {
+			values.sampler_name = samplerName;
+			values.scheduler = scheduler;
+		}
+		if (selectedFields.seed) {
+			values.random_seed = randomSeed;
+			if (!randomSeed && seed.trim()) values.seed = seed.trim();
+		}
 		if (selectedFields.prompt_enhancement) {
 			values.prompt_enhancement_enabled = promptEnhancementEnabled;
 			if (improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
@@ -166,6 +193,7 @@
 		if (!selectedFieldCount()) return (error = '저장할 설정을 하나 이상 선택해 주세요.');
 		if (selectedFields.prompt && !prompt.trim()) return (error = '긍정 프롬프트를 입력해 주세요.');
 		if (selectedFields.checkpoint && !checkpoint) return (error = '체크포인트를 선택해 주세요.');
+		if (selectedFields.seed && !randomSeed && !seed.trim()) return (error = '시드를 입력하거나 무작위 시드를 선택해 주세요.');
 		saving = true;
 		try {
 			const saved = await apiJson<Preset>(editingId ? `presets/${editingId}` : 'presets', {
@@ -203,8 +231,18 @@
 		{/if}
 		{#if selectedFields.aspect_ratio}<Select id="image-preset-aspect" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} /><div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-width"><span class="text-sm font-medium">가로</span><input id="image-preset-width" type="number" min="64" max="2048" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label><label class="block space-y-2" for="image-preset-height"><span class="text-sm font-medium">세로</span><input id="image-preset-height" type="number" min="64" max="2048" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label></div>{/if}
 		{#if selectedFields.cfg || selectedFields.steps}<div class="grid gap-4 sm:grid-cols-2">{#if selectedFields.cfg}<label class="block space-y-2" for="image-preset-cfg"><span class="text-sm font-medium">CFG</span><input id="image-preset-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} /></label>{/if}{#if selectedFields.steps}<label class="block space-y-2" for="image-preset-steps"><span class="text-sm font-medium">Steps</span><input id="image-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} /></label>{/if}</div>{/if}
+		{#if selectedFields.sampling}<button type="button" onclick={() => (samplingOpen = true)} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName} / {scheduler}</span></button>{/if}
+		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-seed"><span class="text-sm font-medium">Seed</span><input id="image-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="image-preset-random-seed"><input id="image-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
 		{#if selectedFields.prompt_enhancement}<label class="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} class="size-4 accent-primary" /><span>프롬프트 개선 사용</span></label><label class="block space-y-2" for="image-preset-improved"><span class="text-sm font-medium">개선된 프롬프트</span><textarea id="image-preset-improved" bind:value={improvedPrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>
 	{#snippet footer()}<OutlinedButton disabled={saving} onclick={() => (open = false)}>취소</OutlinedButton><PrimaryButton loading={saving} disabled={!presetName.trim() || !selectedFieldCount()} onclick={() => void save()}>{editingId ? '수정' : '저장'}</PrimaryButton>{/snippet}
 </Modal>
+
+<SamplingSelectionModal
+	bind:open={samplingOpen}
+	samplers={options.samplers}
+	schedulers={options.schedulers}
+	bind:samplerName
+	bind:scheduler
+/>
