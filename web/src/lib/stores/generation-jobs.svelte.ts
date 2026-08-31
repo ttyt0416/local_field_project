@@ -2,7 +2,7 @@ import { browser } from '$app/environment';
 import { SERVER_URL } from '$lib/configs/constants';
 import { apiJson, streamSse } from '$lib/utils/api';
 
-export type GenerationJobKind = 'image' | 'video';
+export type GenerationJobKind = 'image' | 'video' | '3d';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 export type GenerationJob = {
 	key: string;
@@ -11,12 +11,18 @@ export type GenerationJob = {
 	clientId: string;
 	generationId: string;
 	mode?: 'i2v' | 'fl2v' | 'r2v';
+	preset?: 'preview' | 'standard' | 'high';
+	seed?: number | null;
 	status: GenerationJobStatus;
 	progress: number;
 	queuePosition: number | null;
 	elapsedSeconds: number;
+	stage?: string;
 	imageUrl?: string;
 	videoUrl?: string;
+	modelUrl?: string;
+	modelFilename?: string;
+	modelSizeBytes?: number | null;
 	error?: string;
 	createdAt: number;
 };
@@ -27,9 +33,12 @@ type ActiveGenerationResponse = {
 	client_id: string;
 	generation_id: string;
 	mode?: 'i2v' | 'fl2v' | 'r2v' | null;
+	preset?: 'preview' | 'standard' | 'high' | null;
+	seed?: number | null;
 	status: 'queued' | 'processing';
 	progress: number;
-	queue_position: number | null;
+	queue_position?: number | null;
+	stage?: string | null;
 	created_at: string;
 	elapsed_seconds: number;
 };
@@ -65,15 +74,15 @@ class GenerationJobStore {
 		return this.initialization;
 	}
 
-	track(input: Omit<GenerationJob, 'key' | 'status' | 'progress' | 'queuePosition' | 'createdAt' | 'elapsedSeconds'> & { createdAt?: number; elapsedSeconds?: number }) {
+	track(input: Omit<GenerationJob, 'key' | 'status' | 'progress' | 'queuePosition' | 'createdAt' | 'elapsedSeconds'> & { status?: GenerationJobStatus; progress?: number; queuePosition?: number | null; createdAt?: number; elapsedSeconds?: number }) {
 		this.startClock();
 		const key = `${input.kind}:${input.promptId}`;
 		this.jobs[key] = {
 			...input,
 			key,
-			status: 'queued',
-			progress: 0,
-			queuePosition: null,
+			status: input.status ?? 'queued',
+			progress: input.progress ?? 0,
+			queuePosition: input.queuePosition ?? null,
 			createdAt: input.createdAt ?? Date.now(),
 			elapsedSeconds: input.elapsedSeconds ?? 0
 		};
@@ -103,9 +112,12 @@ class GenerationJobStore {
 					clientId: active.client_id,
 					generationId: active.generation_id,
 					mode: active.mode ?? undefined,
+					preset: active.preset ?? undefined,
+					seed: active.seed,
 					status: active.status,
 					progress: active.progress,
-					queuePosition: active.queue_position,
+					queuePosition: active.queue_position ?? null,
+					stage: active.stage ?? undefined,
 					createdAt: Date.parse(active.created_at) || Date.now(),
 					elapsedSeconds: active.elapsed_seconds
 				};
@@ -149,6 +161,9 @@ class GenerationJobStore {
 		if (job.kind === 'image') {
 			return `generation/image/${job.promptId}/events?client_id=${encodeURIComponent(job.clientId)}`;
 		}
+		if (job.kind === '3d') {
+			return `generation/3d/${job.promptId}/events?client_id=${encodeURIComponent(job.clientId)}`;
+		}
 		return `generation/video/${job.mode}/${job.promptId}/events?client_id=${encodeURIComponent(job.clientId)}`;
 	}
 
@@ -164,13 +179,18 @@ class GenerationJobStore {
 		if (status) changes.status = status;
 		if (typeof data.progress === 'number') changes.progress = data.progress;
 		if (typeof data.elapsed_seconds === 'number') changes.elapsedSeconds = data.elapsed_seconds;
+		if (typeof data.stage === 'string') changes.stage = data.stage;
 		if (typeof data.created_at === 'string') changes.createdAt = Date.parse(data.created_at) || changes.createdAt;
 		if ('queue_position' in data) changes.queuePosition = typeof data.queue_position === 'number' ? data.queue_position : null;
-		if (eventName === 'completed') {
+		if (eventName === 'completed' || status === 'completed') {
 			const image = Array.isArray(data.images) ? (data.images[0] as { url?: unknown } | undefined) : undefined;
 			const video = data.video as { url?: unknown } | null | undefined;
+			const model = data.model as { url?: unknown; filename?: unknown; size_bytes?: unknown } | null | undefined;
 			if (typeof image?.url === 'string') changes.imageUrl = new URL(image.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
 			if (typeof video?.url === 'string') changes.videoUrl = new URL(video.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
+			if (typeof model?.url === 'string') changes.modelUrl = new URL(model.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
+			if (typeof model?.filename === 'string') changes.modelFilename = model.filename;
+			if (typeof model?.size_bytes === 'number' || model?.size_bytes === null) changes.modelSizeBytes = model.size_bytes;
 			changes.error = undefined;
 		}
 		if (eventName === 'failed') changes.error = typeof data.message === 'string' ? data.message : '생성에 실패했습니다.';
@@ -184,8 +204,12 @@ class GenerationJobStore {
 
 	async cancel(key: string) {
 		const job = this.jobs[key];
-		if (!job || job.kind !== 'image' && job.kind !== 'video' || isTerminal(job.status)) return;
-		const path = job.kind === 'image' ? `generation/image/${job.promptId}/cancel` : `generation/video/${job.mode}/${job.promptId}/cancel`;
+		if (!job || isTerminal(job.status)) return;
+		const path = job.kind === 'image'
+			? `generation/image/${job.promptId}/cancel`
+			: job.kind === '3d'
+				? `generation/3d/${job.promptId}/cancel`
+				: `generation/video/${job.mode}/${job.promptId}/cancel`;
 		await apiJson(path, { method: 'POST' });
 		this.update(key, { status: 'cancelled', queuePosition: null, error: undefined });
 		this.streams.get(key)?.abort();

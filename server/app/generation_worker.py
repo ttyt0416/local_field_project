@@ -6,8 +6,16 @@ import logging
 from typing import Any
 
 from .comfyui import _history_generation_status, generation_progress, record_comfy_progress, stream_comfy_progress
-from .database import get_image_generation, get_video_generation, list_active_image_generations, list_active_video_generations
+from .database import (
+    get_image_generation,
+    get_three_d_generation,
+    get_video_generation,
+    list_active_image_generations,
+    list_active_three_d_generations,
+    list_active_video_generations,
+)
 from .generation_events import generation_event_broker, generation_key
+from .three_d import _history_status as _three_d_history_status
 from .video import _history_status
 
 
@@ -35,6 +43,15 @@ def reconcile_active_generations() -> None:
             logger.exception("동영상 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("video", generation, previous_status)
 
+    for generation in list_active_three_d_generations():
+        previous_status = str(generation.get("status", "queued"))
+        try:
+            result = _three_d_history_status(generation, generation["user_id"])
+            _publish_if_changed("3d", generation, previous_status, result.status, result.model_dump(mode="json"))
+        except Exception:
+            logger.exception("3D 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
+            _publish_terminal_if_changed("3d", generation, previous_status)
+
 
 def _publish_if_changed(
     kind: str,
@@ -48,7 +65,13 @@ def _publish_if_changed(
     created_at = generation.get("created_at")
     if created_at is not None:
         data["created_at"] = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
-    signature = (current_status, data.get("progress"), data.get("queue_position"), data.get("elapsed_seconds"))
+    signature = (
+        current_status,
+        data.get("stage"),
+        data.get("progress"),
+        data.get("queue_position"),
+        data.get("elapsed_seconds"),
+    )
     if _last_published_signatures.get(key) == signature:
         return
     _last_published_signatures[key] = signature
@@ -63,8 +86,10 @@ def _publish_if_changed(
 def _publish_terminal_if_changed(kind: str, generation: dict[str, Any], previous_status: str) -> None:
     if kind == "image":
         current = get_image_generation(generation["prompt_id"], generation["user_id"])
-    else:
+    elif kind == "video":
         current = get_video_generation(generation["prompt_id"], generation["user_id"])
+    else:
+        current = get_three_d_generation(generation["prompt_id"], generation["user_id"])
     if current is None or current["status"] == previous_status or current["status"] not in {"completed", "failed", "cancelled"}:
         return
     key = generation_key(kind, generation["user_id"], generation["prompt_id"])
@@ -91,8 +116,9 @@ def _publish_terminal_if_changed(kind: str, generation: dict[str, Any], previous
 
 def _active_generations() -> list[tuple[str, dict[str, Any]]]:
     return [
-        *(('image', generation) for generation in list_active_image_generations()),
-        *(('video', generation) for generation in list_active_video_generations()),
+        *(("image", generation) for generation in list_active_image_generations()),
+        *(("video", generation) for generation in list_active_video_generations()),
+        *(("3d", generation) for generation in list_active_three_d_generations()),
     ]
 
 

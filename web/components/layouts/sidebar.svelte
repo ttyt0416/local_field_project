@@ -2,6 +2,7 @@
 	import {
 		Archive,
 		Bookmark,
+		Box,
 		Download,
 		Heart,
 		ImagePlus,
@@ -89,6 +90,14 @@
 		>
 			<Video size={18} strokeWidth={1.8} />
 			<span>동영상 생성</span>
+		</a>
+		<a
+			href="/generate/3d"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Box size={18} strokeWidth={1.8} />
+			<span>3D 모델 생성</span>
 		</a>
 		<a
 			href="/uploads"

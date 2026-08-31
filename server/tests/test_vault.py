@@ -32,6 +32,22 @@ class VaultRouteTest(unittest.TestCase):
             page=2,
         )
 
+    def test_three_d_list_passes_page_to_database(self) -> None:
+        with patch.object(vault, "list_three_d_generations", return_value=([], 12, 9)) as list_three_d:
+            result = vault.vault_three_d("asset", "oldest", True, 2, self.user)
+
+        self.assertEqual(result.items, [])
+        self.assertEqual(result.page, 2)
+        self.assertEqual(result.total_pages, 2)
+        self.assertEqual(result.completed_count, 9)
+        list_three_d.assert_called_once_with(
+            self.user.id,
+            search="asset",
+            sort="oldest",
+            favorites_only=True,
+            page=2,
+        )
+
     def test_video_list_passes_page_to_database(self) -> None:
         with patch.object(vault, "list_video_generations", return_value=([], 0, 0)) as list_videos:
             result = vault.vault_videos("", "latest", False, 1, self.user)
@@ -98,6 +114,19 @@ class VaultRouteTest(unittest.TestCase):
         self.assertEqual(result.deleted_count, 2)
         delete_database_mock.assert_called_once_with(generation_ids, self.user.id)
         self.assertEqual(delete_storage_mock.call_count, 2)
+
+    def test_filtered_three_d_delete_deletes_every_matching_row(self) -> None:
+        generation_ids = [uuid4(), uuid4()]
+        rows = [{"id": generation_id, "storage_file_id": None} for generation_id in generation_ids]
+        with (
+            patch.object(vault, "list_filtered_three_d_generations", return_value=rows) as list_filtered,
+            patch.object(vault, "delete_three_d_generations", return_value=2) as delete_rows,
+        ):
+            result = vault.delete_filtered_vault_three_d("asset", False, 2, True, self.user)
+
+        self.assertEqual(result.deleted_count, 2)
+        list_filtered.assert_called_once_with(self.user.id, search="asset", favorites_only=False)
+        delete_rows.assert_called_once_with(generation_ids, self.user.id)
 
     def test_filtered_video_delete_deletes_every_matching_row(self) -> None:
         generation_ids = [uuid4(), uuid4()]

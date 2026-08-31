@@ -419,6 +419,33 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
     """
+    CREATE TABLE IF NOT EXISTS three_d_generations (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        prompt_id VARCHAR(128) UNIQUE NOT NULL,
+        client_id VARCHAR(128) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'queued',
+        stage VARCHAR(32) NOT NULL DEFAULT 'queued',
+        preset VARCHAR(16) NOT NULL,
+        seed BIGINT NOT NULL,
+        remove_background BOOLEAN NOT NULL DEFAULT TRUE,
+        padding DOUBLE PRECISION NOT NULL DEFAULT 1.1,
+        source_file_id TEXT NOT NULL,
+        source_filename VARCHAR(255) NOT NULL,
+        storage_file_id TEXT,
+        filename VARCHAR(255),
+        subfolder VARCHAR(255) NOT NULL DEFAULT '',
+        model_type VARCHAR(32) NOT NULL DEFAULT 'output',
+        view_count INTEGER NOT NULL DEFAULT 0,
+        is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMPTZ,
+        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+        size_bytes BIGINT NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS three_d_generations_user_created_idx ON three_d_generations(user_id, created_at DESC)",
+    """
     CREATE TABLE IF NOT EXISTS model_downloads (
         id UUID PRIMARY KEY,
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -838,12 +865,20 @@ def has_generation_storage_reference_outside(
                 UNION ALL
                 SELECT 1 FROM video_generations
                 WHERE storage_file_id = %s AND user_id = %s AND NOT (id = ANY(%s))
+                UNION ALL
+                SELECT 1 FROM three_d_generations
+                WHERE (storage_file_id = %s OR source_file_id = %s)
+                  AND user_id = %s AND NOT (id = ANY(%s))
             )
             """,
             (
                 storage_file_id,
                 user_id,
                 excluded_generation_ids,
+                storage_file_id,
+                user_id,
+                excluded_generation_ids,
+                storage_file_id,
                 storage_file_id,
                 user_id,
                 excluded_generation_ids,
@@ -1398,6 +1433,241 @@ def _video_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return dict(zip(_VIDEO_FIELDS.split(", "), row, strict=True))
+
+
+_THREE_D_FIELDS = (
+    "id, user_id, prompt_id, client_id, status, stage, preset, seed, remove_background, padding, "
+    "source_file_id, source_filename, storage_file_id, filename, subfolder, model_type, view_count, "
+    "is_favorite, created_at, completed_at, elapsed_seconds, size_bytes"
+)
+
+
+def create_three_d_generation(
+    *,
+    user_id: uuid.UUID,
+    prompt_id: str,
+    client_id: str,
+    preset: str,
+    seed: int,
+    remove_background: bool,
+    padding: float,
+    source_file_id: str,
+    source_filename: str,
+) -> tuple[uuid.UUID, datetime]:
+    generation_id = uuid.uuid4()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            INSERT INTO three_d_generations
+                (id, user_id, prompt_id, client_id, preset, seed, remove_background, padding,
+                 source_file_id, source_filename)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+            """,
+            (
+                generation_id,
+                user_id,
+                prompt_id,
+                client_id,
+                preset,
+                seed,
+                remove_background,
+                padding,
+                source_file_id,
+                source_filename,
+            ),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("3D generation insert did not return a row")
+    return row[0], row[1]
+
+
+def get_three_d_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE prompt_id = %s AND user_id = %s",
+            (prompt_id, user_id),
+        ).fetchone()
+    return _three_d_generation_row(row)
+
+
+def get_three_d_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE id = %s AND user_id = %s",
+            (generation_id, user_id),
+        ).fetchone()
+    return _three_d_generation_row(row)
+
+
+def list_active_three_d_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+    filters = ["status IN ('queued', 'processing')"]
+    parameters: list[Any] = []
+    if user_id is not None:
+        filters.append("user_id = %s")
+        parameters.append(user_id)
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
+            parameters,
+        ).fetchall()
+    return [generation for row in rows if (generation := _three_d_generation_row(row)) is not None]
+
+
+def increment_three_d_generation_view_count(
+    generation_id: uuid.UUID, user_id: uuid.UUID
+) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE three_d_generations SET view_count = view_count + 1
+            WHERE id = %s AND user_id = %s
+            RETURNING {_THREE_D_FIELDS}
+            """,
+            (generation_id, user_id),
+        ).fetchone()
+    return _three_d_generation_row(row)
+
+
+def update_three_d_favorite(generation_id: uuid.UUID, user_id: uuid.UUID, is_favorite: bool) -> bool | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE three_d_generations SET is_favorite = %s
+            WHERE id = %s AND user_id = %s
+            RETURNING is_favorite
+            """,
+            (is_favorite, generation_id, user_id),
+        ).fetchone()
+    return bool(row[0]) if row is not None else None
+
+
+def list_three_d_generations(
+    user_id: uuid.UUID,
+    *,
+    search: str = "",
+    sort: str = "latest",
+    favorites_only: bool = False,
+    page: int = 1,
+) -> tuple[list[dict[str, Any]], int, int]:
+    order_by = {
+        "latest": "created_at DESC, id DESC",
+        "oldest": "created_at ASC, id ASC",
+        "most_viewed": "view_count DESC, created_at DESC, id DESC",
+    }.get(sort, "created_at DESC, id DESC")
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    if search.strip():
+        filters.append("(source_filename ILIKE %s OR preset ILIKE %s)")
+        term = f"%{search.strip()}%"
+        parameters.extend((term, term))
+    if favorites_only:
+        filters.append("is_favorite = TRUE")
+    where_clause = " AND ".join(filters)
+    page_size = 10
+    offset = (page - 1) * page_size
+    with get_connection() as connection:
+        count_row = connection.execute(
+            f"SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'completed') FROM three_d_generations WHERE {where_clause}",
+            parameters,
+        ).fetchone()
+        rows = connection.execute(
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE {where_clause} ORDER BY {order_by} LIMIT %s OFFSET %s",
+            [*parameters, page_size, offset],
+        ).fetchall()
+    return (
+        [generation for row in rows if (generation := _three_d_generation_row(row)) is not None],
+        int(count_row[0]),
+        int(count_row[1]),
+    )
+
+
+def list_filtered_three_d_generations(
+    user_id: uuid.UUID, *, search: str = "", favorites_only: bool = False
+) -> list[dict[str, Any]]:
+    filters = ["user_id = %s"]
+    parameters: list[Any] = [user_id]
+    if search.strip():
+        filters.append("(source_filename ILIKE %s OR preset ILIKE %s)")
+        term = f"%{search.strip()}%"
+        parameters.extend((term, term))
+    if favorites_only:
+        filters.append("is_favorite = TRUE")
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE {' AND '.join(filters)}",
+            parameters,
+        ).fetchall()
+    return [generation for row in rows if (generation := _three_d_generation_row(row)) is not None]
+
+
+def delete_three_d_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            "DELETE FROM three_d_generations WHERE id = %s AND user_id = %s RETURNING id",
+            (generation_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
+def delete_three_d_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID) -> int:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "DELETE FROM three_d_generations WHERE id = ANY(%s) AND user_id = %s RETURNING id",
+            (generation_ids, user_id),
+        ).fetchall()
+    return len(rows)
+
+
+def update_three_d_generation_status(
+    *,
+    prompt_id: str,
+    user_id: uuid.UUID,
+    status: str,
+    stage: str | None = None,
+    storage_file_id: str | None = None,
+    filename: str | None = None,
+    subfolder: str = "",
+    model_type: str = "output",
+    size_bytes: int | None = None,
+) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE three_d_generations
+            SET status = %s,
+                stage = COALESCE(%s, stage),
+                storage_file_id = COALESCE(%s, storage_file_id),
+                filename = COALESCE(%s, filename),
+                subfolder = COALESCE(%s::varchar, subfolder),
+                model_type = COALESCE(%s::varchar, model_type),
+                size_bytes = COALESCE(%s, size_bytes),
+                completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
+                    CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                )))
+            WHERE prompt_id = %s AND user_id = %s
+            """,
+            (
+                status,
+                stage,
+                storage_file_id,
+                filename,
+                subfolder if filename is not None else None,
+                model_type if filename is not None else None,
+                size_bytes,
+                status,
+                status,
+                prompt_id,
+                user_id,
+            ),
+        )
+
+
+def _three_d_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_THREE_D_FIELDS.split(", "), row, strict=True))
 
 
 _PRESET_FIELDS = "id, user_id, type, name, values, is_default, created_at, updated_at"

@@ -35,7 +35,7 @@
 	let loaded = $state(false);
 	let failed = $state(false);
 	let modelViewer = $state<ModelViewerElement>();
-	let modelViewerTag = 'model-viewer';
+	const modelViewerTag = 'model-viewer';
 	let isServerSource = $derived(sourceType === 'server' || (typeof source === 'string' && /^(https?:)?\/\//.test(source)));
 
 	$effect(() => {
@@ -89,7 +89,7 @@
 			loading="lazy"
 			onload={() => (loaded = true)}
 			onerror={() => (failed = true)}
-			class={`block min-h-64 w-full bg-muted transition-opacity ${isServerSource && !loaded ? 'opacity-0' : 'opacity-100'}`}
+			class={`block h-full min-h-64 w-full bg-muted transition-opacity ${isServerSource && !loaded ? 'opacity-0' : 'opacity-100'}`}
 		></svelte:element>
 	{/if}
 </div>

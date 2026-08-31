@@ -125,6 +125,12 @@ def generation_progress(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
         }
 
 
+def generation_node(prompt_id: str, user_id: uuid.UUID) -> str | None:
+    with _progress_lock:
+        node = _progress_states.get(_progress_key(prompt_id, user_id), {}).get("node")
+    return node if isinstance(node, str) else None
+
+
 def _set_progress_state(
     prompt_id: str,
     user_id: uuid.UUID,
@@ -132,10 +138,13 @@ def _set_progress_state(
     status: Any = _PROGRESS_UNSET,
     progress: Any = _PROGRESS_UNSET,
     queue_position: Any = _PROGRESS_UNSET,
+    node: Any = _PROGRESS_UNSET,
 ) -> bool:
     key = _progress_key(prompt_id, user_id)
     with _progress_lock:
-        state = _progress_states.setdefault(key, {"status": None, "progress": 0.0, "queue_position": None})
+        state = _progress_states.setdefault(
+            key, {"status": None, "progress": 0.0, "queue_position": None, "node": None}
+        )
         previous = state.copy()
         if status is not _PROGRESS_UNSET:
             state["status"] = status
@@ -143,6 +152,8 @@ def _set_progress_state(
             state["progress"] = max(0.0, min(100.0, float(progress)))
         if queue_position is not _PROGRESS_UNSET:
             state["queue_position"] = queue_position
+        if node is not _PROGRESS_UNSET:
+            state["node"] = node
         return state != previous
 
 
@@ -156,11 +167,19 @@ def record_comfy_progress(
     if event_prompt_id is not None and event_prompt_id != prompt_id:
         return False
     if event_name == "execution_start":
-        return _set_progress_state(prompt_id, user_id, status="processing", progress=0, queue_position=None)
+        return _set_progress_state(
+            prompt_id, user_id, status="processing", progress=0, queue_position=None, node=None
+        )
     if event_name == "executing":
         if data.get("node") is None:
             return False
-        return _set_progress_state(prompt_id, user_id, status="processing", queue_position=None)
+        return _set_progress_state(
+            prompt_id,
+            user_id,
+            status="processing",
+            queue_position=None,
+            node=str(data["node"]),
+        )
     if event_name == "progress":
         value = data.get("value")
         maximum = data.get("max")

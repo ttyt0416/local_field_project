@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from app import comfyui, generation_worker, video
+from app import comfyui, generation_worker, three_d, video
 from app.generation_events import GenerationEventBroker, generation_event_broker, generation_key
 
 
@@ -14,29 +14,36 @@ class GenerationWorkerTest(unittest.TestCase):
     def setUp(self) -> None:
         generation_worker._last_published_signatures.clear()
 
-    def test_reconciler_processes_active_images_and_videos_and_publishes_changes(self) -> None:
+    def test_reconciler_processes_active_generations_and_publishes_changes(self) -> None:
         image_user = uuid4()
         video_user = uuid4()
+        three_d_user = uuid4()
         image = {"prompt_id": "image-prompt", "user_id": image_user, "status": "queued"}
         video_generation = {"prompt_id": "video-prompt", "user_id": video_user, "status": "queued", "mode": "i2v"}
+        three_d_generation = {"prompt_id": "3d-prompt", "user_id": three_d_user, "status": "queued", "stage": "queued"}
         image_result = comfyui.ImageGenerationStatus(prompt_id="image-prompt", status="processing", progress=37)
         video_result = video.VideoGenerationStatus(prompt_id="video-prompt", mode="i2v", status="processing", progress=42)
+        three_d_result = three_d.ThreeDGenerationStatus(
+            prompt_id="3d-prompt", status="processing", stage="shape", progress=50
+        )
         with (
             patch.object(generation_worker, "list_active_image_generations", return_value=[image]),
             patch.object(generation_worker, "list_active_video_generations", return_value=[video_generation]),
+            patch.object(generation_worker, "list_active_three_d_generations", return_value=[three_d_generation]),
             patch.object(generation_worker, "_history_generation_status", return_value=image_result) as image_sync,
             patch.object(generation_worker, "_history_status", return_value=video_result) as video_sync,
+            patch.object(generation_worker, "_three_d_history_status", return_value=three_d_result) as three_d_sync,
             patch.object(generation_worker.generation_event_broker, "publish") as publish,
         ):
             generation_worker.reconcile_active_generations()
 
         image_sync.assert_called_once_with("image-prompt", image_user)
         video_sync.assert_called_once_with(video_generation, video_user)
-        self.assertEqual(publish.call_count, 2)
-        self.assertEqual(publish.call_args_list[0].kwargs["event"], "status")
-        self.assertEqual(publish.call_args_list[1].kwargs["event"], "status")
-        self.assertEqual(publish.call_args_list[0].kwargs["data"]["progress"], 37)
-        self.assertEqual(publish.call_args_list[1].kwargs["data"]["progress"], 42)
+        three_d_sync.assert_called_once_with(three_d_generation, three_d_user)
+        self.assertEqual(publish.call_count, 3)
+        self.assertEqual([call.kwargs["event"] for call in publish.call_args_list], ["status", "status", "status"])
+        self.assertEqual([call.kwargs["data"]["progress"] for call in publish.call_args_list], [37, 42, 50])
+        self.assertEqual(publish.call_args_list[2].kwargs["data"]["stage"], "shape")
 
     def test_publishes_when_progress_changes_without_status_change(self) -> None:
         user_id = uuid4()

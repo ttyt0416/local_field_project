@@ -17,20 +17,27 @@ from .database import (
     create_video_edit,
     delete_image_generation,
     delete_image_generations,
+    delete_three_d_generation,
+    delete_three_d_generations,
     delete_video_generation,
     delete_video_generations,
     get_image_generation_by_id,
     get_image_generations_by_ids,
+    get_three_d_generation_by_id,
     get_video_generation_by_id,
     has_generation_storage_reference_outside,
     has_media_asset,
     increment_image_generation_view_count,
+    increment_three_d_generation_view_count,
     increment_video_generation_view_count,
     list_filtered_image_generations,
+    list_filtered_three_d_generations,
     list_filtered_video_generations,
     list_image_generations,
+    list_three_d_generations,
     list_video_generations,
     update_image_favorite,
+    update_three_d_favorite,
     update_video_favorite,
 )
 from .storage import (
@@ -129,6 +136,38 @@ class VaultVideoDetail(VaultVideoSummary):
     seed: int
 
 
+class VaultThreeDSummary(BaseModel):
+    id: UUID
+    media_type: str
+    status: str
+    stage: str
+    preset: str
+    seed: int
+    model_url: str | None
+    source_image_url: str | None
+    view_count: int
+    is_favorite: bool
+    created_at: datetime
+    completed_at: datetime | None
+    elapsed_seconds: float
+    file_size_bytes: int | None
+
+
+class VaultThreeDPage(BaseModel):
+    items: list[VaultThreeDSummary]
+    page: int
+    page_size: int
+    total_count: int
+    completed_count: int
+    total_pages: int
+
+
+class VaultThreeDDetail(VaultThreeDSummary):
+    remove_background: bool
+    padding: float
+    source_filename: str
+
+
 class FavoriteRequest(BaseModel):
     is_favorite: bool
 
@@ -170,6 +209,31 @@ class VideoEditRequest(BaseModel):
 
 class VideoEditResponse(BaseModel):
     generation_id: UUID
+
+
+@router.get("/3d", response_model=VaultThreeDPage)
+def vault_three_d(
+    search: str = Query(default="", max_length=500),
+    sort: Literal["latest", "oldest", "most_viewed"] = "latest",
+    favorites_only: bool = False,
+    page: int = Query(default=1, ge=1),
+    user: UserResponse = Depends(current_user),
+) -> VaultThreeDPage:
+    rows, total_count, completed_count = list_three_d_generations(
+        user.id,
+        search=search,
+        sort=sort,
+        favorites_only=favorites_only,
+        page=page,
+    )
+    return VaultThreeDPage(
+        items=[_three_d_summary(row, user.id) for row in rows],
+        page=page,
+        page_size=VAULT_PAGE_SIZE,
+        total_count=total_count,
+        completed_count=completed_count,
+        total_pages=(total_count + VAULT_PAGE_SIZE - 1) // VAULT_PAGE_SIZE,
+    )
 
 
 @router.get("/videos", response_model=VaultVideoPage)
@@ -219,6 +283,26 @@ def vault_images(
         total_count=total_count,
         completed_count=completed_count,
         total_pages=(total_count + VAULT_PAGE_SIZE - 1) // VAULT_PAGE_SIZE,
+    )
+
+
+@router.delete("/3d/filtered", response_model=BulkDeleteResponse)
+def delete_filtered_vault_three_d(
+    search: str = Query(default="", max_length=500),
+    favorites_only: bool = False,
+    expected_count: int = Query(ge=0),
+    confirmed: bool = False,
+    user: UserResponse = Depends(current_user),
+) -> BulkDeleteResponse:
+    generations = list_filtered_three_d_generations(
+        user.id, search=search, favorites_only=favorites_only
+    )
+    _validate_filtered_delete(len(generations), expected_count, confirmed)
+    generation_ids = [generation["id"] for generation in generations]
+    return BulkDeleteResponse(
+        deleted_count=_delete_generation_rows(
+            generations, generation_ids, delete_three_d_generations, user
+        )
     )
 
 
@@ -321,6 +405,55 @@ def edit_vault_video(
             pass
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
     return VideoEditResponse(generation_id=edited_id)
+
+
+@router.get("/3d/{generation_id}", response_model=VaultThreeDDetail)
+def vault_three_d_detail(
+    generation_id: UUID,
+    user: UserResponse = Depends(current_user),
+) -> VaultThreeDDetail:
+    generation = increment_three_d_generation_view_count(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
+    return VaultThreeDDetail(
+        **_three_d_summary(generation, user.id, include_file_size=True).model_dump(),
+        remove_background=generation["remove_background"],
+        padding=generation["padding"],
+        source_filename=generation["source_filename"],
+    )
+
+
+@router.patch("/3d/{generation_id}/favorite", response_model=FavoriteResponse)
+def update_vault_three_d_favorite(
+    generation_id: UUID,
+    payload: FavoriteRequest,
+    user: UserResponse = Depends(current_user),
+) -> FavoriteResponse:
+    is_favorite = update_three_d_favorite(generation_id, user.id, payload.is_favorite)
+    if is_favorite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
+    return FavoriteResponse(is_favorite=is_favorite)
+
+
+@router.delete("/3d/{generation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_vault_three_d(
+    generation_id: UUID,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    generation = get_three_d_generation_by_id(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
+    storage_file_id = generation.get("storage_file_id")
+    if storage_file_id and not has_media_asset(storage_file_id, user.id):
+        if not storage_enabled():
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+        try:
+            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+        except StorageError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    if not delete_three_d_generation(generation_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/videos/{generation_id}", response_model=VaultVideoDetail)
@@ -564,6 +697,40 @@ def delete_vault_image(
     if not delete_image_generation(generation_id, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _three_d_summary(
+    generation: dict, user_id: UUID, *, include_file_size: bool = False
+) -> VaultThreeDSummary:
+    try:
+        model_url = (
+            storage_read_url(file_id=generation["storage_file_id"], owner_id=str(user_id))
+            if storage_enabled() and generation.get("storage_file_id")
+            else None
+        )
+        source_image_url = (
+            storage_read_url(file_id=generation["source_file_id"], owner_id=str(user_id))
+            if storage_enabled() and generation.get("source_file_id")
+            else None
+        )
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return VaultThreeDSummary(
+        id=generation["id"],
+        media_type="3d",
+        status=generation["status"],
+        stage=generation["stage"],
+        preset=generation["preset"],
+        seed=generation["seed"],
+        model_url=model_url,
+        source_image_url=source_image_url,
+        view_count=generation["view_count"],
+        is_favorite=generation["is_favorite"],
+        created_at=generation["created_at"],
+        completed_at=generation["completed_at"],
+        elapsed_seconds=generation["elapsed_seconds"],
+        file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
+    )
 
 
 def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultVideoSummary:

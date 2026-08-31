@@ -8,11 +8,16 @@ from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
 from .comfyui import generation_progress
-from .database import generation_elapsed_seconds, list_active_image_generations, list_active_video_generations
+from .database import (
+    generation_elapsed_seconds,
+    list_active_image_generations,
+    list_active_three_d_generations,
+    list_active_video_generations,
+)
 
 
 router = APIRouter(prefix="/generation", tags=["generation"])
-GenerationKind = Literal["image", "video"]
+GenerationKind = Literal["image", "video", "3d"]
 GenerationStatus = Literal["queued", "processing"]
 VideoMode = Literal["i2v", "fl2v", "r2v"]
 
@@ -23,6 +28,9 @@ class ActiveGeneration(BaseModel):
     client_id: str
     generation_id: str
     mode: VideoMode | None = None
+    preset: Literal["preview", "standard", "high"] | None = None
+    seed: int | None = None
+    stage: str | None = None
     status: GenerationStatus
     progress: float = 0
     queue_position: int | None = None
@@ -65,6 +73,21 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 "created_at": generation["created_at"],
             }
             for generation in list_active_video_generations(user.id)
+        ),
+        *(
+            {
+                "kind": "3d",
+                "prompt_id": generation["prompt_id"],
+                "client_id": generation["client_id"],
+                "generation_id": str(generation["id"]),
+                "preset": generation["preset"],
+                "seed": generation["seed"],
+                "stage": generation["stage"],
+                "status": generation["status"],
+                **active_fields(generation),
+                "created_at": generation["created_at"],
+            }
+            for generation in list_active_three_d_generations(user.id)
         ),
     ]
     return [ActiveGeneration.model_validate(row) for row in sorted(rows, key=lambda row: row["created_at"])]
