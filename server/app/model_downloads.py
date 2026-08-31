@@ -120,6 +120,8 @@ class CivitaiLookupResponse(BaseModel):
     model_type: str
     version_name: str
     base_model: str | None
+    target_model_type: ModelType
+    suggested_subfolder: str
     files: list[CivitaiFileResponse]
     selected_file_index: int
     versions: list[CivitaiVersionOption]
@@ -370,10 +372,10 @@ def lookup_civitai_model(
     _: UserResponse = Depends(current_user),
 ) -> CivitaiLookupResponse:
     try:
-        version, selected_index, versions = _resolve_civitai_source(source, model_type, file_index)
+        version, target_model_type, selected_index, versions = _resolve_civitai_source(source, model_type, file_index)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return _lookup_response(version, selected_index, versions)
+    return _lookup_response(version, target_model_type, selected_index, versions)
 
 
 @router.post("/civitai/download", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -387,14 +389,14 @@ def download_civitai_model(
     if not root.is_dir():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더를 찾을 수 없습니다.")
     try:
-        version, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index)
+        version, target_model_type, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index)
         selected_file = version.files[selected_index]
         filename = _safe_filename(selected_file.name)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     try:
         subfolder = _safe_folder_selection(payload.subfolder)
-        target_directory = _model_target_directory(payload.model_type, subfolder)
+        target_directory = _model_target_directory(target_model_type, subfolder)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     if not target_directory.is_dir():
@@ -405,7 +407,7 @@ def download_civitai_model(
     row = create_model_download(
         user_id=user.id,
         version_id=version.version_id,
-        model_type=payload.model_type,
+        model_type=target_model_type,
         file_index=selected_index,
         filename=filename,
         target_path=str(target_path),
@@ -503,6 +505,7 @@ def _validated_model_target(model_type: ModelType, raw_target_path: str | Path) 
 
 def _lookup_response(
     version: CivitaiVersion,
+    target_model_type: ModelType,
     selected_index: int,
     versions: tuple[CivitaiVersion, ...],
 ) -> CivitaiLookupResponse:
@@ -513,6 +516,8 @@ def _lookup_response(
         model_type=version.model_type,
         version_name=version.version_name,
         base_model=version.base_model,
+        target_model_type=target_model_type,
+        suggested_subfolder=_suggested_subfolder(target_model_type, version.base_model),
         files=[
             CivitaiFileResponse(
                 index=index,
@@ -537,11 +542,42 @@ def _lookup_response(
     )
 
 
+def _detected_model_type(version: CivitaiVersion) -> ModelType | None:
+    version_type = _normalized_label(version.model_type)
+    if version_type in {"lora", "locon", "dora"}:
+        return "lora"
+    if version_type != "checkpoint":
+        return None
+    base_model = _normalized_label(version.base_model or "")
+    return "diffusion_model" if "anima" in base_model or "minimax" in base_model else "checkpoint"
+
+
+def _suggested_subfolder(model_type: ModelType, base_model: str | None) -> str:
+    family = next((name for name in ("anima", "minimax", "illustrious") if name in _normalized_label(base_model or "")), None)
+    if family is None:
+        return ""
+    try:
+        directory = _model_target_directory(model_type, "")
+        candidates = sorted(
+            (path for path in directory.rglob("*") if path.is_dir() and not path.is_symlink()),
+            key=lambda path: (len(path.relative_to(directory).parts), str(path.relative_to(directory)).casefold()),
+        )
+    except (CivitaiError, OSError):
+        return ""
+    for candidate in candidates:
+        relative = candidate.relative_to(directory)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if any(family in _normalized_label(part) for part in relative.parts):
+            return _safe_folder_selection("/".join(relative.parts))
+    return ""
+
+
 def _resolve_civitai_source(
     source: str,
     model_type: ModelType,
     file_index: int | None,
-) -> tuple[CivitaiVersion, int, tuple[CivitaiVersion, ...]]:
+) -> tuple[CivitaiVersion, ModelType, int, tuple[CivitaiVersion, ...]]:
     model_id, version_id = _parse_civitai_source(source)
     if model_id is not None:
         versions = _fetch_model_versions(model_id, model_type)
@@ -559,7 +595,8 @@ def _resolve_civitai_source(
             raise CivitaiError("Civitai 모델 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
         version = _fetch_version(version_id)
         versions = (version,)
-    return version, _select_file_index(version, model_type, file_index), versions
+    target_model_type = _detected_model_type(version) or model_type
+    return version, target_model_type, _select_file_index(version, target_model_type, file_index), versions
 
 
 def _parse_civitai_source(source: str) -> tuple[int | None, int | None]:
@@ -610,7 +647,7 @@ def _fetch_model_versions(model_id: int, model_type: ModelType) -> tuple[Civitai
             continue
         try:
             version = _parse_version({**item, "model": model}, item["id"])
-            _select_file_index(version, model_type, None)
+            _select_file_index(version, _detected_model_type(version) or model_type, None)
         except CivitaiError:
             continue
         versions.append(version)

@@ -1,6 +1,8 @@
 # CIVITAI 다운로드 화면
 
-메뉴와 화면 이름은 정확히 `CIVITAI 다운로드`다. 체크포인트, Diffusion Model, LoRA, 텍스트 인코더, VAE, 임베딩 중 하나를 선택하고 Civitai model 링크, version ID 또는 version 링크를 조회한 뒤 파일을 선택한다. Model page 링크는 최신 호환 version을 기본으로 보여주며, 호환 version이 여러 개면 결과 card의 `버전 선택` modal에서 이름, base model, 공개일을 보고 다른 version으로 바꿀 수 있다. Version을 바꾸면 다운로드 파일 목록과 기본 파일도 함께 갱신된다.
+메뉴와 화면 이름은 정확히 `CIVITAI 다운로드`다. lookup 전에는 체크포인트, Diffusion Model, LoRA, 텍스트 인코더, VAE, 임베딩 tab으로 fallback type을 고를 수 있다. Civitai lookup은 받은 type을 감지해 type이 다르면 selected tab을 자동 변경한다. `LORA`·`LoCon`·`DoRA`는 LoRA, `Checkpoint`의 base model이 Anima 또는 MiniMax면 Diffusion Model, 그 밖의 Civitai checkpoint는 Checkpoint로 선택한다. lookup 결과의 파일·version 선택은 그 auto type을 사용한다.
+
+base model에 Anima, MiniMax, Illustrious가 있고 selected model type root 아래에 같은 family 이름의 folder가 있으면, 가장 shallow한 matching relative folder를 자동 선택한다. nested folder도 대상이며, matching folder가 없으면 root `전체`를 선택한다. 사용자는 folder dialog에서 자동 type과 folder를 다시 바꿀 수 있다.
 
 브라우저는 파일을 직접 받지 않는다. 다운로드 버튼은 folder modal을 열고 `GET /models/folders`에서 현재 model type root의 folder tree를 탐색한다. `전체`는 model type root를 선택하고, 하위 folder button은 그 folder를 선택하면서 안으로 이동한다. `상위 폴더`로 되돌아갈 수 있고, `현재 폴더에 하위 폴더 추가`는 선택한 folder 바로 아래에 한 level을 만든다. 같은 동작을 반복해 arbitrary nested folder를 만든다. `POST /models/civitai/download`는 선택한 relative subfolder만 받아 server job을 생성한다. Full checkpoint는 `checkpoints`, split diffusion model은 `diffusion_models`, LoRA는 `loras`, text encoder는 `text_encoders`, VAE는 `vae`, embedding은 `embeddings`에 저장된다. Illustrious는 checkpoint·LoRA·embedding 각각의 `Illustrious` subfolder를 선택한다.
 

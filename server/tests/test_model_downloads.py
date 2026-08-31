@@ -22,12 +22,15 @@ from app.model_downloads import (
     _installed_model_path,
     _model_target_directory,
     _fetch_model_versions,
+    _lookup_response,
     _parse_civitai_source,
     _parse_version,
     _process_model_download,
+    _resolve_civitai_source,
     _safe_subfolder,
     _safe_filename,
     _select_file_index,
+    _detected_model_type,
     ModelType,
     cancel_download,
     create_model_folder,
@@ -141,6 +144,42 @@ class ModelDownloadsTest(unittest.TestCase):
             1,
         )
         self.assertTrue(_file_matches(version, version.files[0], "text_encoder"))
+
+    def test_lookup_auto_changes_checkpoint_diffusion_and_lora_destinations(self) -> None:
+        cases = (
+            ("Checkpoint", "Anima", "diffusion_model", "Anima"),
+            ("Checkpoint", "MiniMax H3", "diffusion_model", "MiniMaxH3"),
+            ("Checkpoint", "Illustrious", "checkpoint", "Illustrious"),
+            ("LORA", "Illustrious", "lora", "Illustrious"),
+        )
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for folder in ("diffusion_models/Anima", "diffusion_models/MiniMaxH3", "checkpoints/Illustrious", "loras/Illustrious"):
+                (root / folder).mkdir(parents=True)
+            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
+                for civitai_type, base_model, expected_type, expected_folder in cases:
+                    version = CivitaiVersion(
+                        version_id=1,
+                        model_id=None,
+                        model_name="Example",
+                        model_type=civitai_type,
+                        version_name="v1",
+                        base_model=base_model,
+                        files=(CivitaiFile("model.safetensors", "Model", "https://civitai.com/file", 1, None, True),),
+                    )
+                    response = _lookup_response(version, _detected_model_type(version) or "checkpoint", 0, (version,))
+                    self.assertEqual(response.target_model_type, expected_type)
+                    self.assertEqual(response.suggested_subfolder, expected_folder)
+
+                lora = CivitaiVersion(1, None, "Example", "LORA", "v1", "Illustrious", (CivitaiFile("model.safetensors", "Model", "https://civitai.com/file", 1, None, True),))
+                with patch("app.model_downloads._fetch_version", return_value=lora):
+                    _, target_type, _, _ = _resolve_civitai_source("1", "checkpoint", None)
+                self.assertEqual(target_type, "lora")
+
+                (root / "loras/styles/Anima").mkdir(parents=True)
+                nested = CivitaiVersion(1, None, "Example", "LORA", "v1", "Anima", (CivitaiFile("model.safetensors", "Model", "https://civitai.com/file", 1, None, True),))
+                nested_response = _lookup_response(nested, "lora", 0, (nested,))
+                self.assertEqual(nested_response.suggested_subfolder, "styles/Anima")
 
     def test_model_storage_categories_are_distinct(self) -> None:
         with TemporaryDirectory() as temporary_directory:

@@ -34,6 +34,8 @@
 		model_type: string;
 		version_name: string;
 		base_model: string | null;
+		target_model_type: ModelType;
+		suggested_subfolder: string;
 		files: FileInfo[];
 		selected_file_index: number;
 		versions: VersionOption[];
@@ -163,15 +165,21 @@
 				`models/civitai/lookup?source=${encodeURIComponent(requestedSource)}&model_type=${requestedType}`
 			);
 			if (source.trim() !== requestedSource || modelType !== requestedType) return;
-			lookup = result;
-			versionOptions = result.versions;
-			selectedFileIndex = result.selected_file_index;
+			applyLookup(result);
 		} catch (reason) {
 			lookup = null;
 			error = reason instanceof Error ? reason.message : 'Civitai 모델 정보를 조회하지 못했습니다.';
 		} finally {
 			lookupLoading = false;
 		}
+	}
+
+	function applyLookup(result: Lookup) {
+		lookup = result;
+		versionOptions = result.versions;
+		selectedFileIndex = result.selected_file_index;
+		modelType = result.target_model_type;
+		subfolder = result.suggested_subfolder;
 	}
 
 	function clearLookupSelection() {
@@ -196,8 +204,7 @@
 				`models/civitai/lookup?source=${versionId}&model_type=${requestedType}`
 			);
 			if (modelType !== requestedType) return;
-			lookup = result;
-			selectedFileIndex = result.selected_file_index;
+			applyLookup(result);
 			versionModalOpen = false;
 		} catch (reason) {
 			const message = reason instanceof Error ? reason.message : '모델 버전을 불러오지 못했습니다.';
@@ -263,8 +270,7 @@
 		folderModalMode = 'download';
 		folderModelType = modelType;
 		moveTarget = null;
-		subfolder = '';
-		folderView = '';
+		folderView = subfolder;
 		creatingFolder = false;
 		newFolderName = '';
 		folderModalOpen = true;
@@ -456,7 +462,7 @@
 			{#if lookup}
 				<section class="space-y-4 rounded-2xl border border-primary/30 bg-primary/5 p-5">
 					<div class="flex flex-wrap items-start justify-between gap-3">
-						<div><p class="text-lg font-semibold">{lookup.model_name}</p><p class="mt-1 text-sm text-muted-foreground">{lookup.version_name}{#if lookup.base_model} · {lookup.base_model}{/if}</p></div>
+						<div><p class="text-lg font-semibold">{lookup.model_name}</p><p class="mt-1 text-sm text-muted-foreground">{lookup.version_name}{#if lookup.base_model} · {lookup.base_model}{/if}</p><p class="mt-1 text-xs text-primary">자동 선택: {typeLabel(modelType)} / {subfolder || '전체'}</p></div>
 						{#if versionOptions.length > 1}<OutlinedButton disabled={versionLoadingId !== null} onclick={() => (versionModalOpen = true)}>버전 선택</OutlinedButton>{/if}
 					</div>
 					<div class="space-y-2">
