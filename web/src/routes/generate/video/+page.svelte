@@ -37,6 +37,11 @@
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
 	type VideoPromptLanguage = 'ko' | 'en' | 'ja';
+	type MediaDimensions = { width: number; height: number };
+	type MediaDimensionState = MediaDimensions | 'failed';
+	// ponytail: MiniMax H3 has one 1344/32 size contract; load runtime options only when supported models diverge.
+	const maxVideoDimension = 1344;
+	const videoDimensionStep = 32;
 	const modes: { value: VideoMode; label: string; description: string }[] = [
 		{ value: 'i2v', label: 'I2V', description: '시작 이미지에서 영상 생성' },
 		{ value: 'fl2v', label: 'FL2V', description: '첫·마지막 프레임 사이 생성' },
@@ -113,8 +118,10 @@
 	let storedSelectedIds = $state<string[]>([]);
 	let storedSelectedAssets = $state<StoredMediaAsset[]>([]);
 	let storedAssetSource = $state<StoredSource>('uploaded');
-	let mediaDimensions = $state<Record<string, string>>({});
+	let mediaDimensions = $state<Record<string, MediaDimensionState>>({});
 	let sizeApplying = $state('');
+	let mediaDimensionRequestId = 0;
+	const mediaDimensionRequests = new Map<string, number>();
 	let storedRequestId = 0;
 	let selectionKind = $derived(
 		selectionTarget === 'videos' ? 'video' : selectionTarget === 'audios' ? 'audio' : 'image'
@@ -209,6 +216,7 @@
 		selectedReferenceImages = [];
 		selectedReferenceVideos = [];
 		selectedReferenceAudios = [];
+		mediaDimensionRequests.clear();
 		mediaDimensions = {};
 	}
 
@@ -285,10 +293,12 @@
 		sizeApplying = key;
 		error = '';
 		try {
-			const dimensions = await readMediaDimensions(source, kind);
-			width = dimensions.width;
-			height = dimensions.height;
-			mediaDimensions[key] = `${dimensions.width} × ${dimensions.height}`;
+			const cached = mediaDimensions[key];
+			const dimensions = cached && cached !== 'failed' ? cached : await readMediaDimensions(source, kind);
+			const fitted = fitVideoDimensions(dimensions);
+			width = fitted.width;
+			height = fitted.height;
+			mediaDimensions = { ...mediaDimensions, [key]: dimensions };
 		} catch {
 			error = '선택한 콘텐츠의 크기를 읽지 못했습니다.';
 		} finally {
@@ -298,17 +308,36 @@
 
 	function rememberMediaDimensions(key: string, source: Blob | string | null, kind: 'image' | 'video') {
 		if (!source) return;
+		const requestId = ++mediaDimensionRequestId;
+		mediaDimensionRequests.set(key, requestId);
+		removeMediaDimension(key, false);
 		void readMediaDimensions(source, kind)
-			.then(({ width: mediaWidth, height: mediaHeight }) => {
-				mediaDimensions[key] = `${mediaWidth} × ${mediaHeight}`;
+			.then((dimensions) => {
+				if (mediaDimensionRequests.get(key) === requestId) mediaDimensions = { ...mediaDimensions, [key]: dimensions };
 			})
 			.catch(() => {
-				mediaDimensions[key] = '크기 확인 실패';
+				if (mediaDimensionRequests.get(key) === requestId) mediaDimensions = { ...mediaDimensions, [key]: 'failed' };
 			});
 	}
 
 	function mediaDimensionLabel(key: string) {
-		return mediaDimensions[key] ?? '크기 확인 중';
+		const dimensions = mediaDimensions[key];
+		if (!dimensions) return '원본 크기 확인 중';
+		if (dimensions === 'failed') return '원본 크기 확인 실패';
+		return `원본 ${dimensions.width} × ${dimensions.height}`;
+	}
+
+	function mediaSizeButtonLabel(key: string) {
+		const dimensions = mediaDimensions[key];
+		if (!dimensions || dimensions === 'failed') return '이 크기 사용';
+		const fitted = fitVideoDimensions(dimensions);
+		return `${fitted.width} × ${fitted.height}로 사용`;
+	}
+
+	function fitVideoDimensions(dimensions: MediaDimensions): MediaDimensions {
+		const scale = Math.min(1, maxVideoDimension / dimensions.width, maxVideoDimension / dimensions.height);
+		const fit = (value: number) => Math.max(videoDimensionStep, Math.min(maxVideoDimension, Math.round(value * scale / videoDimensionStep) * videoDimensionStep));
+		return { width: fit(dimensions.width), height: fit(dimensions.height) };
 	}
 
 	function openSelection(target: SelectionTarget) {
@@ -415,7 +444,8 @@
 		selectionOpen = false;
 	}
 
-	function removeMediaDimension(key: string) {
+	function removeMediaDimension(key: string, cancelRequest = true) {
+		if (cancelRequest) mediaDimensionRequests.delete(key);
 		const next = { ...mediaDimensions };
 		delete next[key];
 		mediaDimensions = next;
@@ -441,9 +471,9 @@
 			return;
 		}
 		const fileIndex = index - selectedReferenceImages.length;
+		referenceImageFiles.forEach((_, currentIndex) => removeMediaDimension(`reference-image-file-${currentIndex}`));
 		referenceImageFiles = referenceImageFiles.filter((_, currentIndex) => currentIndex !== fileIndex);
 		referenceImageFiles.forEach((file, currentIndex) => rememberMediaDimensions(`reference-image-file-${currentIndex}`, file, 'image'));
-		removeMediaDimension(`reference-image-file-${fileIndex}`);
 	}
 
 	function removeReferenceVideo(index: number) {
@@ -454,9 +484,9 @@
 			return;
 		}
 		const fileIndex = index - selectedReferenceVideos.length;
+		referenceVideoFiles.forEach((_, currentIndex) => removeMediaDimension(`reference-video-file-${currentIndex}`));
 		referenceVideoFiles = referenceVideoFiles.filter((_, currentIndex) => currentIndex !== fileIndex);
 		referenceVideoFiles.forEach((file, currentIndex) => rememberMediaDimensions(`reference-video-file-${currentIndex}`, file, 'video'));
-		removeMediaDimension(`reference-video-file-${fileIndex}`);
 	}
 
 	function removeReferenceAudio(index: number) {
@@ -862,8 +892,8 @@
 											{:else if selectedFirst?.url}
 												<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 시작 이미지" class="h-full" />
 											{/if}
-											<p class="border-t border-border px-3 py-2 text-xs font-medium">시작 이미지 · {mediaDimensionLabel('first')}</p>
-											<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>영상 크기로 사용</OutlinedButton>
+											<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">시작 이미지 · {mediaDimensionLabel('first')}</p>
+											<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>{mediaSizeButtonLabel('first')}</OutlinedButton>
 										</div>
 									</div>
 								{/if}
@@ -883,8 +913,8 @@
 												{:else if selectedFirst?.url}
 													<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 첫 프레임" class="h-full" />
 												{/if}
-												<p class="border-t border-border px-3 py-2 text-xs font-medium">첫 프레임 · {mediaDimensionLabel('first')}</p>
-												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'fl2v-first'} disabled={Boolean(sizeApplying) && sizeApplying !== 'fl2v-first'} onclick={() => void applyMediaSize('fl2v-first', firstFile ?? selectedFirst?.url ?? null, 'image')}>영상 크기로 사용</OutlinedButton>
+												<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">첫 프레임 · {mediaDimensionLabel('first')}</p>
+												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>{mediaSizeButtonLabel('first')}</OutlinedButton>
 											</div>
 										{/if}
 									</div>
@@ -900,8 +930,8 @@
 												{:else if selectedLast?.url}
 													<ImageMedia source={selectedLast.url} sourceType={imageSourceType(selectedLast.url)} alt="선택한 마지막 프레임" class="h-full" />
 												{/if}
-												<p class="border-t border-border px-3 py-2 text-xs font-medium">마지막 프레임 · {mediaDimensionLabel('last')}</p>
-												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'fl2v-last'} disabled={Boolean(sizeApplying) && sizeApplying !== 'fl2v-last'} onclick={() => void applyMediaSize('fl2v-last', lastFile ?? selectedLast?.url ?? null, 'image')}>영상 크기로 사용</OutlinedButton>
+												<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">마지막 프레임 · {mediaDimensionLabel('last')}</p>
+												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'last'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'last'} onclick={() => void applyMediaSize('last', lastFile ?? selectedLast?.url ?? null, 'image')}>{mediaSizeButtonLabel('last')}</OutlinedButton>
 											</div>
 										{/if}
 									</div>
@@ -923,8 +953,8 @@
 													{:else}
 														<div class="flex min-h-32 items-center justify-center"><ImageIcon size={30} class="text-primary" /></div>
 													{/if}
-													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 이미지 {index + 1} · {mediaDimensionLabel(`reference-image-${asset.file_id}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-${asset.file_id}`} disabled={!asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-image-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-image-${asset.file_id}`, asset.url, 'image')}>영상 크기로 사용</OutlinedButton>
+													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 이미지 {index + 1} · {mediaDimensionLabel(`reference-image-${asset.file_id}`)}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-${asset.file_id}`} disabled={generating || !asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-image-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-image-${asset.file_id}`, asset.url, 'image')}>{mediaSizeButtonLabel(`reference-image-${asset.file_id}`)}</OutlinedButton>
 												</div>
 											{/each}
 											{#each referenceImageFiles as file, index}
@@ -933,8 +963,8 @@
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-full" />
-													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 이미지 {selectedReferenceImages.length + index + 1} · {mediaDimensionLabel(`reference-image-file-${index}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-file-${index}`} disabled={Boolean(sizeApplying) && sizeApplying !== `reference-image-file-${index}`} onclick={() => void applyMediaSize(`reference-image-file-${index}`, file, 'image')}>영상 크기로 사용</OutlinedButton>
+													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 이미지 {selectedReferenceImages.length + index + 1} · {mediaDimensionLabel(`reference-image-file-${index}`)}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-file-${index}`} disabled={generating || Boolean(sizeApplying) && sizeApplying !== `reference-image-file-${index}`} onclick={() => void applyMediaSize(`reference-image-file-${index}`, file, 'image')}>{mediaSizeButtonLabel(`reference-image-file-${index}`)}</OutlinedButton>
 												</div>
 											{/each}
 										</div>
@@ -955,8 +985,8 @@
 													{:else}
 														<div class="flex min-h-32 items-center justify-center"><Video size={30} class="text-primary" /></div>
 													{/if}
-													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 동영상 {index + 1} · {mediaDimensionLabel(`reference-video-${asset.file_id}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-${asset.file_id}`} disabled={!asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-video-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-video-${asset.file_id}`, asset.url, 'video')}>영상 크기로 사용</OutlinedButton>
+													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 동영상 {index + 1} · {mediaDimensionLabel(`reference-video-${asset.file_id}`)}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-${asset.file_id}`} disabled={generating || !asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-video-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-video-${asset.file_id}`, asset.url, 'video')}>{mediaSizeButtonLabel(`reference-video-${asset.file_id}`)}</OutlinedButton>
 												</div>
 											{/each}
 											{#each referenceVideoFiles as file, index}
@@ -965,8 +995,8 @@
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<VideoMedia source={file} preview={false} muted={true} class="h-full" />
-													<p class="border-t border-border px-3 py-2 text-xs font-medium">참조 동영상 {selectedReferenceVideos.length + index + 1} · {mediaDimensionLabel(`reference-video-file-${index}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-file-${index}`} disabled={Boolean(sizeApplying) && sizeApplying !== `reference-video-file-${index}`} onclick={() => void applyMediaSize(`reference-video-file-${index}`, file, 'video')}>영상 크기로 사용</OutlinedButton>
+													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 동영상 {selectedReferenceVideos.length + index + 1} · {mediaDimensionLabel(`reference-video-file-${index}`)}</p>
+													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-file-${index}`} disabled={generating || Boolean(sizeApplying) && sizeApplying !== `reference-video-file-${index}`} onclick={() => void applyMediaSize(`reference-video-file-${index}`, file, 'video')}>{mediaSizeButtonLabel(`reference-video-file-${index}`)}</OutlinedButton>
 												</div>
 											{/each}
 										</div>
@@ -1003,7 +1033,7 @@
 						{/if}
 
 						<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">영상 크기</span><IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min="32" max="1344" step="32" bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min="32" max="1344" step="32" bind:value={height} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={height} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} oninput={() => (improvedPrompt = '')} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
