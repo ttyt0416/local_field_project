@@ -916,7 +916,7 @@
 					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
 							<div class="flex items-center justify-between gap-3">
-								<div class="space-y-1"><span class="text-sm font-medium">10초 구간 프롬프트</span><p class="text-xs text-muted-foreground">{segmentCount}개 구간 · 후속 구간은 R2V와 직전 실제 마지막 프레임을 사용합니다.</p></div>
+								<span class="text-sm font-medium">프롬프트</span>
 								<div class="flex items-center gap-2">
 									<label for="video-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="video-prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} onchange={resetImprovedPrompts} class="peer sr-only" />
@@ -931,7 +931,7 @@
 										onclick={() => void enhancePrompt()}
 									>
 										<Sparkles size={14} strokeWidth={1.9} />
-										<span>{enhancingPrompt ? '개선 중' : '전체 구간 개선'}</span>
+										<span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
 									</OutlinedButton>
 								</div>
 							</div>
@@ -951,10 +951,10 @@
 							<div class="space-y-4">
 								{#each segmentPrompts as segmentPrompt, index}
 									<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
-										<div class="flex items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span><span class="text-xs text-muted-foreground">{index === 0 ? mode.toUpperCase() : 'R2V · 직전 마지막 프레임'}</span></div>
-										<label class="block space-y-2" for={`video-prompt-${index}`}><span class="sr-only">구간 {index + 1} 프롬프트</span><textarea id={`video-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="이 10초 구간의 장면, 움직임, 카메라, 음성을 설명해 주세요."></textarea></label>
+										<div class="flex items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span></div>
+										<label class="block space-y-2" for={`video-prompt-${index}`}><span class="sr-only">구간 {index + 1} 프롬프트</span><textarea id={`video-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
 										{#if promptEnhancementEnabled}
-											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">vLLM 개선안 · 검토 후 직접 수정</span><textarea id={`video-improved-prompt-${index}`} value={improvedSegmentPrompts[index] ?? ''} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="vLLM 개선안이 여기에 표시됩니다."></textarea></label>
+											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">vLLM 개선안 · 검토 후 직접 수정</span><textarea id={`video-improved-prompt-${index}`} value={improvedSegmentPrompts[index] ?? ''} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
 										{/if}
 									</section>
 								{/each}
