@@ -12,8 +12,8 @@ I2V·FL2V·R2V 모두 10Eros `TURBO-hybrid_beta4_int8_convrot` UNET와 `VBVR_H3_
 
 `VideoAsset`의 `file_id`는 기존 재사용 콘텐츠이고 `file_index`는 이번 multipart 요청의 새 파일이다. 새 파일과 기존 파일은 소유자 검증·형식 검증·크기 제한을 동일하게 적용한다.
 
-`POST /generation/video/enhance-prompt`는 공식 MiniMax H3 base guide를 따르는 vLLM 기반 prompt 개선 endpoint다. vLLM은 `shots`, `overall_soundscape`, `non_diegetic_music` JSON을 반환한다. 각 `shots` item은 exact `start_ms` integer와 `description`만 가지며, server는 first shot의 `0` 시작·이후 start time의 strict increase·segment duration 미만을 검증한다. 이후 server가 `[Shot 1]` 및 `[Shot N] At MM:SS.mmm,` body를 조립한다. 서버는 I2V의 `<Picture 1>` 0.00초 alignment와 FL2V의 `<Picture 1>` 시작·`<Picture 2>` final-shot alignment를 core fields보다 먼저 조립한다. R2V는 기존 image·video·audio reference role preamble과 같은 shot core body를 사용한다. 입력과 개선 결과의 reference marker는 `@imageN`, `[ImageN]` 계열을 `<Picture N>`, `<Video N>`, `<Audio N>`으로 정규화하고 실제 참조 입력 순서를 보존한다.
+`POST /generation/video/enhance-prompt`는 이미지 생성과 같은 vLLM 기반 prompt 개선 endpoint다. vLLM은 `style`, `timeline`, `camera`, `audio`, `text`, `negative` 문자열 필드를 가진 JSON만 반환한다. 서버는 이 필드를 선택 언어의 6블록으로 순서대로 조립하며, Timeline은 선택한 duration 전체를 다루고 camera·audio·화면 text·negative 제약을 명시한다. 입력과 개선 결과의 reference marker는 `@imageN`, `[ImageN]` 계열을 `<Picture N>`, `<Video N>`, `<Audio N>`으로 정규화하고 실제 참조 입력 순서를 보존한다.
 
-`prompt_output_languages`는 `ko`, `en`, `ja` 중 1개 이상을 받는 multi-select field다. guide-required English description은 항상 허용하고, 선택 언어 범위는 original dialogue와 visible text에 함께 허용한다. 개선 결과와 edit된 개선 prompt는 typed `shots` plan에서 조립된 3 core field, `[Shot 1]`, local cut timestamp 규칙을 다시 검증하며, 규칙을 벗어나면 queue 제출과 입력 업로드 전에 `422`로 거절한다.
+`prompt_output_languages`는 `ko`, `en`, `ja` 중 1개 이상을 받는 multi-select 필드다. 개선 결과는 선택 언어의 문자 집합 union과 숫자·ASCII 특수기호·공백·줄바꿈만 허용하는 JSON schema pattern과 서버 검증을 모두 통과해야 한다. 개선이 활성화된 생성 요청도 같은 6블록·문자 규칙을 다시 검증하며, 개선 결과가 없거나 규칙을 벗어나면 queue 제출과 입력 업로드 전에 `422`로 거절한다.
 
 세 video workflow의 `SaveVideo`는 ComfyUI V3 DynamicCombo API 형식에 맞춰 `format`과 `codec`을 평탄한 선택값으로 `/prompt`에 전달한다. ComfyUI가 이를 실행 시 내부 dynamic input object로 재구성하므로 중첩된 `format` object를 workflow에 넣지 않는다.
