@@ -25,6 +25,7 @@
 		total_count: number;
 		total_pages: number;
 	};
+	type Sort = 'match' | 'similarity' | 'usage';
 
 	const categories = [
 		{ value: '', label: '전체' },
@@ -33,12 +34,18 @@
 		{ value: '4', label: '캐릭터' }
 	] as const;
 	const categoryLabels: Record<number, string> = { 0: '일반', 3: '저작물', 4: '캐릭터' };
+	const sortOptions: { value: Sort; label: string }[] = [
+		{ value: 'match', label: '일치순' },
+		{ value: 'similarity', label: '정확도순' },
+		{ value: 'usage', label: '사용순' }
+	];
 
 	let ready = $state(false);
 	let loading = $state(true);
 	let tags = $state<DanbooruTag[]>([]);
 	let searchQuery = $state('');
 	let category = $state('');
+	let sort = $state<Sort>('match');
 	let currentPage = $state(1);
 	let totalPages = $state(0);
 	let totalCount = $state(0);
@@ -62,7 +69,7 @@
 		loading = true;
 		error = '';
 		try {
-			const params = new URLSearchParams({ page: String(requestedPage) });
+			const params = new URLSearchParams({ page: String(requestedPage), sort });
 			if (searchQuery.trim()) params.set('search', searchQuery.trim());
 			if (category) params.set('category', category);
 			const result = await apiJson<DanbooruTagPage>(`tags?${params.toString()}`);
@@ -86,6 +93,10 @@
 	function selectCategory(value: string) {
 		if (category === value) return;
 		category = value;
+		void loadTags(1);
+	}
+
+	function changeSort() {
 		void loadTags(1);
 	}
 
@@ -124,7 +135,8 @@
 			</section>
 
 			<div class="space-y-3">
-				<SearchBar id="danbooru-tag-search" bind:value={searchQuery} placeholder="tag 또는 별칭 검색" label="Danbooru 태그 검색" oninput={handleSearchInput} />
+				<div class="flex flex-col gap-3 sm:flex-row"><SearchBar id="danbooru-tag-search" bind:value={searchQuery} placeholder="tag 또는 별칭 검색" label="Danbooru 태그 검색" class="min-w-0 flex-1" oninput={handleSearchInput} /><div class="sm:w-40"><label for="danbooru-tag-sort" class="sr-only">태그 정렬</label><select id="danbooru-tag-sort" bind:value={sort} onchange={changeSort} class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20">{#each sortOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></div></div>
+				{#if sort === 'similarity' && !searchQuery.trim()}<p class="text-xs text-muted-foreground">정확도순은 검색어를 입력하면 pgvector로 정렬합니다.</p>{/if}
 				<div class="flex flex-wrap gap-2" aria-label="Danbooru 태그 분류">
 					{#each categories as option (option.value)}
 						<OutlinedButton class="px-3 text-xs" active={category === option.value} onclick={() => selectCategory(option.value)}>{option.label}</OutlinedButton>

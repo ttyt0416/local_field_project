@@ -14,6 +14,7 @@ from .database import initialize_database, record_api_call, record_api_error, re
 from .danbooru import router as danbooru_router
 from .generation_worker import run_generation_reconciler
 from .generations import router as generations_router
+from .hardware import router as hardware_router
 from .model_downloads import router as model_downloads_router, run_model_download_worker
 from .presets import router as presets_router
 from .three_d import router as three_d_router
@@ -139,6 +140,7 @@ app.include_router(auth_router)
 app.include_router(comfyui_router)
 app.include_router(danbooru_router)
 app.include_router(generations_router)
+app.include_router(hardware_router)
 app.include_router(model_downloads_router)
 app.include_router(presets_router)
 app.include_router(three_d_router)

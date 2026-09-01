@@ -46,6 +46,7 @@ services:
       - /home/yoon/.civita.env
     environment:
       EMBEDDING_URL: http://embedding:30005
+      HARDWARE_MONITOR_URL: http://host.docker.internal:8091
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

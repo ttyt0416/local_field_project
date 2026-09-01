@@ -6,13 +6,13 @@ import json
 import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from .auth import UserResponse, current_user
@@ -22,6 +22,7 @@ from .database import get_connection
 
 router = APIRouter(prefix="/tags", tags=["Danbooru tags"])
 _TAG_PAGE_SIZE = 50
+TagSort = Literal["match", "similarity", "usage"]
 
 
 class DanbooruTagResponse(BaseModel):
@@ -43,10 +44,14 @@ class DanbooruTagPage(BaseModel):
 def browse_danbooru_tags(
     search: str = Query(default="", max_length=120),
     category: int | None = Query(default=None, ge=0, le=5),
+    sort: TagSort = Query(default="match"),
     page: int = Query(default=1, ge=1),
     _: UserResponse = Depends(current_user),
 ) -> DanbooruTagPage:
-    items, total_count = list_danbooru_tags(search=search, category=category, page=page)
+    try:
+        items, total_count = list_danbooru_tags(search=search, category=category, sort=sort, page=page)
+    except DanbooruError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return DanbooruTagPage(
         items=[DanbooruTagResponse(**item) for item in items],
         page=page,
@@ -56,12 +61,14 @@ def browse_danbooru_tags(
     )
 
 
-def list_danbooru_tags(*, search: str = "", category: int | None = None, page: int = 1) -> tuple[list[dict[str, Any]], int]:
+def list_danbooru_tags(
+    *, search: str = "", category: int | None = None, sort: TagSort = "match", page: int = 1
+) -> tuple[list[dict[str, Any]], int]:
     term = re.sub(r"\s+", "_", search.strip().casefold())
     filters: list[str] = []
     parameters: list[Any] = []
     escaped = _like_escape(term)
-    if term:
+    if term and sort != "similarity":
         contains = f"%{escaped}%"
         filters.append(
             """(
@@ -70,11 +77,17 @@ def list_danbooru_tags(*, search: str = "", category: int | None = None, page: i
             )"""
         )
         parameters.extend((contains, contains))
+    if sort == "similarity" and term:
+        filters.append("embedding IS NOT NULL")
     if category is not None:
         filters.append("category = %s")
         parameters.append(category)
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
-    if term:
+    if sort == "similarity" and term:
+        vector = _vector_literal(_request_embeddings([search.strip()])[0])
+        order_clause = "ORDER BY embedding <=> %s::vector, post_count DESC, tag ASC"
+        order_parameters: list[Any] = [vector]
+    elif sort == "match" and term:
         order_clause = """
             ORDER BY
                 CASE

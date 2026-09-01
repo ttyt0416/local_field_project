@@ -21,6 +21,7 @@ DEFAULT_COMFYUI_MODELS_PATH = "/comfyui-models"
 DEFAULT_VLLM_URL = "http://host.docker.internal:30004"
 DEFAULT_VLLM_MODEL = "Huihui-Qwen3.8-27B-abliterated-NVFP4"
 DEFAULT_EMBEDDING_URL = "http://host.docker.internal:30005"
+DEFAULT_HARDWARE_MONITOR_URL = "http://127.0.0.1:8091"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 DEFAULT_EMBEDDING_DIMENSIONS = 1024
 DEFAULT_DANBOORU_TAGS_PATH = "/app/data/danbooru_tags.csv"
@@ -55,6 +56,7 @@ class Settings:
     vllm_url: str
     vllm_model: str
     embedding_url: str
+    hardware_monitor_url: str
     embedding_model: str
     embedding_dimensions: int
     danbooru_tags_path: str
@@ -86,6 +88,7 @@ class Settings:
             vllm_url=os.getenv("VLLM_URL", DEFAULT_VLLM_URL),
             vllm_model=os.getenv("VLLM_MODEL", DEFAULT_VLLM_MODEL),
             embedding_url=os.getenv("EMBEDDING_URL", DEFAULT_EMBEDDING_URL),
+            hardware_monitor_url=os.getenv("HARDWARE_MONITOR_URL", DEFAULT_HARDWARE_MONITOR_URL),
             embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
             embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", str(DEFAULT_EMBEDDING_DIMENSIONS))),
             danbooru_tags_path=os.getenv("DANBOORU_TAGS_PATH", DEFAULT_DANBOORU_TAGS_PATH),

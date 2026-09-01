@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { Activity, ChevronDown, LogIn, LogOut, Menu, Moon, Sun, UserRoundX } from '@lucide/svelte';
+	import { apiJson } from '$lib/utils/api';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
+	import Toast from '../feedback/toast.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 
@@ -9,15 +12,67 @@
 		onMenuClick: () => void;
 	};
 
+	type HardwareMetrics = {
+		cpu_percent: number;
+		gpu_percent: number;
+		ram_percent: number;
+		disk_percent: number;
+	};
+
+	type ToastData = {
+		title: string;
+		message: string;
+	};
+
 	let { onMenuClick }: Props = $props();
 	let accountMenuOpen = $state(false);
+	let hardwareMetrics = $state<HardwareMetrics | null>(null);
+	let monitorToast = $state<ToastData | null>(null);
+	let monitorRequestFailed = $state(false);
+
+	async function refreshHardwareMetrics() {
+		if (!authStore.isAuthenticated) {
+			hardwareMetrics = null;
+			monitorRequestFailed = false;
+			return;
+		}
+		try {
+			hardwareMetrics = await apiJson<HardwareMetrics>('hardware/metrics', { timeout: 4_000 });
+			monitorRequestFailed = false;
+		} catch (error) {
+			hardwareMetrics = null;
+			if (!monitorRequestFailed) {
+				monitorRequestFailed = true;
+				monitorToast = {
+					title: '하드웨어 모니터 연결 실패',
+					message: error instanceof Error ? error.message : '서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.'
+				};
+			}
+		}
+	}
+
+	function displayPercent(value: number) {
+		return `${Math.round(value)}%`;
+	}
+
+	$effect(() => {
+		if (authStore.isAuthenticated) void refreshHardwareMetrics();
+		else {
+			hardwareMetrics = null;
+			monitorRequestFailed = false;
+		}
+	});
+
+	onMount(() => {
+		const interval = window.setInterval(() => void refreshHardwareMetrics(), 5_000);
+		return () => window.clearInterval(interval);
+	});
 
 	function logout() {
 		accountMenuOpen = false;
 		authStore.clearSession();
 		void goto('/login');
 	}
-
 </script>
 
 <header class="sticky top-0 z-30 border-b border-border/80 bg-background/85 backdrop-blur-xl">
@@ -60,6 +115,17 @@
 					서버 연결 정상
 				</span>
 			</div>
+			{#if hardwareMetrics}
+				<div
+					class="hidden items-center divide-x divide-border rounded-lg border border-border bg-muted/40 text-xs font-medium text-muted-foreground lg:flex"
+					aria-label={`CPU ${displayPercent(hardwareMetrics.cpu_percent)}, GPU ${displayPercent(hardwareMetrics.gpu_percent)}, RAM ${displayPercent(hardwareMetrics.ram_percent)}, DISK ${displayPercent(hardwareMetrics.disk_percent)}`}
+				>
+					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">CPU</strong>{displayPercent(hardwareMetrics.cpu_percent)}</span>
+					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">GPU</strong>{displayPercent(hardwareMetrics.gpu_percent)}</span>
+					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">RAM</strong>{displayPercent(hardwareMetrics.ram_percent)}</span>
+					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">DISK</strong>{displayPercent(hardwareMetrics.disk_percent)}</span>
+				</div>
+			{/if}
 			<IconOutlinedButton
 				ariaLabel={themeStore.isDark ? '라이트모드로 전환' : '다크모드로 전환'}
 				pressed={themeStore.isDark}
@@ -77,3 +143,9 @@
 		</div>
 	</div>
 </header>
+
+{#if monitorToast}
+	<div class="fixed right-4 top-4 z-50">
+		<Toast state="negative" title={monitorToast.title} message={monitorToast.message} onclose={() => (monitorToast = null)} />
+	</div>
+{/if}
