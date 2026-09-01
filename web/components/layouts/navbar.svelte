@@ -77,7 +77,7 @@
 
 <header class="sticky top-0 z-30 border-b border-border/80 bg-background/85 backdrop-blur-xl">
 	<div class="flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-		<div class="flex items-center gap-3">
+		<div class="flex min-w-0 items-center gap-3">
 			{#if authStore.initialized}
 				{#if authStore.isAuthenticated}
 					<details bind:open={accountMenuOpen} class="group relative">
@@ -115,17 +115,6 @@
 					서버 연결 정상
 				</span>
 			</div>
-			{#if hardwareMetrics}
-				<div
-					class="hidden items-center divide-x divide-border rounded-lg border border-border bg-muted/40 text-xs font-medium text-muted-foreground lg:flex"
-					aria-label={`CPU ${displayPercent(hardwareMetrics.cpu_percent)}, GPU ${displayPercent(hardwareMetrics.gpu_percent)}, RAM ${displayPercent(hardwareMetrics.ram_percent)}, DISK ${displayPercent(hardwareMetrics.disk_percent)}`}
-				>
-					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">CPU</strong>{displayPercent(hardwareMetrics.cpu_percent)}</span>
-					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">GPU</strong>{displayPercent(hardwareMetrics.gpu_percent)}</span>
-					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">RAM</strong>{displayPercent(hardwareMetrics.ram_percent)}</span>
-					<span class="px-2 py-1.5"><strong class="mr-1 text-foreground">DISK</strong>{displayPercent(hardwareMetrics.disk_percent)}</span>
-				</div>
-			{/if}
 			<IconOutlinedButton
 				ariaLabel={themeStore.isDark ? '라이트모드로 전환' : '다크모드로 전환'}
 				pressed={themeStore.isDark}
@@ -141,6 +130,19 @@
 				<Menu size={19} />
 			</IconOutlinedButton>
 		</div>
+		{#if hardwareMetrics}
+			<div
+				class="shrink-0 rounded-lg border border-border bg-muted/40 px-2 py-1"
+				aria-label={`CPU ${displayPercent(hardwareMetrics.cpu_percent)}, GPU ${displayPercent(hardwareMetrics.gpu_percent)}, RAM ${displayPercent(hardwareMetrics.ram_percent)}, DISK ${displayPercent(hardwareMetrics.disk_percent)}`}
+			>
+				<div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] leading-4 text-muted-foreground">
+					<span><strong class="mr-1 text-foreground">CPU</strong>{displayPercent(hardwareMetrics.cpu_percent)}</span>
+					<span><strong class="mr-1 text-foreground">GPU</strong>{displayPercent(hardwareMetrics.gpu_percent)}</span>
+					<span><strong class="mr-1 text-foreground">RAM</strong>{displayPercent(hardwareMetrics.ram_percent)}</span>
+					<span><strong class="mr-1 text-foreground">DISK</strong>{displayPercent(hardwareMetrics.disk_percent)}</span>
+				</div>
+			</div>
+		{/if}
 	</div>
 </header>
 
