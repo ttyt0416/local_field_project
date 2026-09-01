@@ -608,7 +608,7 @@
 			}>('generation/image/enhance-prompt', {
 				method: 'POST',
 				timeout: 600_000,
-				json: { prompt: prompt.trim() }
+				json: { model_family: modelFamily, prompt: prompt.trim() }
 			});
 			const resultPrompt = result.improved_prompt.contents.trim();
 			if (!resultPrompt) throw new Error('개선된 프롬프트가 비어 있습니다.');

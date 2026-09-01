@@ -298,6 +298,7 @@ def _queue_position(prompt_id: str) -> int | None:
 
 
 class PromptEnhancementRequest(BaseModel):
+    model_family: ModelFamily = "anima"
     prompt: str = Field(min_length=1, max_length=5000)
 
 
@@ -326,7 +327,7 @@ def enhance_prompt(
     _: UserResponse = Depends(current_user),
 ) -> PromptEnhancementResponse:
     try:
-        return _enhance_prompt(payload.prompt)
+        return _enhance_prompt(payload.prompt, payload.model_family)
     except (DanbooruError, _VLLMError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -1171,14 +1172,18 @@ def _request_bytes(path: str) -> tuple[bytes, str | None]:
         raise _ComfyUIError("ComfyUI 이미지에 연결할 수 없습니다.") from exc
 
 
-def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
+def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptEnhancementResponse:
     prompt = prompt.strip()
     candidate_tags = search_danbooru_tags(prompt, limit=96)
-    natural_language = _request_structured_content(
-        system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
-        user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
-        max_tokens=768,
-        temperature=0.8,
+    natural_language = (
+        _request_structured_content(
+            system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+            user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
+            max_tokens=768,
+            temperature=0.8,
+        )
+        if model_family == "anima"
+        else ""
     )
     raw_tags = _request_structured_content(
         system_prompt=IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
@@ -1194,7 +1199,7 @@ def _enhance_prompt(prompt: str) -> PromptEnhancementResponse:
         valid_tags = candidate_tags[:24]
     if not valid_tags:
         raise DanbooruError("사용할 Danbooru 태그를 찾지 못했습니다.")
-    improved_prompt = ", ".join((", ".join(valid_tags), natural_language))
+    improved_prompt = ", ".join(valid_tags if model_family == "illustrious" else (*valid_tags, natural_language))
     return PromptEnhancementResponse(
         improved_prompt=PromptEnhancementContent(contents=improved_prompt[:5000]),
     )

@@ -28,6 +28,7 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "style, timeline, camera, audio, text, negative. "
     "Do not put section headers inside field values. "
     "Style must define the medium, texture, palette, era, and visual identity. "
+    "The supplied user prompt describes the full sequence; allocate its intent to the current sequence segment from its number and count instead of repeating the entire sequence. "
     "Timeline must cover the full requested duration with concrete time ranges and actions, using a local timeline from 0s to the supplied duration. "
     "For a sequence segment, never use global sequence timestamps or plan beyond the supplied duration. "
     "For segment 2 or later, <Picture 1> is the actual final frame from the preceding segment; preserve continuity from it. "

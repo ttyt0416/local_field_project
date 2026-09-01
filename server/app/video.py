@@ -684,9 +684,15 @@ def _video_segment_durations(duration: float) -> list[float]:
 
 
 def _segment_prompt_values(
-    values: list[str], legacy_value: str | None, segment_count: int, label: str
+    values: list[str], legacy_value: str | None, segment_count: int, label: str, *, repeat_legacy: bool = False
 ) -> list[str]:
-    source = values or ([legacy_value] if segment_count == 1 and legacy_value is not None else [])
+    source = values or (
+        [legacy_value] * segment_count
+        if repeat_legacy and legacy_value is not None
+        else [legacy_value]
+        if segment_count == 1 and legacy_value is not None
+        else []
+    )
     if len(source) != segment_count:
         raise HTTPException(status_code=422, detail=f"{label} 수가 10초 구간 수와 일치해야 합니다.")
     result = [value.strip() if isinstance(value, str) else "" for value in source]
@@ -706,7 +712,9 @@ def _continuation_reference_prompt(request: VideoGenerationRequest) -> str:
 
 def _effective_video_prompts(mode: str, request: VideoGenerationRequest) -> list[str]:
     segment_count = len(_video_segment_durations(request.duration))
-    raw_prompts = _segment_prompt_values(request.segment_prompts, request.prompt, segment_count, "프롬프트")
+    raw_prompts = _segment_prompt_values(
+        request.segment_prompts, request.prompt, segment_count, "프롬프트", repeat_legacy=True
+    )
     if not request.prompt_enhancement_enabled:
         return raw_prompts
     improved_prompts = _segment_prompt_values(

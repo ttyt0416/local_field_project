@@ -99,16 +99,15 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(request.duration, 100)
         self.assertEqual(enhancement.duration, 0)
 
-    def test_long_video_uses_exact_ten_second_prompt_segments(self) -> None:
+    def test_long_video_accepts_one_full_prompt_for_every_raw_segment(self) -> None:
         request = video.VideoGenerationRequest(
-            prompt="opening",
+            prompt="opening to ending",
             duration=23,
-            segment_prompts=["opening", "middle", "ending"],
             first_frame=video.VideoAsset(kind="image", file_index=0),
         )
 
         self.assertEqual(video._video_segment_durations(request.duration), [10.0, 10.0, 3.0])
-        self.assertEqual(video._effective_video_prompts("i2v", request), ["opening", "middle", "ending"])
+        self.assertEqual(video._effective_video_prompts("i2v", request), ["opening to ending"] * 3)
         with self.assertRaises(video.HTTPException):
             video._effective_video_prompts("i2v", request.model_copy(update={"segment_prompts": ["opening"]}))
 
@@ -380,6 +379,7 @@ class VideoContractTest(unittest.TestCase):
 
         system_prompt = request.call_args.kwargs["system_prompt"]
         user_prompt = request.call_args.kwargs["user_prompt"]
+        self.assertIn("The supplied user prompt describes the full sequence", system_prompt)
         self.assertIn("local timeline from 0s to the supplied duration", system_prompt)
         self.assertIn("<duration_seconds>\n1\n</duration_seconds>", user_prompt)
         self.assertIn("<sequence_segment>\n2/2\n</sequence_segment>", user_prompt)

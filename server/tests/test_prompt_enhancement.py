@@ -67,18 +67,30 @@ class PromptEnhancementTest(unittest.TestCase):
             "solo, still_life, soft studio lighting",
         )
 
-    def test_enhancement_does_not_prefix_original_prompt(self) -> None:
+    def test_anima_enhancement_keeps_tags_and_natural_language(self) -> None:
         with (
             patch("app.comfyui.search_danbooru_tags", return_value=["solo", "still_life"]),
             patch("app.comfyui._request_structured_content", side_effect=["soft studio lighting", "solo, still_life"]) as request,
             patch("app.comfyui.validate_danbooru_tags", return_value=["solo", "still_life"]),
         ):
-            result = _enhance_prompt("a red apple")
+            result = _enhance_prompt("a red apple", "anima")
 
         self.assertEqual(result.improved_prompt.contents, "solo, still_life, soft studio lighting")
         self.assertEqual([call.kwargs["temperature"] for call in request.call_args_list], [0.8, 0.8])
         self.assertNotIn("English", IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT)
         self.assertNotIn("English", IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT)
+
+    def test_illustrious_enhancement_returns_danbooru_tags_only(self) -> None:
+        with (
+            patch("app.comfyui.search_danbooru_tags", return_value=["solo", "still_life"]),
+            patch("app.comfyui._request_structured_content", return_value="solo, still_life") as request,
+            patch("app.comfyui.validate_danbooru_tags", return_value=["solo", "still_life"]),
+        ):
+            result = _enhance_prompt("a red apple", "illustrious")
+
+        self.assertEqual(result.improved_prompt.contents, "solo, still_life")
+        request.assert_called_once()
+        self.assertEqual(request.call_args.kwargs["system_prompt"], IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT)
 
     def test_structured_output_uses_the_allowed_character_pattern(self) -> None:
         with patch(
