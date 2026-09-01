@@ -7,6 +7,7 @@
 		Heart,
 		ImagePlus,
 		Library,
+		Music,
 		Sparkles,
 		Tags,
 		Video,
@@ -109,6 +110,14 @@
 		>
 			<Box size={18} strokeWidth={1.8} />
 			<span>3D 모델 생성</span>
+		</a>
+		<a
+			href="/generate/music"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Music size={18} strokeWidth={1.8} />
+			<span>음악 생성</span>
 		</a>
 		<a
 			href="/uploads"

@@ -429,6 +429,29 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
     """
+    CREATE TABLE IF NOT EXISTS music_generations (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        prompt_id VARCHAR(128) UNIQUE NOT NULL,
+        client_id VARCHAR(128) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'queued',
+        description TEXT NOT NULL,
+        lyrics TEXT NOT NULL,
+        seed BIGINT,
+        storage_file_id TEXT,
+        filename VARCHAR(255),
+        content_type VARCHAR(128),
+        duration_seconds DOUBLE PRECISION,
+        size_bytes BIGINT NOT NULL DEFAULT 0,
+        view_count INTEGER NOT NULL DEFAULT 0,
+        is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMPTZ,
+        elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS music_generations_user_created_idx ON music_generations(user_id, created_at DESC)",
+    """
     CREATE TABLE IF NOT EXISTS three_d_generations (
         id UUID PRIMARY KEY,
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

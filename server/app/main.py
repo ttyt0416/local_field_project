@@ -16,6 +16,7 @@ from .generation_worker import run_generation_reconciler
 from .generations import router as generations_router
 from .hardware import router as hardware_router
 from .model_downloads import router as model_downloads_router, run_model_download_worker
+from .music import router as music_router
 from .presets import router as presets_router
 from .three_d import router as three_d_router
 from .uploads import router as uploads_router
@@ -142,6 +143,7 @@ app.include_router(danbooru_router)
 app.include_router(generations_router)
 app.include_router(hardware_router)
 app.include_router(model_downloads_router)
+app.include_router(music_router)
 app.include_router(presets_router)
 app.include_router(three_d_router)
 app.include_router(uploads_router)
