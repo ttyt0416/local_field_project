@@ -55,7 +55,7 @@ from .media_editing import MediaEditError, edit_video
 router = APIRouter(prefix="/vault", tags=["vault"])
 VAULT_PAGE_SIZE = 10
 ImageGenerationMode = Literal["t2i", "i2i"]
-ImageModelFamily = Literal["anima", "illustrious"]
+ImageModelFamily = Literal["anima", "illustrious", "krea2"]
 
 
 class VaultImageSummary(BaseModel):
@@ -64,7 +64,7 @@ class VaultImageSummary(BaseModel):
     status: str
     prompt: str
     checkpoint: str
-    model_family: Literal["anima", "illustrious"]
+    model_family: ImageModelFamily
     generation_mode: Literal["t2i", "i2i"]
     image_url: str | None
     source_image_url: str | None

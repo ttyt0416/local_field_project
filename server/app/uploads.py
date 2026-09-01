@@ -23,7 +23,7 @@ router = APIRouter(prefix="/uploads", tags=["media library"])
 UPLOADS_PAGE_SIZE = 10
 _MAX_IMAGE_BYTES = 50 * 1024 * 1024
 ImageGenerationMode = Literal["t2i", "i2i"]
-ImageModelFamily = Literal["anima", "illustrious"]
+ImageModelFamily = Literal["anima", "illustrious", "krea2"]
 
 
 class MediaAssetResponse(BaseModel):

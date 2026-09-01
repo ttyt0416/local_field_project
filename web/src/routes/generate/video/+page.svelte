@@ -337,8 +337,9 @@
 
 	function openSelection(target: SelectionTarget) {
 		if (generating) return;
+		const imageTarget = target !== 'videos' && target !== 'audios';
 		selectionTarget = target;
-		selectionSource = 'device';
+		selectionSource = imageTarget ? 'stored' : 'device';
 		storedAssets = [];
 		storedSearch = '';
 		storedSort = 'latest';
@@ -346,9 +347,10 @@
 		storedTotalPages = 0;
 		storedSelectedIds = [];
 		storedSelectedAssets = [];
-		storedAssetSource = 'uploaded';
+		storedAssetSource = imageTarget ? 'generated' : 'uploaded';
 		storedImagePresetType = 't2i_anima';
 		selectionOpen = true;
+		if (imageTarget) void loadStoredAssets(1);
 	}
 
 	function selectSelectionSource(source: SelectionSource) {

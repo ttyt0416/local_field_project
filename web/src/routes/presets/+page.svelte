@@ -9,12 +9,13 @@
 	import Modal from '../../../components/modals/modal.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
+	import Tab from '../../../components/tabs/tab.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import VideoPresetModal from '../../../components/presets/video-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
-	import { imagePresetCategories, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
 
 	let ready = $state(false);
 	let optionsLoading = $state(true);
@@ -23,6 +24,12 @@
 	let success = $state('');
 	let presets = $state<Preset[]>([]);
 	let activeType = $state<PresetType>('t2i_anima');
+	let activeImagePreset = $derived(
+		activeType === 'video'
+			? imagePresetCategories[0]
+			: imagePresetCategories.find((category) => category.value === activeType) ?? imagePresetCategories[0]
+	);
+	let isKreaPreset = $derived(activeType !== 'video' && activeImagePreset.modelFamily === 'krea2');
 	let options = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
 	let editingPreset = $state<Preset | null>(null);
 	let imageEditorOpen = $state(false);
@@ -56,8 +63,15 @@
 	async function loadImageOptions(type: ImagePresetType) {
 		const family = imagePresetCategories.find((category) => category.value === type)?.modelFamily ?? 'anima';
 		optionsLoading = true;
+		if (family === 'krea2') {
+			options = { checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' };
+			optionsLoading = false;
+			return;
+		}
 		try {
 			options = await apiJson<ImageOptions>(`generation/image/options?family=${family}`);
+		} catch (reason) {
+			error = getErrorMessage(reason);
 		} finally {
 			optionsLoading = false;
 		}
@@ -94,13 +108,29 @@
 		void loadPresets();
 	}
 
+	function selectImageFamily(family: ImageModelFamily) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === family && category.generationMode === activeImagePreset.generationMode
+		)?.value;
+		if (type) selectPresetType(type);
+	}
+
+	function selectImageMode(mode: ImageGenerationMode) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === activeImagePreset.modelFamily && category.generationMode === mode
+		)?.value;
+		if (type) selectPresetType(type);
+	}
+
 	function openNew() {
+		if (isKreaPreset) return;
 		editingPreset = null;
 		if (activeType !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
 	}
 
 	function openEdit(preset: Preset) {
+		if (preset.type !== 'video' && isKreaPreset) return;
 		editingPreset = preset;
 		if (preset.type !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
@@ -220,7 +250,7 @@
 		<div class="space-y-6">
 			<section class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
 				<Typography as="h1" variant="display">프리셋 관리</Typography>
-				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && optionsLoading}>
+				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && (optionsLoading || isKreaPreset)} deactive={isKreaPreset}>
 					<Plus size={17} strokeWidth={1.9} />
 					<span>새 프리셋</span>
 				</PrimaryButton>
@@ -228,10 +258,9 @@
 
 			<section aria-labelledby="image-preset-types-title">
 				<div id="image-preset-types-title"><Typography as="h2" variant="h2">IMAGE</Typography></div>
-				<div class="mt-3 grid grid-cols-3 gap-2">
-					{#each imagePresetCategories as category (category.value)}
-						<OutlinedButton type="button" class="justify-center text-xs" active={activeType === category.value} onclick={() => selectPresetType(category.value)}>{category.label}</OutlinedButton>
-					{/each}
+				<div class="mt-3 space-y-2">
+					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="IMAGE 모델 family" onselect={selectImageFamily} />
+					<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
 				</div>
 			</section>
 
@@ -275,7 +304,7 @@
 		</div>
 	</Layout>
 
-	{#if activeType !== 'video'}
+	{#if activeType !== 'video' && !isKreaPreset}
 		<ImagePresetModal bind:open={imageEditorOpen} preset={editingPreset} presetType={activeType} options={options} onSaved={handleSaved} />
 	{/if}
 	<VideoPresetModal bind:open={videoEditorOpen} preset={editingPreset} onSaved={handleSaved} />

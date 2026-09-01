@@ -229,10 +229,7 @@
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<div>
-				<Typography as="h1" variant="display">3D 모델 생성</Typography>
-				<Typography as="p" variant="muted" class="mt-2">한 장의 이미지에서 TRELLIS.2 3D 모델을 생성합니다.</Typography>
-			</div>
+			<Typography as="h1" variant="display">3D 모델 생성</Typography>
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="model-result-title">

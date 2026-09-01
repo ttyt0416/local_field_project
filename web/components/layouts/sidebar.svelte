@@ -83,7 +83,7 @@
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>T2I (Anima)</span>
+			<span>T2I</span>
 		</a>
 		<a
 			href="/generate/image-to-image?family=anima"
@@ -92,25 +92,7 @@
 			onclick={close}
 		>
 			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>I2I (Anima)</span>
-		</a>
-		<a
-			href="/generate/image?family=illustrious"
-			data-sveltekit-reload
-			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-			onclick={close}
-		>
-			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>T2I (Illustrious)</span>
-		</a>
-		<a
-			href="/generate/image-to-image?family=illustrious"
-			data-sveltekit-reload
-			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-			onclick={close}
-		>
-			<ImagePlus size={18} strokeWidth={1.8} />
-			<span>I2I (Illustrious)</span>
+			<span>I2I</span>
 		</a>
 		<a
 			href="/generate/video"

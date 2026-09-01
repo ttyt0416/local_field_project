@@ -25,6 +25,7 @@
 	import { imagePresetCategories, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
 	type ImageFamily = 'anima' | 'illustrious';
+	type ImageFamilyTab = ImageFamily | 'krea2';
 	type ImageDimensions = { width: number; height: number };
 	type ImageOptions = {
 		checkpoints: string[];
@@ -94,12 +95,18 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	{ value: 'uploaded', label: '업로드' },
 	{ value: 'generated', label: '생성' }
 ];
+// ponytail: Krea2 stays generator-option-only until its workflow and request validation exist.
+const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolean }[] = [
+	{ value: 'anima', label: 'ANIMA' },
+	{ value: 'illustrious', label: 'ILLUSTRIOUS' },
+	{ value: 'krea2', label: 'KREA2', disabled: true }
+];
 
 	let family = $derived<ImageFamily>(page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima');
 	let familyLabel = $derived(family === 'illustrious' ? 'Illustrious' : 'Anima');
-	let routeTitle = $derived(`I2I (${familyLabel})`);
+	let routeTitle = $derived('I2I');
 	let presetType = $derived<ImagePresetType>(family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima');
-	let storedImagePresetType = $state<ImagePresetType>('i2i_anima');
+	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
 	let storedImagePreset = $derived(imagePresetCategories.find((category) => category.value === storedImagePresetType) ?? imagePresetCategories[0]);
 
 	let active = true;
@@ -359,17 +366,24 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		presetSuccess = `'${saved.name}' 프리셋을 저장했습니다.`;
 	}
 
+	function selectModelFamily(nextFamily: ImageFamilyTab) {
+		if (nextFamily === family || nextFamily === 'krea2') return false;
+		window.location.assign(`/generate/image-to-image?family=${nextFamily}`);
+		return false;
+	}
+
 	function openSourceSelection() {
 		if (generating) return;
-		selectionSource = 'device';
-		storedAssetSource = 'uploaded';
-		storedImagePresetType = family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima';
+		selectionSource = 'stored';
+		storedAssetSource = 'generated';
+		storedImagePresetType = 't2i_anima';
 		storedAssets = [];
 		storedSearch = '';
 		storedSort = 'latest';
 		storedPage = 1;
 		storedTotalPages = 0;
 		sourceSelectionOpen = true;
+		void loadStoredImages(1);
 	}
 
 	function selectSelectionSource(source: SelectionSource) {
@@ -751,9 +765,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<div>
+			<div class="space-y-4">
 				<Typography as="h1" variant="display">{routeTitle}</Typography>
-				<Typography as="p" variant="muted" class="mt-2">기기에서 이미지 한 장을 선택하고 {familyLabel} 모델로 새 이미지를 생성합니다. 선택만으로는 파일을 업로드하지 않습니다.</Typography>
+				<Tab items={modelFamilyTabs} value={family} ariaLabel="I2I 모델 family" onselect={selectModelFamily} />
 			</div>
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">

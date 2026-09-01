@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from threading import Event
 from unittest.mock import patch
 from uuid import uuid4
@@ -47,6 +48,42 @@ class VaultRouteTest(unittest.TestCase):
             generation_mode="i2i",
             page=1,
         )
+
+    def test_list_passes_krea2_image_category_to_database(self) -> None:
+        with patch.object(vault, "list_image_generations", return_value=([], 0, 0)) as list_images:
+            vault.vault_images("", "latest", False, 1, self.user, "t2i", "krea2")
+
+        list_images.assert_called_once_with(
+            self.user.id,
+            search="",
+            sort="latest",
+            favorites_only=False,
+            model_family="krea2",
+            generation_mode="t2i",
+            page=1,
+        )
+
+    def test_krea2_image_summary_is_valid(self) -> None:
+        summary = vault.VaultImageSummary(
+            id=uuid4(),
+            media_type="image",
+            status="completed",
+            prompt="portrait",
+            checkpoint="krea2.safetensors",
+            model_family="krea2",
+            generation_mode="t2i",
+            image_url=None,
+            source_image_url=None,
+            view_count=0,
+            is_favorite=False,
+            created_at=datetime.now(timezone.utc),
+            completed_at=None,
+            elapsed_seconds=0,
+            is_edited=False,
+            file_size_bytes=None,
+        )
+
+        self.assertEqual(summary.model_family, "krea2")
 
     def test_list_rejects_partial_image_category(self) -> None:
         with self.assertRaises(HTTPException) as raised:

@@ -130,7 +130,7 @@
 	<Layout>
 		<div class="space-y-6">
 			<section class="flex flex-wrap items-end justify-between gap-4">
-				<div><Typography as="h1" variant="display">태그 탐색기</Typography><p class="mt-2 text-sm text-muted-foreground">Danbooru tag와 별칭을 탐색하고 바로 복사할 수 있습니다.</p></div>
+				<div><Typography as="h1" variant="display">태그 탐색기</Typography></div>
 				<span class="text-sm text-muted-foreground">{totalCount.toLocaleString('ko-KR')}개</span>
 			</section>
 

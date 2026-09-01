@@ -135,6 +135,26 @@ class UploadsRouteTest(unittest.TestCase):
             model_family="illustrious",
         )
 
+    def test_list_passes_krea2_generated_image_category_to_database(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        with (
+            patch.object(uploads, "storage_enabled", return_value=True),
+            patch.object(uploads, "list_reusable_media", return_value=([], 0)) as list_assets,
+        ):
+            uploads.reusable_media("", "latest", True, "image", 1, user, "generated", "t2i", "krea2")
+
+        list_assets.assert_called_once_with(
+            user.id,
+            search="",
+            sort="latest",
+            include_generated=True,
+            media_kind="image",
+            page=1,
+            source_type="generated",
+            generation_mode="t2i",
+            model_family="krea2",
+        )
+
     def test_list_rejects_partial_generated_image_category(self) -> None:
         user = UserResponse(id=uuid4(), username="tester")
         with self.assertRaises(uploads.HTTPException) as raised:

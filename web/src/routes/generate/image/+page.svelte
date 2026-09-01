@@ -11,6 +11,7 @@
 	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import Select from '../../../../components/inputs/select.svelte';
+	import Tab from '../../../../components/tabs/tab.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
 	import SamplingSelectionModal from '../../../../components/presets/sampling-selection-modal.svelte';
@@ -23,6 +24,7 @@
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 
 	type ModelFamily = 'anima' | 'illustrious';
+	type ModelFamilyTab = ModelFamily | 'krea2';
 	type ImageOptions = {
 		model_family: ModelFamily;
 		checkpoints: string[];
@@ -86,7 +88,13 @@
 	const modelFamily: ModelFamily = page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima';
 	const presetType: Preset['type'] = modelFamily === 'illustrious' ? 't2i_illustrious' : 't2i_anima';
 	const familyLabel = modelFamily === 'illustrious' ? 'Illustrious' : 'Anima';
-	const pageTitle = `T2I (${familyLabel})`;
+	const pageTitle = 'T2I';
+	// ponytail: Krea2 stays generator-option-only until its workflow and request validation exist.
+	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
+		{ value: 'anima', label: 'ANIMA' },
+		{ value: 'illustrious', label: 'ILLUSTRIOUS' },
+		{ value: 'krea2', label: 'KREA2', disabled: true }
+	];
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
@@ -612,6 +620,12 @@
 		}
 	}
 
+	function selectModelFamily(nextFamily: ModelFamilyTab) {
+		if (nextFamily === modelFamily || nextFamily === 'krea2') return false;
+		window.location.assign(`/generate/image?family=${nextFamily}`);
+		return false;
+	}
+
 	function imageSourceType(url: string): 'server' | 'external' {
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
 	}
@@ -664,7 +678,10 @@
 {:else}
 	<Layout>
 		<div class="space-y-6">
+			<div class="space-y-4">
 			<Typography as="h1" variant="display">{pageTitle}</Typography>
+			<Tab items={modelFamilyTabs} value={modelFamily} ariaLabel="T2I 모델 family" onselect={selectModelFamily} />
+		</div>
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="result-title">

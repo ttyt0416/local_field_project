@@ -73,7 +73,7 @@ class PresetRequestTest(unittest.TestCase):
         self.assertEqual(payload.values.seed, "123")
 
     def test_all_image_namespaces_are_accepted(self) -> None:
-        preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious")
+        preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2")
         payload_types = [
             PresetCreateRequest.model_validate({"type": preset_type, "name": preset_type, "values": {"prompt": "portrait"}}).type
             for preset_type in preset_types

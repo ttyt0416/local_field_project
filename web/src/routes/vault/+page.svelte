@@ -19,7 +19,7 @@
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
-	import { imagePresetCategories, type ImagePresetType } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType } from '$lib/types/presets';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
 	const vaultMediaTabs = [
@@ -39,7 +39,7 @@
 		status: string;
 		prompt: string;
 		checkpoint: string;
-		model_family: 'anima' | 'illustrious';
+		model_family: ImageModelFamily;
 		generation_mode: 't2i' | 'i2i';
 		image_url: string | null;
 		source_image_url: string | null;
@@ -219,6 +219,20 @@
 		imagePresetType = type;
 		selectedIds = new Set();
 		void loadVault(1);
+	}
+
+	function selectImageFamily(family: ImageModelFamily) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === family && category.generationMode === activeImagePreset.generationMode
+		)?.value;
+		if (type) selectImagePresetType(type);
+	}
+
+	function selectImageMode(mode: ImageGenerationMode) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === activeImagePreset.modelFamily && category.generationMode === mode
+		)?.value;
+		if (type) selectImagePresetType(type);
 	}
 
 	function changePage(nextPage: number) {
@@ -470,6 +484,10 @@
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
 	}
 
+	function modelFamilyLabel(family: ImageModelFamily) {
+		return { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2' }[family];
+	}
+
 	function statusLabel(status: string) {
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패', cancelled: '취소됨' }[status] ?? status;
 	}
@@ -486,13 +504,9 @@
 		<Tab items={vaultMediaTabs} bind:value={mediaTab} ariaLabel="보관함 콘텐츠 종류" onselect={selectVaultMediaTab} />
 
 		{#if mediaTab === 'images'}
-			<section aria-labelledby="vault-image-category-title">
-				<div id="vault-image-category-title"><Typography as="h2" variant="h2">IMAGE</Typography></div>
-				<div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-					{#each imagePresetCategories as category (category.value)}
-						<OutlinedButton type="button" class="justify-center text-xs" active={imagePresetType === category.value} onclick={() => selectImagePresetType(category.value)}>{category.label}</OutlinedButton>
-					{/each}
-				</div>
+			<section class="space-y-2" aria-label="이미지 생성 분류">
+				<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
+				<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
 			</section>
 		{/if}
 
@@ -586,7 +600,7 @@
 							<div class="space-y-3 p-4">
 								<a href={`/vault/images/${image.id}`} aria-label={`${image.prompt || image.checkpoint} 콘텐츠 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
 									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-										<span>{image.generation_mode.toUpperCase()} · {image.model_family === 'illustrious' ? 'Illustrious' : 'Anima'}{image.status === 'completed' ? '' : ` · ${statusLabel(image.status)}`}</span>
+										<span>{image.generation_mode.toUpperCase()} · {modelFamilyLabel(image.model_family)}{image.status === 'completed' ? '' : ` · ${statusLabel(image.status)}`}</span>
 										<span>{formatKstDateTime(image.created_at)}</span>
 									</div>
 									<p class="line-clamp-2 text-sm leading-5 text-foreground transition hover:text-primary">{image.prompt}</p>
