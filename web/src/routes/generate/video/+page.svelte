@@ -960,9 +960,9 @@
 												<X size={15} strokeWidth={2} />
 											</IconOutlinedButton>
 											{#if firstFile}
-												<ImageMedia source={firstFile} sourceType="local" alt="선택한 시작 이미지" class="h-full" />
+												<ImageMedia source={firstFile} sourceType="local" alt="선택한 시작 이미지" class="h-48" />
 											{:else if selectedFirst?.url}
-												<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 시작 이미지" class="h-full" />
+												<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 시작 이미지" class="h-48" />
 											{/if}
 											<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">시작 이미지 · {mediaDimensionLabel('first')}</p>
 											<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>이 사이즈 사용</OutlinedButton>
@@ -981,9 +981,9 @@
 													<X size={15} strokeWidth={2} />
 												</IconOutlinedButton>
 												{#if firstFile}
-													<ImageMedia source={firstFile} sourceType="local" alt="선택한 첫 프레임" class="h-full" />
+													<ImageMedia source={firstFile} sourceType="local" alt="선택한 첫 프레임" class="h-48" />
 												{:else if selectedFirst?.url}
-													<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 첫 프레임" class="h-full" />
+													<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 첫 프레임" class="h-48" />
 												{/if}
 												<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">첫 프레임 · {mediaDimensionLabel('first')}</p>
 												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>이 사이즈 사용</OutlinedButton>
@@ -998,9 +998,9 @@
 													<X size={15} strokeWidth={2} />
 												</IconOutlinedButton>
 												{#if lastFile}
-													<ImageMedia source={lastFile} sourceType="local" alt="선택한 마지막 프레임" class="h-full" />
+													<ImageMedia source={lastFile} sourceType="local" alt="선택한 마지막 프레임" class="h-48" />
 												{:else if selectedLast?.url}
-													<ImageMedia source={selectedLast.url} sourceType={imageSourceType(selectedLast.url)} alt="선택한 마지막 프레임" class="h-full" />
+													<ImageMedia source={selectedLast.url} sourceType={imageSourceType(selectedLast.url)} alt="선택한 마지막 프레임" class="h-48" />
 												{/if}
 												<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">마지막 프레임 · {mediaDimensionLabel('last')}</p>
 												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'last'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'last'} onclick={() => void applyMediaSize('last', lastFile ?? selectedLast?.url ?? null, 'image')}>이 사이즈 사용</OutlinedButton>
@@ -1021,7 +1021,7 @@
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													{#if asset.url}
-														<ImageMedia source={asset.url} sourceType={imageSourceType(asset.url)} alt={`참조 이미지 ${index + 1}`} class="h-full" />
+														<ImageMedia source={asset.url} sourceType={imageSourceType(asset.url)} alt={`참조 이미지 ${index + 1}`} class="h-48" />
 													{:else}
 														<div class="flex min-h-32 items-center justify-center"><ImageIcon size={30} class="text-primary" /></div>
 													{/if}
@@ -1034,7 +1034,7 @@
 													<IconOutlinedButton ariaLabel={`참조 이미지 ${selectedReferenceImages.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(selectedReferenceImages.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
-													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-full" />
+													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-48" />
 													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 이미지 {selectedReferenceImages.length + index + 1} · {mediaDimensionLabel(`reference-image-file-${index}`)}</p>
 													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-file-${index}`} disabled={generating || Boolean(sizeApplying) && sizeApplying !== `reference-image-file-${index}`} onclick={() => void applyMediaSize(`reference-image-file-${index}`, file, 'image')}>이 사이즈 사용</OutlinedButton>
 												</div>
@@ -1053,7 +1053,7 @@
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													{#if asset.url}
-														<VideoMedia source={asset.url} sourceType="server" preview={false} muted={true} class="h-full" />
+														<VideoMedia source={asset.url} sourceType="server" preview={false} muted={true} class="h-48 [&>video]:h-full" />
 													{:else}
 														<div class="flex min-h-32 items-center justify-center"><Video size={30} class="text-primary" /></div>
 													{/if}
@@ -1066,7 +1066,7 @@
 													<IconOutlinedButton ariaLabel={`참조 동영상 ${selectedReferenceVideos.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(selectedReferenceVideos.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
-													<VideoMedia source={file} preview={false} muted={true} class="h-full" />
+													<VideoMedia source={file} preview={false} muted={true} class="h-48 [&>video]:h-full" />
 													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 동영상 {selectedReferenceVideos.length + index + 1} · {mediaDimensionLabel(`reference-video-file-${index}`)}</p>
 													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-file-${index}`} disabled={generating || Boolean(sizeApplying) && sizeApplying !== `reference-video-file-${index}`} onclick={() => void applyMediaSize(`reference-video-file-${index}`, file, 'video')}>이 사이즈 사용</OutlinedButton>
 												</div>
