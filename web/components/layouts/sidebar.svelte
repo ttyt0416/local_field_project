@@ -8,6 +8,7 @@
 		ImagePlus,
 		Library,
 		Sparkles,
+		Tags,
 		Video,
 		X
 	} from '@lucide/svelte';
@@ -134,6 +135,14 @@
 		>
 			<Library size={18} strokeWidth={1.8} />
 			<span>업로드 콘텐츠</span>
+		</a>
+		<a
+			href="/tags"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<Tags size={18} strokeWidth={1.8} />
+			<span>태그 탐색기</span>
 		</a>
 		<a
 			href="/models"

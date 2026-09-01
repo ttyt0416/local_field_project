@@ -12,8 +12,108 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+
+from .auth import UserResponse, current_user
 from .configs.constants import settings
 from .database import get_connection
+
+
+router = APIRouter(prefix="/tags", tags=["Danbooru tags"])
+_TAG_PAGE_SIZE = 50
+
+
+class DanbooruTagResponse(BaseModel):
+    tag: str
+    category: int
+    post_count: int
+    aliases: list[str]
+
+
+class DanbooruTagPage(BaseModel):
+    items: list[DanbooruTagResponse]
+    page: int
+    page_size: int
+    total_count: int
+    total_pages: int
+
+
+@router.get("", response_model=DanbooruTagPage)
+def browse_danbooru_tags(
+    search: str = Query(default="", max_length=120),
+    category: int | None = Query(default=None, ge=0, le=5),
+    page: int = Query(default=1, ge=1),
+    _: UserResponse = Depends(current_user),
+) -> DanbooruTagPage:
+    items, total_count = list_danbooru_tags(search=search, category=category, page=page)
+    return DanbooruTagPage(
+        items=[DanbooruTagResponse(**item) for item in items],
+        page=page,
+        page_size=_TAG_PAGE_SIZE,
+        total_count=total_count,
+        total_pages=(total_count + _TAG_PAGE_SIZE - 1) // _TAG_PAGE_SIZE,
+    )
+
+
+def list_danbooru_tags(*, search: str = "", category: int | None = None, page: int = 1) -> tuple[list[dict[str, Any]], int]:
+    term = re.sub(r"\s+", "_", search.strip().casefold())
+    filters: list[str] = []
+    parameters: list[Any] = []
+    escaped = _like_escape(term)
+    if term:
+        contains = f"%{escaped}%"
+        filters.append(
+            """(
+                normalized_tag LIKE %s ESCAPE '\\'
+                OR EXISTS (SELECT 1 FROM unnest(aliases) AS alias WHERE lower(alias) LIKE %s ESCAPE '\\')
+            )"""
+        )
+        parameters.extend((contains, contains))
+    if category is not None:
+        filters.append("category = %s")
+        parameters.append(category)
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    if term:
+        order_clause = """
+            ORDER BY
+                CASE
+                    WHEN normalized_tag = %s THEN 0
+                    WHEN EXISTS (SELECT 1 FROM unnest(aliases) AS alias WHERE lower(alias) = %s) THEN 1
+                    WHEN normalized_tag LIKE %s ESCAPE '\\' THEN 2
+                    WHEN EXISTS (SELECT 1 FROM unnest(aliases) AS alias WHERE lower(alias) LIKE %s ESCAPE '\\') THEN 3
+                    ELSE 4
+                END,
+                post_count DESC,
+                tag ASC
+        """
+        order_parameters: list[Any] = [term, term, f"{escaped}%", f"{escaped}%"]
+    else:
+        order_clause = "ORDER BY post_count DESC, tag ASC"
+        order_parameters = []
+    with get_connection() as connection:
+        total_row = connection.execute(f"SELECT count(*) FROM danbooru_tags {where_clause}", parameters).fetchone()
+        rows = connection.execute(
+            f"""
+            SELECT tag, category, post_count, aliases
+            FROM danbooru_tags
+            {where_clause}
+            {order_clause}
+            LIMIT %s OFFSET %s
+            """,
+            [*parameters, *order_parameters, _TAG_PAGE_SIZE, (page - 1) * _TAG_PAGE_SIZE],
+        ).fetchall()
+    return (
+        [
+            {"tag": row[0], "category": row[1], "post_count": row[2], "aliases": list(row[3] or [])}
+            for row in rows
+        ],
+        int(total_row[0] if total_row else 0),
+    )
+
+
+def _like_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def search_danbooru_tags(text: str, limit: int = 48) -> list[str]:
