@@ -343,10 +343,13 @@ class VideoContractTest(unittest.TestCase):
         with self.assertRaises(video._VLLMError):
             video._validate_video_prompt_contents(valid.replace("00:03.500", "00:05.000"), ["en"], 5)
 
-    def test_video_prompt_enhancement_uses_official_core_fields_and_pattern(self) -> None:
+    def test_video_prompt_enhancement_uses_typed_shot_plan_and_pattern(self) -> None:
         languages: list[Literal["ko", "en", "ja"]] = ["ko", "en"]
-        fields = {
-            "integrated_multimodal_description": "[Shot 1] A red apple rests on the table.\n[Shot 2] At 00:03.000, the camera cuts to a close-up.",
+        plan = {
+            "shots": [
+                {"start_ms": 0, "description": "A red apple rests on the table."},
+                {"start_ms": 3000, "description": "The camera cuts to a close-up."},
+            ],
             "overall_soundscape": "A quiet room tone continues.",
             "non_diegetic_music": "N/A",
         }
@@ -356,23 +359,40 @@ class VideoContractTest(unittest.TestCase):
             duration=5,
             prompt_output_languages=languages,
         )
-        with patch.object(video, "_request_structured_object", return_value=fields) as request:
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
             result = video._enhance_video_prompt(payload)
 
-        expected = video._assemble_video_prompt({field: video._normalize_video_reference_markers(value) for field, value in fields.items()})
+        expected = "integrated_multimodal_description:\n[Shot 1] A red apple rests on the table.\n[Shot 2] At 00:03.000, The camera cuts to a close-up.\n\noverall_soundscape:\nA quiet room tone continues.\n\nnon_diegetic_music:\nN/A"
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
-        self.assertEqual(request.call_args.kwargs["name"], "video_prompt_fields")
+        self.assertEqual(request.call_args.kwargs["name"], "video_prompt_plan")
         schema = request.call_args.kwargs["schema"]
-        self.assertEqual(set(schema["required"]), set(video._VIDEO_PROMPT_FIELDS))
+        self.assertEqual(set(schema["required"]), set(video._VIDEO_PROMPT_RESPONSE_FIELDS))
         self.assertEqual(schema["additionalProperties"], False)
-        self.assertEqual(schema["properties"]["integrated_multimodal_description"]["pattern"], video._video_prompt_pattern(languages))
-        self.assertEqual(schema["properties"]["integrated_multimodal_description"]["maxLength"], 3000)
+        shot = schema["properties"]["shots"]
+        self.assertEqual(shot["maxItems"], 10)
+        self.assertEqual(shot["items"]["properties"]["start_ms"]["maximum"], 4999)
+        self.assertEqual(shot["items"]["properties"]["description"]["pattern"], video._video_prompt_pattern(languages))
         self.assertIn("0.00s to 5s", request.call_args.kwargs["user_prompt"])
 
+    def test_video_prompt_plan_rejects_nonsequential_or_out_of_range_shots(self) -> None:
+        plan = {
+            "shots": [
+                {"start_ms": 0, "description": "A woman looks toward the window."},
+                {"start_ms": 5000, "description": "The camera cuts to her reflection."},
+            ],
+            "overall_soundscape": "A quiet train hum continues.",
+            "non_diegetic_music": "N/A",
+        }
+        with self.assertRaises(video._VLLMError):
+            video._validate_video_prompt_plan(plan, video._video_prompt_pattern(["en"]), 5)
+        plan["shots"][1]["start_ms"] = 3500
+        fields = video._validate_video_prompt_plan(plan, video._video_prompt_pattern(["en"]), 5)
+        self.assertIn("[Shot 2] At 00:03.500,", fields["integrated_multimodal_description"])
+
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
-        fields = {
-            "integrated_multimodal_description": "[Shot 1] The subject continues moving.",
+        plan = {
+            "shots": [{"start_ms": 0, "description": "The subject continues moving."}],
             "overall_soundscape": "Soft room tone continues.",
             "non_diegetic_music": "N/A",
         }
@@ -385,13 +405,13 @@ class VideoContractTest(unittest.TestCase):
             previous_segment_prompt="opening 0s-10s",
             prompt_output_languages=["en"],
         )
-        with patch.object(video, "_request_structured_object", return_value=fields) as request:
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
             video._enhance_video_prompt(payload)
 
         system_prompt = request.call_args.kwargs["system_prompt"]
         user_prompt = request.call_args.kwargs["user_prompt"]
         self.assertIn("The supplied user prompt describes the full sequence", system_prompt)
-        self.assertIn("[Shot 1] without a timestamp", system_prompt)
+        self.assertIn("shots is an ordered array", system_prompt)
         self.assertIn("<duration_seconds>\n1\n</duration_seconds>", user_prompt)
         self.assertIn("<sequence_segment>\n2/2\n</sequence_segment>", user_prompt)
         self.assertIn("<timeline_clock>\n0.00s to 1s", user_prompt)

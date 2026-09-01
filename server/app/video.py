@@ -76,6 +76,7 @@ _VIDEO_PROMPT_LANGUAGE_CHARS = {
     "ja": r"\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
 }
 _VIDEO_PROMPT_FIELDS = ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
+_VIDEO_PROMPT_RESPONSE_FIELDS = ("shots", "overall_soundscape", "non_diegetic_music")
 _VIDEO_PROMPT_SECTION_LABELS = tuple(f"{field}:" for field in _VIDEO_PROMPT_FIELDS)
 _SHOT_PATTERN = re.compile(r"(?m)^\[Shot (?P<number>[1-9]\d*)\](?: At (?P<minute>\d{2}):(?P<second>\d{2})\.(?P<millisecond>\d{3}),)? ")
 
@@ -585,31 +586,86 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhan
         ),
         max_tokens=1536,
         temperature=0.8,
-        schema=_video_prompt_fields_schema(pattern),
-        name="video_prompt_fields",
+        schema=_video_prompt_plan_schema(pattern, payload.duration),
+        name="video_prompt_plan",
     )
-    fields = _validate_video_prompt_fields(fields, pattern)
+    fields = _validate_video_prompt_plan(fields, pattern, payload.duration)
     contents = _validate_video_prompt_contents(_assemble_video_prompt(fields), languages, payload.duration)
     return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
 
 
-def _video_prompt_fields_schema(pattern: str) -> dict[str, Any]:
+def _video_prompt_plan_schema(pattern: str, duration: float) -> dict[str, Any]:
+    max_start_ms = _video_prompt_max_start_ms(duration)
     return {
         "type": "object",
         "properties": {
-            field: {"type": "string", "minLength": 1, "maxLength": 3000 if field == "integrated_multimodal_description" else 1000, "pattern": pattern}
-            for field in _VIDEO_PROMPT_FIELDS
+            "shots": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "start_ms": {"type": "integer", "minimum": 0, "maximum": max_start_ms},
+                        "description": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": pattern},
+                    },
+                    "required": ["start_ms", "description"],
+                    "additionalProperties": False,
+                },
+            },
+            "overall_soundscape": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": pattern},
+            "non_diegetic_music": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": pattern},
         },
-        "required": list(_VIDEO_PROMPT_FIELDS),
+        "required": list(_VIDEO_PROMPT_RESPONSE_FIELDS),
         "additionalProperties": False,
     }
 
 
-def _validate_video_prompt_fields(fields: dict[str, Any], pattern: str) -> dict[str, str]:
-    if set(fields) != set(_VIDEO_PROMPT_FIELDS):
+def _video_prompt_max_start_ms(duration: float) -> int:
+    if not math.isfinite(duration) or duration < 0:
+        raise _VLLMError("동영상 프롬프트 duration이 올바르지 않습니다.")
+    return max(0, math.ceil(duration * 1000) - 1)
+
+
+def _format_shot_timestamp(start_ms: int) -> str:
+    minutes, remainder = divmod(start_ms, 60_000)
+    seconds, milliseconds = divmod(remainder, 1_000)
+    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+
+def _validate_video_prompt_plan(fields: dict[str, Any], pattern: str, duration: float) -> dict[str, str]:
+    if set(fields) != set(_VIDEO_PROMPT_RESPONSE_FIELDS):
         raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드가 올바르지 않습니다.")
-    validated: dict[str, str] = {}
-    for field in _VIDEO_PROMPT_FIELDS:
+    shots = fields["shots"]
+    if not isinstance(shots, list) or not 1 <= len(shots) <= 10:
+        raise _VLLMError("vLLM 동영상 Shot 배열이 올바르지 않습니다.")
+    max_start_ms = _video_prompt_max_start_ms(duration)
+    previous_start_ms = -1
+    shot_lines: list[str] = []
+    for number, shot in enumerate(shots, start=1):
+        if not isinstance(shot, dict) or set(shot) != {"start_ms", "description"}:
+            raise _VLLMError("vLLM 동영상 Shot 항목이 올바르지 않습니다.")
+        start_ms, description = shot["start_ms"], shot["description"]
+        description = _normalize_video_reference_markers(description.strip()) if isinstance(description, str) else description
+        if (
+            isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or not isinstance(description, str)
+            or not description
+            or not re.fullmatch(pattern, description)
+            or re.search(r"(?m)^\[Shot ", description)
+        ):
+            raise _VLLMError("vLLM 동영상 Shot 값에 허용되지 않은 값이 있습니다.")
+        if (number == 1 and start_ms != 0) or (number > 1 and not previous_start_ms < start_ms <= max_start_ms):
+            raise _VLLMError("vLLM 동영상 Shot 시작 시간은 0부터 duration 안에서 증가해야 합니다.")
+        shot_lines.append(
+            f"[Shot {number}] {description}"
+            if number == 1
+            else f"[Shot {number}] At {_format_shot_timestamp(start_ms)}, {description}"
+        )
+        previous_start_ms = start_ms
+    validated = {"integrated_multimodal_description": "\n".join(shot_lines)}
+    for field in _VIDEO_PROMPT_RESPONSE_FIELDS[1:]:
         value = fields[field]
         value = _normalize_video_reference_markers(value.strip()) if isinstance(value, str) else value
         if not isinstance(value, str) or not value or not re.fullmatch(pattern, value):
