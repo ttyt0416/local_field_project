@@ -18,6 +18,8 @@ export type GenerationJob = {
 	queuePosition: number | null;
 	elapsedSeconds: number;
 	stage?: string;
+	segmentIndex?: number;
+	segmentCount?: number;
 	imageUrl?: string;
 	videoUrl?: string;
 	modelUrl?: string;
@@ -39,6 +41,8 @@ type ActiveGenerationResponse = {
 	progress: number;
 	queue_position?: number | null;
 	stage?: string | null;
+	segment_index?: number;
+	segment_count?: number;
 	created_at: string;
 	elapsed_seconds: number;
 };
@@ -118,6 +122,8 @@ class GenerationJobStore {
 					progress: active.progress,
 					queuePosition: active.queue_position ?? null,
 					stage: active.stage ?? undefined,
+					segmentIndex: active.segment_index,
+					segmentCount: active.segment_count,
 					createdAt: Date.parse(active.created_at) || Date.now(),
 					elapsedSeconds: active.elapsed_seconds
 				};
@@ -180,6 +186,8 @@ class GenerationJobStore {
 		if (typeof data.progress === 'number') changes.progress = data.progress;
 		if (typeof data.elapsed_seconds === 'number') changes.elapsedSeconds = data.elapsed_seconds;
 		if (typeof data.stage === 'string') changes.stage = data.stage;
+		if (typeof data.segment_index === 'number') changes.segmentIndex = data.segment_index;
+		if (typeof data.segment_count === 'number') changes.segmentCount = data.segment_count;
 		if (typeof data.created_at === 'string') changes.createdAt = Date.parse(data.created_at) || changes.createdAt;
 		if ('queue_position' in data) changes.queuePosition = typeof data.queue_position === 'number' ? data.queue_position : null;
 		if (eventName === 'completed' || status === 'completed') {

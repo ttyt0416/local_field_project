@@ -35,6 +35,63 @@ class VideoEditResult:
     frame_count: int
 
 
+def extract_last_video_frame(*, content: bytes, filename: str) -> bytes:
+    if len(content) > _MAX_VIDEO_BYTES:
+        raise MediaEditError("마지막 프레임을 추출할 영상 파일이 너무 큽니다.")
+    with tempfile.TemporaryDirectory(prefix="local-field-video-frame-") as directory:
+        workdir = Path(directory)
+        source = workdir / (Path(filename).suffix.lower() or ".mp4")
+        output = workdir / "last-frame.png"
+        source.write_bytes(content)
+        _probe(source)
+        frame_count = _frame_count(source)
+        _run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+                "-vf", f"select=eq(n\\,{frame_count - 1})", "-vsync", "0", "-frames:v", "1", str(output),
+            ],
+            _FFMPEG_TIMEOUT_SECONDS,
+            "영상의 마지막 프레임을 추출하지 못했습니다.",
+        )
+        if not output.is_file() or output.stat().st_size == 0:
+            raise MediaEditError("영상의 마지막 프레임 결과가 없습니다.")
+        return output.read_bytes()
+
+
+def concat_video_segments(*, segments: list[tuple[bytes, str]]) -> VideoEditResult:
+    if not segments:
+        raise MediaEditError("합칠 영상 구간이 없습니다.")
+    if any(len(content) > _MAX_VIDEO_BYTES for content, _ in segments):
+        raise MediaEditError("합칠 영상 구간이 너무 큽니다.")
+    with tempfile.TemporaryDirectory(prefix="local-field-video-concat-") as directory:
+        workdir = Path(directory)
+        sources: list[Path] = []
+        for index, (content, filename) in enumerate(segments):
+            source = workdir / f"segment-{index:03d}{Path(filename).suffix.lower() or '.mp4'}"
+            source.write_bytes(content)
+            _probe(source)
+            sources.append(source)
+        manifest = workdir / "segments.txt"
+        manifest.write_text("".join(f"file '{source}'\n" for source in sources), encoding="utf-8")
+        output = workdir / "sequence.mp4"
+        _run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+            ],
+            _FFMPEG_TIMEOUT_SECONDS,
+            "영상 구간을 합치지 못했습니다.",
+        )
+        if not output.is_file() or output.stat().st_size == 0:
+            raise MediaEditError("합쳐진 영상 결과가 없습니다.")
+        info = _probe(output)
+        return VideoEditResult(
+            content=output.read_bytes(), filename="video-sequence.mp4", width=info.width, height=info.height,
+            duration=info.duration, frame_count=max(1, round(info.duration * info.fps)),
+        )
+
+
 def probe_video(*, content: bytes, filename: str) -> VideoMetadata:
     if len(content) > _MAX_VIDEO_BYTES:
         raise MediaEditError("확인할 영상 파일이 너무 큽니다.")
@@ -138,6 +195,25 @@ def edit_video(
             duration=output_info.duration,
             frame_count=max(1, round(output_info.duration * output_info.fps)),
         )
+
+
+def _frame_count(path: Path) -> int:
+    raw = _run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+            "-show_entries", "stream=nb_read_frames", "-of", "default=nokey=1:noprint_wrappers=1", str(path),
+        ],
+        _FFPROBE_TIMEOUT_SECONDS,
+        "영상 프레임 수를 읽을 수 없습니다.",
+        capture_output=True,
+    )
+    try:
+        frame_count = int(raw.strip())
+    except ValueError as exc:
+        raise MediaEditError("영상 프레임 수를 읽을 수 없습니다.") from exc
+    if frame_count < 1:
+        raise MediaEditError("영상의 마지막 프레임이 없습니다.")
+    return frame_count
 
 
 def _probe(path: Path) -> VideoMetadata:

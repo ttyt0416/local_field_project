@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.media_editing import edit_video
+from app.media_editing import concat_video_segments, edit_video, extract_last_video_frame, probe_video
 
 
 class VideoEditingTest(unittest.TestCase):
@@ -46,6 +46,27 @@ class VideoEditingTest(unittest.TestCase):
         self.assertAlmostEqual(result.duration, 0.6, delta=0.15)
         self.assertGreater(result.frame_count, 0)
         self.assertTrue(result.content.startswith(b"\x00\x00\x00"))
+
+    def test_extracts_last_frame_and_concatenates_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "first.mp4"
+            second = Path(directory) / "second.mp4"
+            for output, color in ((first, "red"), (second, "blue")):
+                subprocess.run(
+                    [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                        f"color=c={color}:size=64x48:rate=10", "-t", "1", "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", str(output),
+                    ],
+                    check=True,
+                )
+            last_frame = extract_last_video_frame(content=second.read_bytes(), filename="second.mp4")
+            merged = concat_video_segments(
+                segments=[(first.read_bytes(), "first.mp4"), (second.read_bytes(), "second.mp4")]
+            )
+
+        self.assertTrue(last_frame.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertAlmostEqual(probe_video(content=merged.content, filename=merged.filename).duration, 2, delta=0.2)
 
 
 if __name__ == "__main__":

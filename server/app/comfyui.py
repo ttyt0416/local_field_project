@@ -158,6 +158,10 @@ def generation_progress(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
         }
 
 
+def reset_generation_progress(prompt_id: str, user_id: uuid.UUID) -> bool:
+    return _set_progress_state(prompt_id, user_id, status="queued", progress=0, queue_position=None, node=None)
+
+
 def generation_node(prompt_id: str, user_id: uuid.UUID) -> str | None:
     with _progress_lock:
         node = _progress_states.get(_progress_key(prompt_id, user_id), {}).get("node")
@@ -195,9 +199,11 @@ def record_comfy_progress(
     user_id: uuid.UUID,
     event_name: str,
     data: dict[str, Any],
+    *,
+    accepted_prompt_id: str | None = None,
 ) -> bool:
     event_prompt_id = data.get("prompt_id")
-    if event_prompt_id is not None and event_prompt_id != prompt_id:
+    if event_prompt_id is not None and event_prompt_id not in {prompt_id, accepted_prompt_id}:
         return False
     if event_name == "execution_start":
         return _set_progress_state(

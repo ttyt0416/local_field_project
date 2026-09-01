@@ -6,6 +6,10 @@
 
 I2V와 FL2V는 `fl2va` 모델을 사용하고 R2V는 `ref2va` 모델과 R2V 전용 4-step LoRA를 사용한다. ComfyUI 입력 파일은 생성 요청 중에만 임시 입력으로 업로드한다. 생성 요청은 ComfyUI `/prompt` 제출과 DB active row 생성을 완료한 뒤 `202`를 반환한다. 이후 서버 `generation_worker.py`가 브라우저와 독립적으로 `queued`·`processing` 작업을 확인하고, ComfyUI history 완료 시 결과를 Storage에 저장하고 DB를 갱신한다. 프런트는 `GET /generation/video/{mode}/{prompt_id}/events` SSE에서 최초 DB snapshot 이후 worker가 publish한 상태·완료·실패 이벤트를 받으며, 화면을 떠나면 SSE 연결만 종료되고 서버 작업은 계속된다.
 
+10초를 초과하는 요청은 서버가 정확히 최대 10초 길이의 sequence segment로 나눈다. 첫 segment만 사용자가 고른 I2V·FL2V·R2V workflow를 사용한다. 다음 segment는 반드시 R2V workflow이며 직전 실제 output video에서 `ffmpeg`로 추출한 마지막 PNG frame 하나를 `<Picture 1>` reference로 전달한다. public `prompt_id`와 SSE key는 sequence 전체에서 고정하고, DB의 `active_prompt_id`만 매 segment Comfy ID로 교체한다. worker가 claim/advance를 atomic하게 수행하므로 browser disconnect나 server restart가 이어지는 R2V 작업을 끊지 않는다. intermediate segment는 internal Storage artifact이며 마지막 segment 완료 후 server-side concat 결과 한 개만 Vault output으로 남긴다.
+
+`segment_prompts`는 duration-derived segment 수와 정확히 일치해야 한다. `improved_segment_prompts`는 vLLM proposal이며 UI에서 원문과 별도 textarea로 노출된다. 사용자가 proposal을 검토·수정해 submit할 때만 enhanced prompt가 실행되고, vLLM은 원문 scene prompt를 자동 대체하지 않는다.
+
 `VideoAsset`의 `file_id`는 기존 재사용 콘텐츠이고 `file_index`는 이번 multipart 요청의 새 파일이다. 새 파일과 기존 파일은 소유자 검증·형식 검증·크기 제한을 동일하게 적용한다.
 
 `POST /generation/video/enhance-prompt`는 이미지 생성과 같은 vLLM 기반 prompt 개선 endpoint다. vLLM은 AtlasCloud의 MiniMax H3 규칙을 우선해 `style`, `timeline`, `camera`, `audio`, `text`, `negative` 문자열 필드를 가진 JSON만 반환한다. 서버는 이 필드를 `Style`, `Timeline`, `Camera`, `Audio`, `Text`, `Negative` 6블록으로 순서대로 조립하며, Timeline은 선택한 duration 전체를 다루고 camera·audio·화면 text·negative 제약을 명시한다. 입력과 개선 결과의 reference marker는 `@imageN`, `[ImageN]` 계열을 `<Picture N>`, `<Video N>`, `<Audio N>`으로 정규화하고 실제 참조 입력 순서를 보존한다.

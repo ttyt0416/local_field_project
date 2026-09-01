@@ -128,7 +128,16 @@ async def _watch_progress(kind: str, generation: dict[str, Any], stop_event: asy
     while not stop_event.is_set():
         try:
             async for event_name, data in stream_comfy_progress(generation["client_id"], stop_event):
-                if record_comfy_progress(prompt_id, user_id, event_name, data):
+                active_prompt_id = None
+                if kind == "video":
+                    current = get_video_generation(prompt_id, user_id)
+                    active = current.get("active_prompt_id") if current is not None else None
+                    if not isinstance(active, str) or not active:
+                        continue
+                    active_prompt_id = active
+                if record_comfy_progress(
+                    prompt_id, user_id, event_name, data, accepted_prompt_id=active_prompt_id
+                ):
                     continue
         except Exception:
             logger.debug("%s 생성 progress WebSocket 연결을 재시도합니다: %s", kind, prompt_id, exc_info=True)

@@ -1,7 +1,7 @@
 import asyncio
 import re
 import unittest
-from typing import Literal
+from typing import Literal, cast
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -98,6 +98,114 @@ class VideoContractTest(unittest.TestCase):
         enhancement = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=0)
         self.assertEqual(request.duration, 100)
         self.assertEqual(enhancement.duration, 0)
+
+    def test_long_video_uses_exact_ten_second_prompt_segments(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="opening",
+            duration=23,
+            segment_prompts=["opening", "middle", "ending"],
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+
+        self.assertEqual(video._video_segment_durations(request.duration), [10.0, 10.0, 3.0])
+        self.assertEqual(video._effective_video_prompts("i2v", request), ["opening", "middle", "ending"])
+        with self.assertRaises(video.HTTPException):
+            video._effective_video_prompts("i2v", request.model_copy(update={"segment_prompts": ["opening"]}))
+
+    def test_continuation_queues_r2v_with_only_last_frame_reference(self) -> None:
+        generation = {
+            "prompt_id": "root-prompt",
+            "client_id": "client-1",
+            "segment_index": 0,
+            "segment_durations": [10.0, 3.0],
+            "segment_prompts": ["opening", "continuation"],
+            "width": 768,
+            "height": 1344,
+            "fps": 24,
+            "seed": 7,
+        }
+        captured: dict[str, object] = {}
+
+        def build(mode, request, resolved, *, effective_prompt):
+            captured.update(mode=mode, request=request, resolved=resolved, effective_prompt=effective_prompt)
+            return {}, 7
+
+        with (
+            patch.object(video, "_build_prompt", side_effect=build),
+            patch.object(video, "_request_json", return_value={"prompt_id": "r2v-prompt"}),
+        ):
+            prompt_id = video._queue_r2v_continuation(generation, self.user.id, "f" * 32, b"last-frame")
+
+        request = cast(video.VideoGenerationRequest, captured["request"])
+        resolved = cast(dict[str, video._ResolvedAsset], captured["resolved"])
+        self.assertEqual(prompt_id, "r2v-prompt")
+        self.assertEqual(captured["mode"], "r2v")
+        self.assertEqual(captured["effective_prompt"], "continuation")
+        self.assertEqual(request.duration, 3.0)
+        self.assertEqual(request.reference_images, [video.VideoAsset(kind="image", file_id="f" * 32)])
+        self.assertEqual(next(iter(resolved.values())).content, b"last-frame")
+
+    def test_completed_segment_extracts_last_frame_before_r2v_transition(self) -> None:
+        generation = {
+            "prompt_id": "root-prompt",
+            "active_prompt_id": None,
+            "client_id": "client-1",
+            "user_id": self.user.id,
+            "segment_index": 0,
+            "segment_durations": [10.0, 3.0],
+            "segment_prompts": ["opening", "continuation"],
+            "segment_file_ids": [],
+            "width": 768,
+            "height": 1344,
+            "fps": 24,
+            "seed": 7,
+            "status": "processing",
+        }
+        with (
+            patch.object(video, "claim_video_generation_segment", return_value=generation),
+            patch.object(video, "_request_bytes", return_value=(b"segment-video", "video/mp4")),
+            patch.object(video, "storage_upload_file", side_effect=["s" * 32, "f" * 32]),
+            patch.object(video, "extract_last_video_frame", return_value=b"actual-last-frame") as extract,
+            patch.object(video, "_queue_r2v_continuation", return_value="r2v-prompt") as queue,
+            patch.object(video, "advance_video_generation_segment", return_value=True),
+            patch.object(video, "reset_generation_progress"),
+            patch.object(video, "storage_delete_file"),
+        ):
+            video._sync_video_output(
+                generation,
+                self.user.id,
+                "completed-segment",
+                {"save": {"videos": [{"filename": "segment.mp4", "subfolder": "", "type": "output"}]}},
+            )
+
+        extract.assert_called_once_with(content=b"segment-video", filename="segment.mp4")
+        queue.assert_called_once_with(generation, self.user.id, "f" * 32, b"actual-last-frame")
+
+    def test_completed_sequence_status_does_not_requery_comfy_history(self) -> None:
+        generation = {
+            "prompt_id": "root-prompt",
+            "mode": "i2v",
+            "status": "completed",
+            "storage_file_id": "v" * 32,
+            "filename": "sequence.mp4",
+            "subfolder": "",
+            "video_type": "output",
+            "fps": 24,
+            "length": 240,
+            "segment_durations": [10.0, 3.0],
+            "segment_index": 1,
+        }
+        with (
+            patch.object(video, "get_video_generation", return_value=generation),
+            patch.object(video, "storage_read_url", return_value="/vault/videos/root-prompt/download"),
+            patch.object(video, "_request_json") as history,
+        ):
+            result = video._history_status(generation, self.user.id)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.progress, 100)
+        self.assertEqual(result.segment_count, 2)
+        history.assert_not_called()
 
     def test_mode_is_explicit_when_resolving_assets(self) -> None:
         request = video.VideoGenerationRequest(
@@ -255,6 +363,27 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(schema["additionalProperties"], False)
         self.assertEqual(schema["properties"]["style"]["pattern"], video._video_prompt_pattern(languages))
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
+
+    def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
+        fields = {field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_FIELDS}
+        payload = video.VideoPromptEnhancementRequest(
+            prompt="continue the scene",
+            mode="r2v",
+            duration=1,
+            segment_index=1,
+            segment_count=2,
+            previous_segment_prompt="opening 0s-10s",
+            prompt_output_languages=["en"],
+        )
+        with patch.object(video, "_request_structured_object", return_value=fields) as request:
+            video._enhance_video_prompt(payload)
+
+        system_prompt = request.call_args.kwargs["system_prompt"]
+        user_prompt = request.call_args.kwargs["user_prompt"]
+        self.assertIn("local timeline from 0s to the supplied duration", system_prompt)
+        self.assertIn("<duration_seconds>\n1\n</duration_seconds>", user_prompt)
+        self.assertIn("<sequence_segment>\n2/2\n</sequence_segment>", user_prompt)
+        self.assertIn("<timeline_clock>\n0s to 1s", user_prompt)
 
     def test_enabled_video_enhancement_adds_reference_roles_to_workflow_prompt(self) -> None:
         labels = video._video_prompt_section_labels(["en"])

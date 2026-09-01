@@ -272,6 +272,50 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'video_generations'
+        ) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'active_prompt_id'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN active_prompt_id VARCHAR(128);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'segment_prompts'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN segment_prompts JSONB NOT NULL DEFAULT '[]'::jsonb;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'segment_durations'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN segment_durations JSONB NOT NULL DEFAULT '[]'::jsonb;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'segment_index'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'segment_file_ids'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN segment_file_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+            END IF;
+            UPDATE video_generations
+            SET active_prompt_id = prompt_id
+            WHERE active_prompt_id IS NULL AND status IN ('queued', 'processing');
+        END IF;
+    END
+    $$
+    """,
 )
 
 
@@ -404,6 +448,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         prompt_id VARCHAR(128) UNIQUE NOT NULL,
         client_id VARCHAR(128) NOT NULL,
+        active_prompt_id VARCHAR(128),
         mode VARCHAR(8) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
         prompt TEXT NOT NULL,
@@ -413,6 +458,10 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         fps DOUBLE PRECISION NOT NULL DEFAULT 24,
         seed BIGINT NOT NULL,
         input_file_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        segment_prompts JSONB NOT NULL DEFAULT '[]'::jsonb,
+        segment_durations JSONB NOT NULL DEFAULT '[]'::jsonb,
+        segment_index INTEGER NOT NULL DEFAULT 0,
+        segment_file_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
         storage_file_id TEXT,
         filename VARCHAR(255),
         subfolder VARCHAR(255) NOT NULL DEFAULT '',
@@ -1229,8 +1278,8 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length, fps, seed, "
-    "input_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
+    "id, user_id, prompt_id, client_id, active_prompt_id, mode, status, prompt, width, height, length, fps, seed, "
+    "input_file_ids, segment_prompts, segment_durations, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
 
@@ -1247,14 +1296,18 @@ def create_video_generation(
     fps: float,
     seed: int,
     input_file_ids: list[str],
+    active_prompt_id: str | None = None,
+    segment_prompts: list[str] | None = None,
+    segment_durations: list[float] | None = None,
 ) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, mode, prompt, width, height, length, fps, seed, input_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                (id, user_id, prompt_id, client_id, active_prompt_id, mode, prompt, width, height, length, fps, seed,
+                 input_file_ids, segment_prompts, segment_durations)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1262,6 +1315,7 @@ def create_video_generation(
                 user_id,
                 prompt_id,
                 client_id,
+                active_prompt_id or prompt_id,
                 mode,
                 prompt,
                 width,
@@ -1270,11 +1324,96 @@ def create_video_generation(
                 fps,
                 seed,
                 json.dumps(input_file_ids),
+                json.dumps(segment_prompts or [prompt]),
+                json.dumps(segment_durations or [length / fps]),
             ),
         ).fetchone()
         if row is None:
             raise RuntimeError("video generation insert did not return a row")
     return row[0], row[1]
+
+
+def claim_video_generation_segment(
+    *, prompt_id: str, user_id: uuid.UUID, active_prompt_id: str
+) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"""
+            UPDATE video_generations
+            SET active_prompt_id = NULL
+            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id = %s
+              AND status IN ('queued', 'processing')
+            RETURNING {_VIDEO_FIELDS}
+            """,
+            (prompt_id, user_id, active_prompt_id),
+        ).fetchone()
+    return _video_generation_row(row)
+
+
+def advance_video_generation_segment(
+    *,
+    prompt_id: str,
+    user_id: uuid.UUID,
+    segment_index: int,
+    next_prompt_id: str,
+    segment_file_id: str,
+) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE video_generations
+            SET status = 'queued', active_prompt_id = %s, segment_index = segment_index + 1,
+                segment_file_ids = segment_file_ids || %s::jsonb
+            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id IS NULL
+              AND segment_index = %s AND status IN ('queued', 'processing')
+            RETURNING id
+            """,
+            (next_prompt_id, json.dumps([segment_file_id]), prompt_id, user_id, segment_index),
+        ).fetchone()
+    return row is not None
+
+
+def complete_video_generation_sequence(
+    *,
+    prompt_id: str,
+    user_id: uuid.UUID,
+    segment_index: int,
+    storage_file_id: str,
+    filename: str,
+    subfolder: str,
+    video_type: str,
+    size_bytes: int,
+) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE video_generations
+            SET status = 'completed', storage_file_id = %s, filename = %s, subfolder = %s,
+                video_type = %s, size_bytes = %s, completed_at = CURRENT_TIMESTAMP,
+                elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)))
+            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id IS NULL
+              AND segment_index = %s AND status IN ('queued', 'processing')
+            RETURNING id
+            """,
+            (storage_file_id, filename, subfolder, video_type, size_bytes, prompt_id, user_id, segment_index),
+        ).fetchone()
+    return row is not None
+
+
+def fail_claimed_video_generation_segment(*, prompt_id: str, user_id: uuid.UUID) -> bool:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            UPDATE video_generations
+            SET status = 'failed', completed_at = CURRENT_TIMESTAMP,
+                elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)))
+            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id IS NULL
+              AND status IN ('queued', 'processing')
+            RETURNING id
+            """,
+            (prompt_id, user_id),
+        ).fetchone()
+    return row is not None
 
 
 def create_video_edit(
