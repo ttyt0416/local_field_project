@@ -22,7 +22,7 @@
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
-	import { imagePresetCategories, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
 	type ImageFamily = 'anima' | 'illustrious';
 	type ImageFamilyTab = ImageFamily | 'krea2';
@@ -401,6 +401,20 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (storedImagePresetType === type) return;
 		storedImagePresetType = type;
 		void loadStoredImages(1);
+	}
+
+	function selectStoredImageFamily(family: ImageModelFamily) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === family && category.generationMode === storedImagePreset.generationMode
+		)?.value;
+		if (type) selectStoredImagePresetType(type);
+	}
+
+	function selectStoredImageMode(mode: ImageGenerationMode) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === storedImagePreset.modelFamily && category.generationMode === mode
+		)?.value;
+		if (type) selectStoredImagePresetType(type);
 	}
 
 	async function loadStoredImages(requestedPage = storedPage) {
@@ -1034,10 +1048,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 				<div class="space-y-4">
 					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 이미지 종류" onselect={selectStoredAssetSource} />
 					{#if storedAssetSource === 'generated'}
-						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="생성 이미지 분류">
-							{#each imagePresetCategories as category (category.value)}
-								<OutlinedButton type="button" class="justify-center text-xs" active={storedImagePresetType === category.value} onclick={() => selectStoredImagePresetType(category.value)}>{category.label}</OutlinedButton>
-							{/each}
+						<div class="space-y-2" aria-label="생성 이미지 분류">
+							<Tab items={imageModelFamilyTabs} value={storedImagePreset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectStoredImageFamily} />
+							<Tab items={imageGenerationModeTabs} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
 						</div>
 					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

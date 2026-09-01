@@ -394,7 +394,7 @@
 		if (!image.image_url || downloadingId) return;
 		downloadingId = image.id;
 		try {
-			await downloadMedia(image.image_url, `local-field-image-${image.id}.png`);
+			await downloadMedia(`vault/images/${image.id}/download`, `local-field-image-${image.id}.png`);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '이미지를 다운로드하지 못했습니다.';
 		} finally {
@@ -406,7 +406,7 @@
 		if (!video.video_url || downloadingId) return;
 		downloadingId = video.id;
 		try {
-			await downloadMedia(video.video_url, `local-field-video-${video.id}.mp4`);
+			await downloadMedia(`vault/videos/${video.id}/download`, `local-field-video-${video.id}.mp4`);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '영상을 다운로드하지 못했습니다.';
 		} finally {
@@ -501,14 +501,15 @@
 <Layout>
 	<div class="space-y-8">
 		<Typography as="h1" variant="display">{favoritesOnly ? '즐겨찾기' : '보관함'}</Typography>
-		<Tab items={vaultMediaTabs} bind:value={mediaTab} ariaLabel="보관함 콘텐츠 종류" onselect={selectVaultMediaTab} />
-
-		{#if mediaTab === 'images'}
-			<section class="space-y-2" aria-label="이미지 생성 분류">
-				<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
-				<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
-			</section>
-		{/if}
+		<div class="space-y-2">
+			<Tab items={vaultMediaTabs} bind:value={mediaTab} ariaLabel="보관함 콘텐츠 종류" onselect={selectVaultMediaTab} />
+			{#if mediaTab === 'images'}
+				<section class="space-y-2" aria-label="이미지 생성 분류">
+					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
+					<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
+				</section>
+			{/if}
+		</div>
 
 		<div class="flex flex-col gap-3 sm:flex-row">
 			<SearchBar bind:value={searchQuery} class="min-w-0 flex-1" oninput={handleSearchInput} />

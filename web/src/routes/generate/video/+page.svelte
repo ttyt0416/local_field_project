@@ -21,7 +21,7 @@
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
-	import { imagePresetCategories, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
 	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
 	type SelectionTarget = 'first' | 'last' | 'images' | 'videos' | 'audios';
@@ -378,6 +378,20 @@
 		storedSelectedIds = [];
 		storedSelectedAssets = [];
 		void loadStoredAssets(1);
+	}
+
+	function selectStoredImageFamily(family: ImageModelFamily) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === family && category.generationMode === storedImagePreset.generationMode
+		)?.value;
+		if (type) selectStoredImagePresetType(type);
+	}
+
+	function selectStoredImageMode(mode: ImageGenerationMode) {
+		const type = imagePresetCategories.find(
+			(category) => category.modelFamily === storedImagePreset.modelFamily && category.generationMode === mode
+		)?.value;
+		if (type) selectStoredImagePresetType(type);
 	}
 
 	function currentSelectionCount() {
@@ -1088,10 +1102,9 @@
 				<div class="space-y-4">
 					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 콘텐츠 종류" onselect={selectStoredAssetSource} />
 					{#if storedAssetSource === 'generated' && selectionKind === 'image'}
-						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="생성 이미지 분류">
-							{#each imagePresetCategories as category (category.value)}
-								<OutlinedButton type="button" class="justify-center text-xs" active={storedImagePresetType === category.value} onclick={() => selectStoredImagePresetType(category.value)}>{category.label}</OutlinedButton>
-							{/each}
+						<div class="space-y-2" aria-label="생성 이미지 분류">
+							<Tab items={imageModelFamilyTabs} value={storedImagePreset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectStoredImageFamily} />
+							<Tab items={imageGenerationModeTabs} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
 						</div>
 					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

@@ -129,7 +129,7 @@
 		if (!generation?.image_url || downloading) return;
 		downloading = true;
 		try {
-			await downloadMedia(generation.image_url, generation.filename ?? `local-field-image-${generation.id}.png`);
+			await downloadMedia(`vault/images/${generation.id}/download`, generation.filename ?? `local-field-image-${generation.id}.png`);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '이미지를 다운로드하지 못했습니다.';
 		} finally {

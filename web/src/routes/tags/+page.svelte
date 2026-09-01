@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Copy, ChevronLeft, ChevronRight } from '@lucide/svelte';
+	import { Copy, ChevronLeft, ChevronRight, Plus } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
-	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
+	import Tab from '../../../components/tabs/tab.svelte';
 	import SearchBar from '../../../components/inputs/searchbar.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
@@ -26,8 +26,9 @@
 		total_pages: number;
 	};
 	type Sort = 'match' | 'similarity' | 'usage';
+	type Category = '' | '0' | '3' | '4';
 
-	const categories = [
+	const categories: { value: Category; label: string }[] = [
 		{ value: '', label: '전체' },
 		{ value: '0', label: '일반' },
 		{ value: '3', label: '저작물' },
@@ -44,7 +45,8 @@
 	let loading = $state(true);
 	let tags = $state<DanbooruTag[]>([]);
 	let searchQuery = $state('');
-	let category = $state('');
+	let category = $state<Category>('');
+	let selectedTags = $state('');
 	let sort = $state<Sort>('match');
 	let currentPage = $state(1);
 	let totalPages = $state(0);
@@ -90,7 +92,7 @@
 		searchTimer = setTimeout(() => void loadTags(1), 300);
 	}
 
-	function selectCategory(value: string) {
+	function selectCategory(value: Category) {
 		if (category === value) return;
 		category = value;
 		void loadTags(1);
@@ -111,6 +113,21 @@
 			success = `'${tag}' 태그를 복사했습니다.`;
 		} catch {
 			error = '태그를 복사하지 못했습니다.';
+		}
+	}
+
+	function addTag(tag: string) {
+		selectedTags = selectedTags.trim() ? `${selectedTags.trim()}, ${tag}` : tag;
+	}
+
+	async function copySelectedTags() {
+		const text = selectedTags.trim();
+		if (!text) return;
+		try {
+			await navigator.clipboard.writeText(text);
+			success = '선택한 태그를 복사했습니다.';
+		} catch {
+			error = '선택한 태그를 복사하지 못했습니다.';
 		}
 	}
 
@@ -137,11 +154,11 @@
 			<div class="space-y-3">
 				<div class="flex flex-col gap-3 sm:flex-row"><SearchBar id="danbooru-tag-search" bind:value={searchQuery} placeholder="tag 또는 별칭 검색" label="Danbooru 태그 검색" class="min-w-0 flex-1" oninput={handleSearchInput} /><div class="sm:w-40"><label for="danbooru-tag-sort" class="sr-only">태그 정렬</label><select id="danbooru-tag-sort" bind:value={sort} onchange={changeSort} class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20">{#each sortOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></div></div>
 				{#if sort === 'similarity' && !searchQuery.trim()}<p class="text-xs text-muted-foreground">정확도순은 검색어를 입력하면 pgvector로 정렬합니다.</p>{/if}
-				<div class="flex flex-wrap gap-2" aria-label="Danbooru 태그 분류">
-					{#each categories as option (option.value)}
-						<OutlinedButton class="px-3 text-xs" active={category === option.value} onclick={() => selectCategory(option.value)}>{option.label}</OutlinedButton>
-					{/each}
-				</div>
+				<Tab items={categories} bind:value={category} ariaLabel="Danbooru 태그 분류" onselect={selectCategory} />
+				<section class="space-y-2">
+					<div class="flex items-center justify-between gap-3"><label for="selected-danbooru-tags" class="text-sm font-semibold">선택한 태그</label><IconOutlinedButton ariaLabel="선택한 태그 복사" disabled={!selectedTags.trim()} onclick={() => void copySelectedTags()}><Copy size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
+					<textarea id="selected-danbooru-tags" bind:value={selectedTags} rows="3" placeholder="태그 카드의 추가 버튼을 누르면 comma-separated로 들어갑니다." class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+				</section>
 			</div>
 
 			{#if loading}
@@ -152,7 +169,7 @@
 				<section class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 					{#each tags as item (item.tag)}
 						<article class="space-y-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
-							<div class="flex items-start justify-between gap-3"><div class="min-w-0"><code class="block truncate text-sm font-semibold text-foreground" title={item.tag}>{item.tag}</code><span class="mt-2 inline-flex rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">{categoryLabel(item.category)}</span></div><IconOutlinedButton ariaLabel={`${item.tag} 복사`} onclick={() => void copyTag(item.tag)}><Copy size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
+							<div class="flex items-start justify-between gap-3"><div class="min-w-0"><code class="block truncate text-sm font-semibold text-foreground" title={item.tag}>{item.tag}</code><span class="mt-2 inline-flex rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">{categoryLabel(item.category)}</span></div><div class="flex shrink-0 gap-2"><IconOutlinedButton ariaLabel={`${item.tag} 선택한 태그에 추가`} title="선택한 태그에 추가" onclick={() => addTag(item.tag)}><Plus size={16} strokeWidth={1.9} /></IconOutlinedButton><IconOutlinedButton ariaLabel={`${item.tag} 복사`} title="태그 바로 복사" onclick={() => void copyTag(item.tag)}><Copy size={16} strokeWidth={1.9} /></IconOutlinedButton></div></div>
 							<p class="text-xs text-muted-foreground">사용 {item.post_count.toLocaleString('ko-KR')}회</p>
 							{#if item.aliases.length > 0}<p class="line-clamp-2 text-xs leading-5 text-muted-foreground" title={item.aliases.join(', ')}>별칭: {item.aliases.slice(0, 6).join(', ')}</p>{/if}
 						</article>

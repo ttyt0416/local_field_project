@@ -17,6 +17,12 @@
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
 
+	type PresetMediaTab = 'image' | 'video';
+	const presetMediaTabs: { value: PresetMediaTab; label: string }[] = [
+		{ value: 'image', label: 'IMAGE' },
+		{ value: 'video', label: 'VIDEO' }
+	];
+
 	let ready = $state(false);
 	let optionsLoading = $state(true);
 	let presetsLoading = $state(true);
@@ -24,6 +30,7 @@
 	let success = $state('');
 	let presets = $state<Preset[]>([]);
 	let activeType = $state<PresetType>('t2i_anima');
+	let activePresetMedia = $derived<PresetMediaTab>(activeType === 'video' ? 'video' : 'image');
 	let activeImagePreset = $derived(
 		activeType === 'video'
 			? imagePresetCategories[0]
@@ -106,6 +113,10 @@
 		error = '';
 		if (type !== 'video') void loadImageOptions(type);
 		void loadPresets();
+	}
+
+	function selectPresetMedia(media: PresetMediaTab) {
+		selectPresetType(media === 'image' ? 't2i_anima' : 'video');
 	}
 
 	function selectImageFamily(family: ImageModelFamily) {
@@ -248,26 +259,22 @@
 {:else}
 	<Layout>
 		<div class="space-y-6">
-			<section class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-				<Typography as="h1" variant="display">프리셋 관리</Typography>
+			<Typography as="h1" variant="display">프리셋 관리</Typography>
+
+			<section class="space-y-2" aria-label="프리셋 종류">
+				<Tab items={presetMediaTabs} value={activePresetMedia} ariaLabel="프리셋 콘텐츠 종류" onselect={selectPresetMedia} />
+				{#if activePresetMedia === 'image'}
+					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="IMAGE 모델 family" onselect={selectImageFamily} />
+					<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
+				{/if}
+			</section>
+
+			<div class="flex justify-end">
 				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && (optionsLoading || isKreaPreset)} deactive={isKreaPreset}>
 					<Plus size={17} strokeWidth={1.9} />
 					<span>새 프리셋</span>
 				</PrimaryButton>
-			</section>
-
-			<section aria-labelledby="image-preset-types-title">
-				<div id="image-preset-types-title"><Typography as="h2" variant="h2">IMAGE</Typography></div>
-				<div class="mt-3 space-y-2">
-					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="IMAGE 모델 family" onselect={selectImageFamily} />
-					<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
-				</div>
-			</section>
-
-			<section aria-labelledby="video-preset-types-title">
-				<div id="video-preset-types-title"><Typography as="h2" variant="h2">VIDEO</Typography></div>
-				<div class="mt-3"><OutlinedButton type="button" active={activeType === 'video'} onclick={() => selectPresetType('video')}>VIDEO</OutlinedButton></div>
-			</section>
+			</div>
 
 			{#if presetsLoading}
 				<div class="flex justify-center py-12"><LoadingSpinner size="md" label="프리셋 불러오는 중" /></div>

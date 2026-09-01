@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from time import monotonic
 from typing import Literal
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
@@ -496,6 +496,26 @@ def vault_video_detail(
     )
 
 
+@router.get("/videos/{generation_id}/download")
+def download_vault_video(
+    generation_id: UUID,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    generation = get_video_generation_by_id(generation_id, user.id)
+    if generation is None or generation["status"] != "completed":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
+    storage_file_id = generation.get("storage_file_id")
+    if not isinstance(storage_file_id, str) or not storage_file_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 파일을 찾을 수 없습니다.")
+    if not storage_enabled():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+    try:
+        content, media_type = storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return _download_response(content, media_type, generation.get("filename") or f"local-field-video-{generation_id}.mp4")
+
+
 @router.patch("/videos/{generation_id}/favorite", response_model=FavoriteResponse)
 def update_vault_video_favorite(
     generation_id: UUID,
@@ -598,10 +618,27 @@ def vault_image_source(
     generation = get_image_generation_by_id(generation_id, user.id)
     if generation is None or generation["status"] != "completed":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
+    content, media_type = _image_content(generation, user)
+    return Response(content=content, media_type=media_type or "image/png")
+
+
+@router.get("/images/{generation_id}/download")
+def download_vault_image(
+    generation_id: UUID,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    generation = get_image_generation_by_id(generation_id, user.id)
+    if generation is None or generation["status"] != "completed":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
+    content, media_type = _image_content(generation, user)
+    return _download_response(content, media_type, generation.get("filename") or f"local-field-image-{generation_id}.png")
+
+
+def _image_content(generation: dict, user: UserResponse) -> tuple[bytes, str | None]:
     storage_file_id = generation.get("storage_file_id")
     try:
         if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
-            content, media_type = storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+            return storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
         else:
             filename = generation.get("filename")
             if not isinstance(filename, str) or not filename:
@@ -613,14 +650,23 @@ def vault_image_source(
                     "type": generation.get("image_type", "output"),
                 }
             )
-            content, media_type = _request_bytes(f"/view?{query}")
+            return _request_bytes(f"/view?{query}")
     except HTTPException:
         raise
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="이미지 원본을 읽을 수 없습니다.") from exc
-    return Response(content=content, media_type=media_type or "image/png")
+
+
+def _download_response(content: bytes, media_type: str | None, filename: str) -> Response:
+    safe_filename = Path(filename).name.replace("\\", "_").replace("\r", "").replace("\n", "").replace('"', "") or "download"
+    ascii_filename = safe_filename.encode("ascii", "ignore").decode() or "download"
+    return Response(
+        content=content,
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(safe_filename)}"},
+    )
 
 
 @router.post("/images/{generation_id}/edit", response_model=ImageEditResponse, status_code=status.HTTP_201_CREATED)

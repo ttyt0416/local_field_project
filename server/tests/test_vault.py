@@ -135,6 +135,38 @@ class VaultRouteTest(unittest.TestCase):
         increment.assert_called_once_with(generation_id, self.user.id)
         detail.assert_called_once_with(stored, self.user.id)
 
+    def test_image_download_reads_owned_storage_as_attachment(self) -> None:
+        generation_id = uuid4()
+        stored = {"status": "completed", "storage_file_id": "image-file", "filename": "portrait.png"}
+        with (
+            patch.object(vault, "get_image_generation_by_id", return_value=stored) as get_generation,
+            patch.object(vault, "storage_enabled", return_value=True),
+            patch.object(vault, "storage_download_file", return_value=(b"image", "image/png")) as download,
+        ):
+            response = vault.download_vault_image(generation_id, self.user)
+
+        self.assertEqual(response.body, b"image")
+        self.assertEqual(response.media_type, "image/png")
+        self.assertEqual(response.headers["content-disposition"], "attachment; filename=\"portrait.png\"; filename*=UTF-8''portrait.png")
+        get_generation.assert_called_once_with(generation_id, self.user.id)
+        download.assert_called_once_with(file_id="image-file", owner_id=str(self.user.id))
+
+    def test_video_download_reads_owned_storage_as_attachment(self) -> None:
+        generation_id = uuid4()
+        stored = {"status": "completed", "storage_file_id": "video-file", "filename": "scene.mp4"}
+        with (
+            patch.object(vault, "get_video_generation_by_id", return_value=stored) as get_generation,
+            patch.object(vault, "storage_enabled", return_value=True),
+            patch.object(vault, "storage_download_file", return_value=(b"video", "video/mp4")) as download,
+        ):
+            response = vault.download_vault_video(generation_id, self.user)
+
+        self.assertEqual(response.body, b"video")
+        self.assertEqual(response.media_type, "video/mp4")
+        self.assertEqual(response.headers["content-disposition"], "attachment; filename=\"scene.mp4\"; filename*=UTF-8''scene.mp4")
+        get_generation.assert_called_once_with(generation_id, self.user.id)
+        download.assert_called_once_with(file_id="video-file", owner_id=str(self.user.id))
+
     def test_favorite_request_is_explicit(self) -> None:
         payload = vault.FavoriteRequest(is_favorite=True)
         generation_id = uuid4()

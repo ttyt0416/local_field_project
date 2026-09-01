@@ -11,6 +11,7 @@
 	import Modal from '../../../components/modals/modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
+	import { filterModelFolder, modelFolders as modelPathFolders, parentModelFolder as parentInstalledModelFolder } from '$lib/utils/model-folders';
 
 	type ModelType = 'checkpoint' | 'diffusion_model' | 'lora' | 'text_encoder' | 'vae' | 'embedding';
 	type FileInfo = {
@@ -106,6 +107,9 @@
 	let visibleFolders = $derived(folders.filter((folder) => folder.subfolder && folderParent(folder.subfolder) === folderView));
 	let newFolderName = $state('');
 	let installed = $state<InstalledModel[]>([]);
+	let installedFolder = $state('');
+	let installedFolders = $derived(modelPathFolders(installed.map((model) => model.filename)));
+	let visibleInstalled = $derived(installed.filter((model) => filterModelFolder([model.filename], installedFolder).length > 0));
 	let deleteTarget = $state<InstalledModel | null>(null);
 	let deleteModalOpen = $state(false);
 	let deleteLoading = $state<string | null>(null);
@@ -500,19 +504,31 @@
 			</section>
 
 			<section class="space-y-3">
-				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">설치된 모델</Typography><span class="text-xs text-muted-foreground">{installed.length}개</span></div>
-				{#if installed.length === 0}<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">ComfyUI 모델 폴더에 설치된 모델이 없습니다.</div>
+				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">설치된 모델</Typography><span class="text-xs text-muted-foreground">{visibleInstalled.length}{installedFolder ? ` / ${installed.length}` : ''}개</span></div>
+				{#if installed.length === 0}
+					<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">ComfyUI 모델 폴더에 설치된 모델이 없습니다.</div>
 				{:else}
-					<div class="grid gap-3 md:grid-cols-2">
-						{#each installed as model}
-							<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3">
-								<Folder size={18} class="shrink-0 text-primary" />
-								<div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div>
-								<button type="button" aria-label={`${model.filename} 폴더 이동`} title="폴더 이동" disabled={deleteLoading !== null || moveLoading} onclick={() => void openMoveFolderModal(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"><FolderInput size={16} /></button>
-								<button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null || moveLoading} onclick={() => requestDeleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button>
-							</article>
+					<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="설치된 모델 폴더 filter">
+						<OutlinedButton class="min-h-9 px-3 text-xs" active={installedFolder === ''} onclick={() => (installedFolder = '')}>전체</OutlinedButton>
+						{#if installedFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (installedFolder = parentInstalledModelFolder(installedFolder))}>바로 위 폴더</OutlinedButton>{/if}
+						{#each installedFolders as folder}
+							<OutlinedButton class="min-h-9 px-3 text-xs" active={installedFolder === folder} onclick={() => (installedFolder = folder)}>{folder}</OutlinedButton>
 						{/each}
 					</div>
+					{#if visibleInstalled.length === 0}
+						<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">선택한 폴더에 설치된 모델이 없습니다.</div>
+					{:else}
+						<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+							{#each visibleInstalled as model}
+								<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3">
+									<Folder size={18} class="shrink-0 text-primary" />
+									<div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div>
+									<button type="button" aria-label={`${model.filename} 폴더 이동`} title="폴더 이동" disabled={deleteLoading !== null || moveLoading} onclick={() => void openMoveFolderModal(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"><FolderInput size={16} /></button>
+									<button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null || moveLoading} onclick={() => requestDeleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button>
+								</article>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			</section>
 		</div>

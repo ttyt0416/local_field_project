@@ -4,7 +4,7 @@
 
 이미지 상세는 `model_family`, `generation_mode`, I2I source image URL과 `denoise`를 함께 반환해 동일 family/mode 재생성을 지원한다. 이미지 상세는 `file_size_bytes`로 파일 용량을 표시하고, 동영상 상세는 `duration_seconds`를 분·초 형식으로 표시하며 `file_size_bytes`로 파일 용량도 표시한다. 신규 생성·편집 결과는 저장 당시 실제 bytes를 기록하고, 기존 결과의 size가 없는 경우 상세 조회에서 Storage metadata를 보완 조회한다.
 
-이미지 상세의 편집 버튼은 crop, 1.0x~3.0x 중앙 확대, 90도 단위 회전을 Canvas로 미리보고 `POST /vault/images/{generation_id}/edit`로 새 generation을 저장한다. `GET /vault/images/{generation_id}/source`는 편집용 인증 원본을 제공한다. 이미지 lightbox의 확대·축소는 표시 크기만 변경한다.
+이미지 상세의 편집 버튼은 crop, 1.0x~3.0x 중앙 확대, 90도 단위 회전을 Canvas로 미리보고 `POST /vault/images/{generation_id}/edit`로 새 generation을 저장한다. `GET /vault/images/{generation_id}/source`는 편집용 인증 원본을 제공한다. `GET /vault/images/{generation_id}/download`와 `GET /vault/videos/{generation_id}/download`는 generation owner를 확인한 뒤 Local Field가 Storage bytes를 읽어 attachment response로 반환하므로 browser가 signed Storage URL을 직접 fetch하지 않는다. 이미지 lightbox의 확대·축소는 표시 크기만 변경한다.
 
 동영상 상세의 편집 버튼은 시작·종료 시간, crop 좌표, 90도 단위 회전을 입력받아 `POST /vault/videos/{generation_id}/edit`에서 FFmpeg로 새 H.264/AAC MP4를 저장한다. 모든 편집은 원본 generation과 Storage 파일을 보존한다.
 

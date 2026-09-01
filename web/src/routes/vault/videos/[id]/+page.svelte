@@ -97,7 +97,7 @@
 		if (!generation?.video_url || downloading) return;
 		downloading = true;
 		try {
-			await downloadMedia(generation.video_url, `local-field-video-${generation.id}.mp4`);
+			await downloadMedia(`vault/videos/${generation.id}/download`, `local-field-video-${generation.id}.mp4`);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '영상을 다운로드하지 못했습니다.';
 		} finally {
