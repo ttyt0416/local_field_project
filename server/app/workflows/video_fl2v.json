@@ -2,7 +2,7 @@
   "1": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "unet_name": "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors",
       "weight_dtype": "default"
     }
   },
@@ -37,7 +37,7 @@
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "model": ["1", 0],
-      "lora_name": "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+      "lora_name": "MiniMax/VBVR_H3_attn_only.safetensors",
       "strength_model": 1
     }
   },
@@ -65,7 +65,7 @@
     "inputs": {
       "model": ["5", 0],
       "scheduler": "simple",
-      "steps": 4,
+      "steps": 6,
       "denoise": 1
     }
   },

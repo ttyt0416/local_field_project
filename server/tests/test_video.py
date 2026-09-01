@@ -1,6 +1,8 @@
 import asyncio
+import json
 import re
 import unittest
+from pathlib import Path
 from typing import Literal, cast
 from unittest.mock import patch
 from uuid import uuid4
@@ -14,6 +16,20 @@ from pydantic import ValidationError
 class VideoContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.user = UserResponse(id=uuid4(), username="tester")
+
+    def test_video_workflows_use_10eros_vbvr_defaults(self) -> None:
+        workflows = Path(video.__file__).with_name("workflows")
+        for filename in ("video_i2v.json", "video_fl2v.json", "video_r2v.json"):
+            workflow = json.loads((workflows / filename).read_text())
+            unet = next(node for node in workflow.values() if node["class_type"] == "UNETLoader")
+            lora_id, lora = next((node_id, node) for node_id, node in workflow.items() if node["class_type"] == "LoraLoaderModelOnly")
+            sampler = next(node for node in workflow.values() if node["class_type"] == "KSamplerSelect")
+            scheduler = next(node for node in workflow.values() if node["class_type"] == "BasicScheduler")
+
+            self.assertEqual(unet["inputs"]["unet_name"], "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors")
+            self.assertEqual(lora["inputs"]["lora_name"], "MiniMax/VBVR_H3_attn_only.safetensors")
+            self.assertEqual(sampler["inputs"]["sampler_name"], "res_multistep")
+            self.assertEqual(scheduler["inputs"], {"model": [lora_id, 0], "scheduler": "simple", "steps": 6, "denoise": 1})
 
     def test_reference_markers_are_normalized_to_minimax_contract(self) -> None:
         self.assertEqual(
@@ -316,31 +332,24 @@ class VideoContractTest(unittest.TestCase):
         self.assertIn(b'filename="local_field_', request.data)
         self.assertIn(b".mp4", request.data)
 
-    def test_video_prompt_pattern_is_language_union_with_digits_and_symbols(self) -> None:
-        korean_labels = video._video_prompt_section_labels(["ko"])
-        korean_prompt = "\n".join(f"{label}\n장면 0초-3초 @image1: !?" for label in korean_labels)
+    def test_video_prompt_pattern_always_allows_english_descriptions(self) -> None:
+        korean_prompt = "integrated_multimodal_description:\n[Shot 1] English description with 한국어 dialogue.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nN/A"
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt))
-        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt.replace("장면", "scene", 1)))
+        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt.replace("English", "café", 1)))
 
-        mixed_labels = video._video_prompt_section_labels(["ko", "en"])
-        mixed_prompt = "\n".join(f"{label}\nred 빨강 16:9 @image1: !?" for label in mixed_labels)
-        self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko", "en"]), mixed_prompt))
-
-        japanese_labels = video._video_prompt_section_labels(["ja"])
-        japanese_prompt = "\n".join(f"{label}\n動き 0秒-3秒 @image1: !?" for label in japanese_labels)
-        self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt))
-        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt.replace("動き", "move", 1)))
-
-    def test_video_prompt_requires_atlas_six_blocks_in_order(self) -> None:
-        labels = video._video_prompt_section_labels(["en"])
-        valid = "\n".join(f"{label}\nA concrete instruction." for label in labels)
-        self.assertEqual(video._validate_video_prompt_contents(valid, ["en"]), valid)
+    def test_video_prompt_requires_official_core_sections_and_shot_timestamps(self) -> None:
+        valid = "integrated_multimodal_description:\n[Shot 1] A woman looks toward the window.\n[Shot 2] At 00:03.500, the camera cuts to her reflection.\n\noverall_soundscape:\nA quiet train hum continues.\n\nnon_diegetic_music:\nN/A"
+        self.assertEqual(video._validate_video_prompt_contents(valid, ["en"], 5), valid)
         with self.assertRaises(video._VLLMError):
-            video._validate_video_prompt_contents(valid.replace("Negative:", "Text:", 1), ["en"])
+            video._validate_video_prompt_contents(valid.replace("00:03.500", "00:05.000"), ["en"], 5)
 
-    def test_video_prompt_enhancement_uses_selected_languages_and_pattern(self) -> None:
+    def test_video_prompt_enhancement_uses_official_core_fields_and_pattern(self) -> None:
         languages: list[Literal["ko", "en", "ja"]] = ["ko", "en"]
-        fields = {field: f"red 빨강 0s-5s @image1: !?" for field in video._VIDEO_PROMPT_FIELDS}
+        fields = {
+            "integrated_multimodal_description": "[Shot 1] A red apple rests on the table.\n[Shot 2] At 00:03.000, the camera cuts to a close-up.",
+            "overall_soundscape": "A quiet room tone continues.",
+            "non_diegetic_music": "N/A",
+        }
         payload = video.VideoPromptEnhancementRequest(
             prompt="사과가 움직인다",
             mode="i2v",
@@ -350,21 +359,23 @@ class VideoContractTest(unittest.TestCase):
         with patch.object(video, "_request_structured_object", return_value=fields) as request:
             result = video._enhance_video_prompt(payload)
 
-        expected = video._assemble_video_prompt(
-            {field: video._normalize_video_reference_markers(value) for field, value in fields.items()},
-            languages,
-        )
+        expected = video._assemble_video_prompt({field: video._normalize_video_reference_markers(value) for field, value in fields.items()})
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_fields")
         schema = request.call_args.kwargs["schema"]
         self.assertEqual(set(schema["required"]), set(video._VIDEO_PROMPT_FIELDS))
         self.assertEqual(schema["additionalProperties"], False)
-        self.assertEqual(schema["properties"]["style"]["pattern"], video._video_prompt_pattern(languages))
-        self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
+        self.assertEqual(schema["properties"]["integrated_multimodal_description"]["pattern"], video._video_prompt_pattern(languages))
+        self.assertEqual(schema["properties"]["integrated_multimodal_description"]["maxLength"], 3000)
+        self.assertIn("0.00s to 5s", request.call_args.kwargs["user_prompt"])
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
-        fields = {field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_FIELDS}
+        fields = {
+            "integrated_multimodal_description": "[Shot 1] The subject continues moving.",
+            "overall_soundscape": "Soft room tone continues.",
+            "non_diegetic_music": "N/A",
+        }
         payload = video.VideoPromptEnhancementRequest(
             prompt="continue the scene",
             mode="r2v",
@@ -380,25 +391,31 @@ class VideoContractTest(unittest.TestCase):
         system_prompt = request.call_args.kwargs["system_prompt"]
         user_prompt = request.call_args.kwargs["user_prompt"]
         self.assertIn("The supplied user prompt describes the full sequence", system_prompt)
-        self.assertIn("local timeline from 0s to the supplied duration", system_prompt)
+        self.assertIn("[Shot 1] without a timestamp", system_prompt)
         self.assertIn("<duration_seconds>\n1\n</duration_seconds>", user_prompt)
         self.assertIn("<sequence_segment>\n2/2\n</sequence_segment>", user_prompt)
-        self.assertIn("<timeline_clock>\n0s to 1s", user_prompt)
+        self.assertIn("<timeline_clock>\n0.00s to 1s", user_prompt)
 
-    def test_enabled_video_enhancement_adds_reference_roles_to_workflow_prompt(self) -> None:
-        labels = video._video_prompt_section_labels(["en"])
-        improved = "\n".join(f"{label}\nconcrete instruction 0s-5s @image1: !?" for label in labels)
-        request = video.VideoGenerationRequest(
+    def test_enabled_video_enhancement_adds_mode_alignment_to_workflow_prompt(self) -> None:
+        improved = "integrated_multimodal_description:\n[Shot 1] A cyclist begins beside the bicycle.\n[Shot 2] At 00:03.000, the camera cuts to the open umbrella.\n\noverall_soundscape:\nSteady rain continues.\n\nnon_diegetic_music:\nN/A"
+        i2v = video.VideoGenerationRequest(
             prompt="move",
             prompt_enhancement_enabled=True,
             improved_prompt=improved,
             prompt_output_languages=["en"],
             first_frame=video.VideoAsset(kind="image", file_index=0),
         )
-        effective = video._effective_video_prompt("i2v", request)
-        self.assertIn("<Picture 1>: start-image reference", effective)
-        normalized_improved = video._normalize_video_reference_markers(improved)
-        self.assertIn(normalized_improved, effective)
+        fl2v = i2v.model_copy(update={"last_frame": video.VideoAsset(kind="image", file_index=1)})
+        r2v = video.VideoGenerationRequest(
+            prompt="move",
+            prompt_enhancement_enabled=True,
+            improved_prompt=improved,
+            prompt_output_languages=["en"],
+            reference_images=[video.VideoAsset(kind="image", file_index=0)],
+        )
+        self.assertTrue(video._effective_video_prompt("i2v", i2v).startswith("For the target video, at 0.00 seconds"))
+        self.assertIn("<Picture 2> (from [Shot 2]) aligns with the 5.00-second mark", video._effective_video_prompt("fl2v", fl2v))
+        self.assertIn("<Picture 1>: image reference", video._effective_video_prompt("r2v", r2v))
 
     def test_duplicate_video_prompt_languages_are_rejected(self) -> None:
         with self.assertRaises(ValidationError):
