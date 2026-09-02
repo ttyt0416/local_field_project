@@ -28,10 +28,12 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "style, timeline, camera, audio, text, negative. "
     "Do not put section headers inside field values. "
     "Style must define the medium, texture, palette, era, and visual identity. "
-    "The supplied user prompt describes the full sequence; allocate its intent to the current sequence segment from its number and count instead of repeating the entire sequence. "
+    "The global style and background apply to every sequence segment. "
+    "The current segment instruction defines only this segment's actions; do not add actions from another segment. "
     "Timeline must cover the full requested duration with concrete time ranges and actions, using a local timeline from 0s to the supplied duration. "
     "For a sequence segment, never use global sequence timestamps or plan beyond the supplied duration. "
     "For segment 2 or later, <Picture 1> is the actual final frame from the preceding segment; preserve continuity from it. "
+    "Use the previous segment prompt only for visual continuity; never repeat its timeline actions. "
     "Camera must state exact movement or explicitly reject movement and cuts. "
     "Audio must list ambience, dialogue, music, and their timing, or explicitly say none. "
     "Text must spell every readable on-screen string exactly and forbid invented text when needed. "
@@ -45,7 +47,8 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
 )
 
 VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT = (
-    "<user_prompt>\n{prompt}\n</user_prompt>\n"
+    "<global_style_and_background>\n{prompt}\n</global_style_and_background>\n"
+    "<current_segment_instruction>\n{segment_prompt}\n</current_segment_instruction>\n"
     "<mode>\n{mode}\n</mode>\n"
     "<duration_seconds>\n{duration}\n</duration_seconds>\n"
     "<timeline_clock>\n0s to {duration}s in this segment only; never use global sequence timestamps.\n</timeline_clock>\n"

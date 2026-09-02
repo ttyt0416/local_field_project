@@ -67,6 +67,7 @@
 	let ready = $state(false);
 	let mode = $state<VideoMode>('i2v');
 	let prompt = $state('');
+	let segmentPrompts = $state<string[]>(['']);
 	let promptEnhancementEnabled = $state(false);
 	let improvedSegmentPrompts = $state<string[]>(['']);
 	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
@@ -147,6 +148,9 @@
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
 
 	$effect(() => {
+		if (segmentPrompts.length !== segmentCount) {
+			segmentPrompts = Array.from({ length: segmentCount }, (_, index) => segmentPrompts[index] ?? '');
+		}
 		if (improvedSegmentPrompts.length !== segmentCount) {
 			improvedSegmentPrompts = Array.from({ length: segmentCount }, (_, index) => improvedSegmentPrompts[index] ?? '');
 		}
@@ -282,12 +286,18 @@
 		improvedSegmentPrompts = improvedSegmentPrompts.map((current, currentIndex) => currentIndex === index ? value : current);
 	}
 
+	function updateSegmentPrompt(index: number, value: string) {
+		segmentPrompts = segmentPrompts.map((current, currentIndex) => currentIndex === index ? value : current);
+		resetImprovedPrompts();
+	}
+
 	function segmentDuration(index: number) {
 		return Math.min(10, Math.max(0, Number(duration) - index * 10));
 	}
 
 	function segmentTimeRange(index: number) {
-		return `0–${segmentDuration(index)}초`;
+		const start = index * 10;
+		return `${start}~${start + segmentDuration(index)}초`;
 	}
 
 	function setPrompt(value: string) {
@@ -632,6 +642,10 @@
 			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
 		}
+		if (segmentPrompts.some((value) => !value.trim())) {
+			error = '구간별 프롬프트를 모두 입력해 주세요.';
+			return;
+		}
 		enhancingPrompt = true;
 		try {
 			const proposals = Array.from({ length: segmentCount }, () => '');
@@ -641,6 +655,7 @@
 					timeout: 600_000,
 					json: {
 						prompt: prompt.trim(),
+						segment_prompt: segmentPrompts[index].trim(),
 						mode: index === 0 ? mode : 'r2v',
 						duration: segmentDuration(index),
 						segment_index: index,
@@ -674,6 +689,10 @@
 			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
 		}
+		if (segmentPrompts.some((value) => !value.trim())) {
+			error = '구간별 프롬프트를 모두 입력해 주세요.';
+			return;
+		}
 		if (promptEnhancementEnabled && improvedSegmentPrompts.some((value) => !value.trim())) {
 			error = '개선된 프롬프트를 먼저 생성해 주세요.';
 			return;
@@ -687,6 +706,7 @@
 		try {
 			const payload: Record<string, unknown> = {
 				prompt: prompt.trim(),
+				segment_prompts: segmentPrompts.map((value) => value.trim()),
 				prompt_enhancement_enabled: promptEnhancementEnabled,
 				improved_prompt: promptEnhancementEnabled ? improvedSegmentPrompts[0].trim() : null,
 				improved_segment_prompts: promptEnhancementEnabled ? improvedSegmentPrompts.map((value) => value.trim()) : [],
@@ -905,7 +925,7 @@
 					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
 							<div class="flex items-center justify-between gap-3">
-								<span class="text-sm font-medium">프롬프트</span>
+								<span class="text-sm font-medium">스타일·전체 배경</span>
 								<div class="flex items-center gap-2">
 									<label for="video-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="video-prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} onchange={resetImprovedPrompts} class="peer sr-only" />
@@ -915,7 +935,7 @@
 									<OutlinedButton
 										type="button"
 										loading={enhancingPrompt}
-										disabled={generating || enhancingPrompt || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim()}
+										disabled={generating || enhancingPrompt || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim() || segmentPrompts.some((value) => !value.trim())}
 										class="min-h-9 px-3 text-xs"
 										onclick={() => void enhancePrompt()}
 									>
@@ -938,7 +958,13 @@
 								</div>
 							{/if}
 							<div class="space-y-4">
-								<label class="block" for="video-prompt"><span class="sr-only">프롬프트</span><textarea id="video-prompt" bind:value={prompt} oninput={resetImprovedPrompts} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={resetImprovedPrompts} rows="5" required disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+								{#each segmentPrompts as segmentPrompt, index}
+									<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
+										<div class="flex items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span></div>
+										<label class="block space-y-2" for={`video-segment-prompt-${index}`}><span class="text-xs font-medium text-primary">구간 프롬프트</span><textarea id={`video-segment-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+									</section>
+								{/each}
 								{#if promptEnhancementEnabled}
 									{#each improvedSegmentPrompts as segmentPrompt, index}
 										<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
@@ -1109,7 +1135,7 @@
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} oninput={resetImprovedPrompts} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || enhancingPrompt} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || enhancingPrompt} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>

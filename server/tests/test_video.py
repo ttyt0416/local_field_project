@@ -129,6 +129,23 @@ class VideoContractTest(unittest.TestCase):
         with self.assertRaises(video.HTTPException):
             video._effective_video_prompts("i2v", request.model_copy(update={"segment_prompts": ["opening"]}))
 
+    def test_long_video_combines_global_context_with_each_segment_prompt(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="hand-drawn animation in a forest at dawn",
+            segment_prompts=["The character enters the forest.", "The character finds a river.", "The character leaves at sunset."],
+            duration=23,
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+
+        self.assertEqual(
+            video._effective_video_prompts("i2v", request),
+            [
+                "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character enters the forest.",
+                "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character finds a river.",
+                "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character leaves at sunset.",
+            ],
+        )
+
     def test_continuation_queues_r2v_with_only_last_frame_reference(self) -> None:
         generation = {
             "prompt_id": "root-prompt",
@@ -385,6 +402,7 @@ class VideoContractTest(unittest.TestCase):
         fields = {field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_FIELDS}
         payload = video.VideoPromptEnhancementRequest(
             prompt="continue the scene",
+            segment_prompt="The character leaves the room.",
             mode="r2v",
             duration=1,
             segment_index=1,
@@ -397,8 +415,11 @@ class VideoContractTest(unittest.TestCase):
 
         system_prompt = request.call_args.kwargs["system_prompt"]
         user_prompt = request.call_args.kwargs["user_prompt"]
-        self.assertIn("The supplied user prompt describes the full sequence", system_prompt)
+        self.assertIn("The global style and background apply to every sequence segment", system_prompt)
+        self.assertIn("never repeat its timeline actions", system_prompt)
         self.assertIn("local timeline from 0s to the supplied duration", system_prompt)
+        self.assertIn("<global_style_and_background>\ncontinue the scene\n</global_style_and_background>", user_prompt)
+        self.assertIn("<current_segment_instruction>\nThe character leaves the room.\n</current_segment_instruction>", user_prompt)
         self.assertIn("<duration_seconds>\n1\n</duration_seconds>", user_prompt)
         self.assertIn("<sequence_segment>\n2/2\n</sequence_segment>", user_prompt)
         self.assertIn("<timeline_clock>\n0s to 1s", user_prompt)

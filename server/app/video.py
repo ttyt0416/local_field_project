@@ -118,6 +118,7 @@ class VideoGenerationRequest(BaseModel):
 
 class VideoPromptEnhancementRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
+    segment_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     mode: Literal["i2v", "fl2v", "r2v"]
     duration: float = Field(default=5)
     segment_index: int = Field(default=0, ge=0, le=359)
@@ -558,6 +559,7 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhan
         system_prompt=VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
         user_prompt=VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT.format(
             prompt=payload.prompt.strip(),
+            segment_prompt=(payload.segment_prompt or payload.prompt).strip(),
             mode=payload.mode,
             duration=f"{payload.duration:g}",
             segment_number=payload.segment_index + 1,
@@ -715,6 +717,11 @@ def _effective_video_prompts(mode: str, request: VideoGenerationRequest) -> list
     raw_prompts = _segment_prompt_values(
         request.segment_prompts, request.prompt, segment_count, "프롬프트", repeat_legacy=True
     )
+    if request.segment_prompts:
+        raw_prompts = [
+            f"Overall style and background:\n{request.prompt.strip()}\n\nCurrent segment:\n{segment_prompt}"
+            for segment_prompt in raw_prompts
+        ]
     if not request.prompt_enhancement_enabled:
         return raw_prompts
     improved_prompts = _segment_prompt_values(
