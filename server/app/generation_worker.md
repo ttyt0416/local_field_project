@@ -3,7 +3,7 @@
 `generation_worker.py`는 서버 startup 시 실행되는 background reconciler다. DB에서 `queued` 또는 `processing` 상태인 이미지·동영상·3D generation을 조회하고, 각 작업의 ComfyUI history를 확인한다.
 
 - 이미지 완료: ComfyUI output을 읽어 Storage에 저장하고 `image_generations`를 완료 상태로 갱신한다.
-- 동영상 완료: single segment는 ComfyUI video output을 Storage에 저장한다. long sequence의 non-final segment는 actual last frame을 PNG로 추출해 next R2V job의 `<Picture 1>`로 queue하고, final segment는 ordered internal videos를 concat한 one-file output으로 `video_generations`를 완료 상태로 갱신한다. root prompt ID는 유지하고 active Comfy prompt ID만 교체한다.
+- 동영상 완료: single segment는 ComfyUI video output을 Storage에 저장한다. long sequence의 non-final segment는 actual last frame을 PNG로 추출한다. `r2v` continuation은 해당 frame을 next R2V job의 `<Picture 1>`로 queue하고 selected reference images는 Picture 2부터 유지한다. `i2v` continuation은 same frame을 next I2V job의 `first_frame`으로 queue한다. final segment는 ordered internal videos를 concat한 one-file output으로 `video_generations`를 완료 상태로 갱신한다. root prompt ID는 유지하고 active Comfy prompt ID만 교체한다.
 - 3D 완료: ComfyUI `outputs[*].3d`의 GLB를 검증해 Storage에 저장하고 `three_d_generations`와 stage를 갱신한다.
 - ComfyUI가 일시적으로 unavailable이면 해당 작업을 실패로 바꾸지 않고 다음 주기에 재시도한다.
 - 서버가 재시작되어도 DB에 남은 active generation을 다시 발견하므로 브라우저 생명주기와 무관하게 처리된다.
