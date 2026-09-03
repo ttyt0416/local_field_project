@@ -100,6 +100,7 @@ class VideoGenerationRequest(BaseModel):
     width: int = Field(default=1344, ge=32, le=1344)
     height: int = Field(default=768, ge=32, le=1344)
     duration: float = Field(default=5)
+    continuation_mode: Literal["r2v", "i2v"] = "r2v"
     fps: float = Field(default=24, ge=1, le=120)
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
     first_frame: VideoAsset | None = None
@@ -211,6 +212,8 @@ async def create_video(
         request = VideoGenerationRequest.model_validate_json(payload)
         _validate_request(mode, request, files)
         segment_durations = _video_segment_durations(request.duration)
+        input_segment_prompts = _input_segment_prompts(request, len(segment_durations))
+        improved_segment_prompts = _submitted_improved_segment_prompts(request, len(segment_durations))
         effective_prompts = _effective_video_prompts(mode, request)
         resolved = await _resolve_assets(mode, request, files, user)
         initial_request = request.model_copy(update={"duration": segment_durations[0]})
@@ -232,7 +235,7 @@ async def create_video(
         client_id=client_id,
         active_prompt_id=prompt_id,
         mode=mode,
-        prompt=effective_prompts[0],
+        prompt=request.prompt.strip(),
         width=request.width,
         height=request.height,
         length=_frame_length(request.duration, request.fps),
@@ -240,7 +243,11 @@ async def create_video(
         seed=seed,
         input_file_ids=input_file_ids,
         segment_prompts=effective_prompts,
+        input_segment_prompts=input_segment_prompts,
+        improved_segment_prompts=improved_segment_prompts,
         segment_durations=segment_durations,
+        continuation_mode=request.continuation_mode,
+        reference_image_file_ids=[resolved[_asset_cache_key(asset)].file_id for asset in request.reference_images],
     )
     return VideoGenerationAccepted(
         prompt_id=prompt_id,
@@ -457,6 +464,8 @@ def _request_assets(mode: str, request: VideoGenerationRequest) -> list[VideoAss
         raise HTTPException(status_code=422, detail="R2V 참조 오디오 구성이 올바르지 않습니다.")
     if not request.reference_images and not request.reference_videos and not request.reference_audios:
         raise HTTPException(status_code=422, detail="R2V에는 참조 이미지·동영상 또는 오디오가 필요합니다.")
+    if len(_video_segment_durations(request.duration)) > 1 and len(request.reference_images) > 8:
+        raise HTTPException(status_code=422, detail="10초를 초과하는 R2V는 참조 이미지를 최대 8개까지 사용할 수 있습니다.")
     return [*request.reference_images, *request.reference_videos, *request.reference_audios]
 
 
@@ -703,37 +712,74 @@ def _segment_prompt_values(
     return result
 
 
+def _input_segment_prompts(request: VideoGenerationRequest, segment_count: int) -> list[str]:
+    return _segment_prompt_values(
+        request.segment_prompts, request.prompt, segment_count, "프롬프트", repeat_legacy=True
+    )
+
+
+def _submitted_improved_segment_prompts(request: VideoGenerationRequest, segment_count: int) -> list[str]:
+    if not request.prompt_enhancement_enabled:
+        return []
+    return _segment_prompt_values(
+        request.improved_segment_prompts, request.improved_prompt, segment_count, "개선된 프롬프트"
+    )
+
+
 def _continuation_reference_prompt(request: VideoGenerationRequest) -> str:
     language = request.prompt_output_languages[0]
     if language == "ko":
-        return "참조:\n<Picture 1>: 직전 영상 구간의 실제 마지막 프레임 참조. 주체, 구도, 조명과 시각적 연속성을 유지합니다."
+        first_frame = "직전 영상 구간의 실제 마지막 프레임. 이 이미지를 다음 구간의 첫 프레임으로 사용해 시작하고, 주체·구도·조명·시각적 연속성을 유지합니다."
+        image = "사용자가 선택한 참조 이미지. 주체와 시각적 정체성을 유지합니다."
+    elif language == "ja":
+        first_frame = "直前の動画区間の実際の最終フレーム。この画像を次の区間の最初のフレームとして開始し、被写体、構図、照明、視覚的一貫性を維持します。"
+        image = "ユーザーが選択した参照画像。被写体と視覚的アイデンティティを維持します。"
+    else:
+        first_frame = "actual final frame from the previous video segment. Start this segment from it as the first frame, preserving subject, composition, lighting, and visual continuity."
+        image = "user-selected reference image. Preserve subject and visual identity."
+    return "\n".join(
+        [
+            "참조:" if language == "ko" else "参照:" if language == "ja" else "Reference:",
+            f"<Picture 1>: {first_frame}",
+            *(f"<Picture {index}>: {image}" for index, _ in enumerate(request.reference_images, start=2)),
+        ]
+    )
+
+
+def _continuation_i2v_prompt(request: VideoGenerationRequest) -> str:
+    language = request.prompt_output_languages[0]
+    if language == "ko":
+        return "참조:\n<Picture 1>: 직전 영상 구간의 실제 마지막 프레임. 이 이미지를 다음 구간의 시작 프레임으로 사용합니다."
     if language == "ja":
-        return "参照:\n<Picture 1>: 直前の動画区間の実際の最終フレームを参照。被写体、構図、照明、視覚的一貫性を維持します。"
-    return "Reference:\n<Picture 1>: actual final-frame reference from the previous video segment. Preserve subject, composition, lighting, and visual continuity."
+        return "参照:\n<Picture 1>: 直前の動画区間の実際の最終フレーム。この画像を次の区間の開始フレームとして使用します。"
+    return "Reference:\n<Picture 1>: actual final frame from the previous video segment. Use it as this segment's start frame."
+
+
+def _continuation_prompt(request: VideoGenerationRequest) -> str:
+    return _continuation_i2v_prompt(request) if request.continuation_mode == "i2v" else _continuation_reference_prompt(request)
 
 
 def _effective_video_prompts(mode: str, request: VideoGenerationRequest) -> list[str]:
     segment_count = len(_video_segment_durations(request.duration))
-    raw_prompts = _segment_prompt_values(
-        request.segment_prompts, request.prompt, segment_count, "프롬프트", repeat_legacy=True
-    )
+    raw_prompts = _input_segment_prompts(request, segment_count)
     if request.segment_prompts:
         raw_prompts = [
             f"Overall style and background:\n{request.prompt.strip()}\n\nCurrent segment:\n{segment_prompt}"
             for segment_prompt in raw_prompts
         ]
     if not request.prompt_enhancement_enabled:
-        return raw_prompts
-    improved_prompts = _segment_prompt_values(
-        request.improved_segment_prompts, request.improved_prompt, segment_count, "개선된 프롬프트"
-    )
+        return [
+            raw_prompt if index == 0 else f"{_continuation_prompt(request)}\n\n{raw_prompt}"
+            for index, raw_prompt in enumerate(raw_prompts)
+        ]
+    improved_prompts = _submitted_improved_segment_prompts(request, segment_count)
     result: list[str] = []
     for index, improved_prompt in enumerate(improved_prompts):
         try:
             improved_prompt = _validate_video_prompt_contents(improved_prompt, request.prompt_output_languages)
         except _VLLMError as exc:
             raise HTTPException(status_code=422, detail="개선된 동영상 프롬프트 형식이 올바르지 않습니다.") from exc
-        reference_prompt = _video_reference_prompt(mode, request) if index == 0 else _continuation_reference_prompt(request)
+        reference_prompt = _video_reference_prompt(mode, request) if index == 0 else _continuation_prompt(request)
         result.append(f"{reference_prompt}\n\n{improved_prompt}")
     return result
 
@@ -1011,7 +1057,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
     )
 
 
-def _queue_r2v_continuation(
+def _queue_video_continuation(
     generation: dict[str, Any],
     user_id: uuid.UUID,
     frame_file_id: str,
@@ -1024,16 +1070,6 @@ def _queue_r2v_continuation(
     if next_index >= len(durations) or next_index >= len(prompts):
         raise _ComfyUIError("다음 영상 구간 정보를 찾을 수 없습니다.")
     continuation = VideoAsset(kind="image", file_id=frame_file_id)
-    request = VideoGenerationRequest(
-        prompt=prompts[next_index],
-        width=int(generation["width"]),
-        height=int(generation["height"]),
-        duration=durations[next_index],
-        fps=float(generation["fps"]),
-        seed=int(generation["seed"]),
-        reference_images=[continuation],
-    )
-    # ponytail: follow-on R2V uses only the generated final frame; persist original auxiliary references only if needed.
     resolved = {
         _asset_cache_key(continuation): _ResolvedAsset(
             file_id=frame_file_id,
@@ -1043,11 +1079,50 @@ def _queue_r2v_continuation(
             kind="image",
         )
     }
-    prompt, _ = _build_prompt("r2v", request, resolved, effective_prompt=prompts[next_index])
+    continuation_mode = generation.get("continuation_mode", "r2v")
+    if continuation_mode == "r2v":
+        original_images = [
+            VideoAsset(kind="image", file_id=file_id)
+            for file_id in generation.get("reference_image_file_ids", [])
+            if isinstance(file_id, str) and _FILE_ID_PATTERN.fullmatch(file_id)
+        ]
+        for index, asset in enumerate(original_images, start=2):
+            content, media_type = storage_download_file(file_id=asset.file_id or "", owner_id=str(user_id))
+            resolved[_asset_cache_key(asset)] = _ResolvedAsset(
+                file_id=asset.file_id or "",
+                filename=f"{generation['prompt_id']}-reference-image-{index:03d}.png",
+                content=content,
+                media_type=media_type or "image/png",
+                kind="image",
+            )
+        request = VideoGenerationRequest(
+            prompt=prompts[next_index],
+            width=int(generation["width"]),
+            height=int(generation["height"]),
+            duration=durations[next_index],
+            fps=float(generation["fps"]),
+            seed=int(generation["seed"]),
+            reference_images=[continuation, *original_images],
+        )
+        workflow_mode = "r2v"
+    elif continuation_mode == "i2v":
+        request = VideoGenerationRequest(
+            prompt=prompts[next_index],
+            width=int(generation["width"]),
+            height=int(generation["height"]),
+            duration=durations[next_index],
+            fps=float(generation["fps"]),
+            seed=int(generation["seed"]),
+            first_frame=continuation,
+        )
+        workflow_mode = "i2v"
+    else:
+        raise _ComfyUIError("다음 영상 구간 연결 방식이 올바르지 않습니다.")
+    prompt, _ = _build_prompt(workflow_mode, request, resolved, effective_prompt=prompts[next_index])
     response = _request_json("POST", "/prompt", {"prompt": prompt, "client_id": generation["client_id"]})
     next_prompt_id = response.get("prompt_id")
     if not isinstance(next_prompt_id, str) or not next_prompt_id:
-        raise _ComfyUIError("ComfyUI가 다음 R2V 작업 ID를 반환하지 않았습니다.")
+        raise _ComfyUIError("ComfyUI가 다음 영상 작업 ID를 반환하지 않았습니다.")
     return next_prompt_id
 
 
@@ -1112,7 +1187,7 @@ def _sync_video_output(
         )
         frame_content = extract_last_video_frame(content=content, filename=filename)
         frame_file_id = storage_upload_file(content=frame_content, media_type="image/png", owner_id=str(user_id))
-        next_prompt_id = _queue_r2v_continuation(claimed, user_id, frame_file_id, frame_content)
+        next_prompt_id = _queue_video_continuation(claimed, user_id, frame_file_id, frame_content)
         advanced = advance_video_generation_segment(
             prompt_id=claimed["prompt_id"], user_id=user_id, segment_index=fields["segment_index"],
             next_prompt_id=next_prompt_id, segment_file_id=segment_file_id,

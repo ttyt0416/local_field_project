@@ -37,6 +37,7 @@
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
 	type VideoPromptLanguage = 'ko' | 'en' | 'ja';
+	type ContinuationMode = 'r2v' | 'i2v';
 	type MediaDimensions = { width: number; height: number };
 	type MediaDimensionState = MediaDimensions | 'failed';
 	// ponytail: MiniMax H3 has one 1344/32 size contract; load runtime options only when supported models diverge.
@@ -52,6 +53,10 @@
 		{ value: 'ko', label: '한글' },
 		{ value: 'en', label: '영어' },
 		{ value: 'ja', label: '일어' }
+	];
+	const continuationModeTabs: { value: ContinuationMode; label: string }[] = [
+		{ value: 'r2v', label: 'R2V' },
+		{ value: 'i2v', label: 'I2V' }
 	];
 	const selectionSourceTabs: { value: SelectionSource; label: string }[] = [
 		{ value: 'device', label: '기기 저장소' },
@@ -75,6 +80,7 @@
 	let width = $state(1344);
 	let height = $state(768);
 	let duration = $state(5);
+	let continuationMode = $state<ContinuationMode>('r2v');
 	let fps = $state(24);
 	let seed = $state('');
 	let randomSeed = $state(true);
@@ -132,7 +138,6 @@
 		selectionTarget === 'videos' ? 'video' : selectionTarget === 'audios' ? 'audio' : 'image'
 	);
 	let selectionMultiple = $derived(selectionTarget === 'images' || selectionTarget === 'videos' || selectionTarget === 'audios');
-	let selectionMax = $derived(selectionTarget === 'images' ? 9 : selectionMultiple ? 3 : 1);
 	let selectionTitle = $derived(
 		selectionTarget === 'first'
 			? '시작 이미지 선택'
@@ -146,6 +151,7 @@
 	);
 
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
+	let selectionMax = $derived(selectionTarget === 'images' ? (mode === 'r2v' && segmentCount > 1 ? 8 : 9) : selectionMultiple ? 3 : 1);
 
 	$effect(() => {
 		if (segmentPrompts.length !== segmentCount) {
@@ -288,7 +294,7 @@
 
 	function updateSegmentPrompt(index: number, value: string) {
 		segmentPrompts = segmentPrompts.map((current, currentIndex) => currentIndex === index ? value : current);
-		resetImprovedPrompts();
+		updateImprovedSegmentPrompt(index, '');
 	}
 
 	function segmentDuration(index: number) {
@@ -303,6 +309,10 @@
 	function setPrompt(value: string) {
 		prompt = value;
 		resetImprovedPrompts();
+	}
+
+	function selectContinuationMode(next: ContinuationMode) {
+		if (next !== continuationMode) resetImprovedPrompts();
 	}
 
 	async function readMediaDimensions(source: Blob | string, kind: 'image' | 'video') {
@@ -714,6 +724,7 @@
 				width: Number(width),
 				height: Number(height),
 				duration: Number(duration),
+				continuation_mode: continuationMode,
 				fps: Number(fps),
 				seed: randomSeed ? null : seed.trim() || null
 			};
@@ -958,21 +969,22 @@
 								</div>
 							{/if}
 							<div class="space-y-4">
-								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={resetImprovedPrompts} rows="5" required disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={(event) => setPrompt((event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+								{#if segmentCount > 1}
+									<div class="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
+										<span class="text-sm font-medium">다음 구간 마지막 프레임 연결</span>
+										<Tab items={continuationModeTabs} bind:value={continuationMode} ariaLabel="다음 구간 마지막 프레임 연결 방식" onselect={selectContinuationMode} />
+									</div>
+								{/if}
 								{#each segmentPrompts as segmentPrompt, index}
 									<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
 										<div class="flex items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span></div>
-										<label class="block space-y-2" for={`video-segment-prompt-${index}`}><span class="text-xs font-medium text-primary">구간 프롬프트</span><textarea id={`video-segment-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+										<label class="block space-y-2" for={`video-segment-prompt-${index}`}><span class="text-xs font-medium text-primary">입력 프롬프트 {index + 1}</span><textarea id={`video-segment-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+										{#if promptEnhancementEnabled}
+											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">개선 프롬프트 {index + 1}</span><textarea id={`video-improved-prompt-${index}`} value={improvedSegmentPrompts[index] ?? ''} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+										{/if}
 									</section>
 								{/each}
-								{#if promptEnhancementEnabled}
-									{#each improvedSegmentPrompts as segmentPrompt, index}
-										<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
-											<div class="flex items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span></div>
-											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">개선된 프롬프트</span><textarea id={`video-improved-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
-										</section>
-									{/each}
-								{/if}
 							</div>
 						</div>
 
@@ -982,7 +994,7 @@
 								{#if firstFile || selectedFirst?.url}
 									<div class="grid grid-cols-2 gap-3">
 										<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-											<IconOutlinedButton ariaLabel="시작 이미지 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
+											<IconOutlinedButton variant="filled" ariaLabel="시작 이미지 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
 												<X size={15} strokeWidth={2} />
 											</IconOutlinedButton>
 											{#if firstFile}
@@ -1003,7 +1015,7 @@
 										<OutlinedButton class="w-full" onclick={() => openSelection('first')}><HardDrive size={16} />첫 프레임 선택</OutlinedButton>
 										{#if firstFile || selectedFirst?.url}
 											<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-												<IconOutlinedButton ariaLabel="첫 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
+												<IconOutlinedButton variant="filled" ariaLabel="첫 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
 													<X size={15} strokeWidth={2} />
 												</IconOutlinedButton>
 												{#if firstFile}
@@ -1020,7 +1032,7 @@
 										<OutlinedButton class="w-full" onclick={() => openSelection('last')}><HardDrive size={16} />마지막 프레임 선택</OutlinedButton>
 										{#if lastFile || selectedLast?.url}
 											<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-												<IconOutlinedButton ariaLabel="마지막 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeLastSelection}>
+												<IconOutlinedButton variant="filled" ariaLabel="마지막 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeLastSelection}>
 													<X size={15} strokeWidth={2} />
 												</IconOutlinedButton>
 												{#if lastFile}
@@ -1043,7 +1055,7 @@
 										<div class="grid grid-cols-2 gap-3">
 											{#each selectedReferenceImages as asset, index (asset.file_id)}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton ariaLabel={`참조 이미지 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(index)}>
+													<IconOutlinedButton variant="filled" ariaLabel={`참조 이미지 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													{#if asset.url}
@@ -1057,7 +1069,7 @@
 											{/each}
 											{#each referenceImageFiles as file, index}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton ariaLabel={`참조 이미지 ${selectedReferenceImages.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(selectedReferenceImages.length + index)}>
+													<IconOutlinedButton variant="filled" ariaLabel={`참조 이미지 ${selectedReferenceImages.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(selectedReferenceImages.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-48" />
@@ -1075,7 +1087,7 @@
 										<div class="grid grid-cols-2 gap-3">
 											{#each selectedReferenceVideos as asset, index (asset.file_id)}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton ariaLabel={`참조 동영상 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(index)}>
+													<IconOutlinedButton variant="filled" ariaLabel={`참조 동영상 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													{#if asset.url}
@@ -1089,7 +1101,7 @@
 											{/each}
 											{#each referenceVideoFiles as file, index}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton ariaLabel={`참조 동영상 ${selectedReferenceVideos.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(selectedReferenceVideos.length + index)}>
+													<IconOutlinedButton variant="filled" ariaLabel={`참조 동영상 ${selectedReferenceVideos.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(selectedReferenceVideos.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<VideoMedia source={file} preview={false} muted={true} class="h-48 [&>video]:h-full" />
@@ -1107,7 +1119,7 @@
 										<div class="grid grid-cols-2 gap-3">
 											{#each selectedReferenceAudios as _asset, index ( _asset.file_id)}
 												<div class="relative flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-border bg-primary/5 p-3 text-center">
-													<IconOutlinedButton ariaLabel={`참조 오디오 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(index)}>
+													<IconOutlinedButton variant="filled" ariaLabel={`참조 오디오 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<AudioLines size={34} class="text-primary" />
@@ -1116,7 +1128,7 @@
 											{/each}
 											{#each referenceAudioFiles as _file, index}
 												<div class="relative flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-border bg-primary/5 p-3 text-center">
-													<IconOutlinedButton ariaLabel={`참조 오디오 ${selectedReferenceAudios.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(selectedReferenceAudios.length + index)}>
+													<IconOutlinedButton variant="filled" ariaLabel={`참조 오디오 ${selectedReferenceAudios.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(selectedReferenceAudios.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<AudioLines size={34} class="text-primary" />
@@ -1132,7 +1144,7 @@
 
 						<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">영상 크기</span><IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={height} class={inputClass} /></label></div>
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} oninput={resetImprovedPrompts} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
 						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || enhancingPrompt} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>

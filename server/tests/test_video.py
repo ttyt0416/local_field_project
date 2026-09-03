@@ -125,7 +125,9 @@ class VideoContractTest(unittest.TestCase):
         )
 
         self.assertEqual(video._video_segment_durations(request.duration), [10.0, 10.0, 3.0])
-        self.assertEqual(video._effective_video_prompts("i2v", request), ["opening to ending"] * 3)
+        prompts = video._effective_video_prompts("i2v", request)
+        self.assertEqual(prompts[0], "opening to ending")
+        self.assertTrue(all("<Picture 1>: actual final frame" in prompt for prompt in prompts[1:]))
         with self.assertRaises(video.HTTPException):
             video._effective_video_prompts("i2v", request.model_copy(update={"segment_prompts": ["opening"]}))
 
@@ -137,22 +139,24 @@ class VideoContractTest(unittest.TestCase):
             first_frame=video.VideoAsset(kind="image", file_index=0),
         )
 
+        prompts = video._effective_video_prompts("i2v", request)
         self.assertEqual(
-            video._effective_video_prompts("i2v", request),
-            [
-                "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character enters the forest.",
-                "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character finds a river.",
-                "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character leaves at sunset.",
-            ],
+            prompts[0],
+            "Overall style and background:\nhand-drawn animation in a forest at dawn\n\nCurrent segment:\nThe character enters the forest.",
         )
+        self.assertTrue(all("<Picture 1>: actual final frame" in prompt for prompt in prompts[1:]))
+        self.assertIn("The character finds a river.", prompts[1])
+        self.assertIn("The character leaves at sunset.", prompts[2])
 
-    def test_continuation_queues_r2v_with_only_last_frame_reference(self) -> None:
+    def test_r2v_continuation_uses_last_frame_as_picture_one_and_keeps_selected_images(self) -> None:
         generation = {
             "prompt_id": "root-prompt",
             "client_id": "client-1",
             "segment_index": 0,
             "segment_durations": [10.0, 3.0],
             "segment_prompts": ["opening", "continuation"],
+            "continuation_mode": "r2v",
+            "reference_image_file_ids": ["a" * 32],
             "width": 768,
             "height": 1344,
             "fps": 24,
@@ -167,8 +171,9 @@ class VideoContractTest(unittest.TestCase):
         with (
             patch.object(video, "_build_prompt", side_effect=build),
             patch.object(video, "_request_json", return_value={"prompt_id": "r2v-prompt"}),
+            patch.object(video, "storage_download_file", return_value=(b"selected-reference", "image/png")),
         ):
-            prompt_id = video._queue_r2v_continuation(generation, self.user.id, "f" * 32, b"last-frame")
+            prompt_id = video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
 
         request = cast(video.VideoGenerationRequest, captured["request"])
         resolved = cast(dict[str, video._ResolvedAsset], captured["resolved"])
@@ -176,8 +181,67 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(captured["mode"], "r2v")
         self.assertEqual(captured["effective_prompt"], "continuation")
         self.assertEqual(request.duration, 3.0)
-        self.assertEqual(request.reference_images, [video.VideoAsset(kind="image", file_id="f" * 32)])
-        self.assertEqual(next(iter(resolved.values())).content, b"last-frame")
+        self.assertEqual(
+            request.reference_images,
+            [video.VideoAsset(kind="image", file_id="f" * 32), video.VideoAsset(kind="image", file_id="a" * 32)],
+        )
+        self.assertEqual(resolved["id:" + "f" * 32].content, b"last-frame")
+        self.assertEqual(resolved["id:" + "a" * 32].content, b"selected-reference")
+
+    def test_i2v_continuation_uses_last_frame_as_first_frame(self) -> None:
+        generation = {
+            "prompt_id": "root-prompt",
+            "client_id": "client-1",
+            "segment_index": 0,
+            "segment_durations": [10.0, 3.0],
+            "segment_prompts": ["opening", "continuation"],
+            "continuation_mode": "i2v",
+            "width": 768,
+            "height": 1344,
+            "fps": 24,
+            "seed": 7,
+        }
+        captured: dict[str, object] = {}
+
+        def build(mode, request, resolved, *, effective_prompt):
+            captured.update(mode=mode, request=request, resolved=resolved, effective_prompt=effective_prompt)
+            return {}, 7
+
+        with (
+            patch.object(video, "_build_prompt", side_effect=build),
+            patch.object(video, "_request_json", return_value={"prompt_id": "i2v-prompt"}),
+        ):
+            video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
+
+        request = cast(video.VideoGenerationRequest, captured["request"])
+        self.assertEqual(captured["mode"], "i2v")
+        self.assertEqual(request.first_frame, video.VideoAsset(kind="image", file_id="f" * 32))
+        self.assertEqual(request.reference_images, [])
+
+    def test_long_r2v_rejects_nine_selected_images(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            duration=11,
+            reference_images=[video.VideoAsset(kind="image", file_id=f"{index:032x}") for index in range(9)],
+        )
+
+        with self.assertRaises(video.HTTPException) as raised:
+            video._validate_request("r2v", request, [])
+
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_r2v_continuation_prompt_reserves_picture_one_for_the_actual_last_frame(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="global style",
+            duration=11,
+            segment_prompts=["opening", "continuation"],
+            reference_images=[video.VideoAsset(kind="image", file_id="a" * 32)],
+        )
+
+        continuation_prompt = video._effective_video_prompts("r2v", request)[1]
+
+        self.assertIn("<Picture 1>: actual final frame", continuation_prompt)
+        self.assertIn("<Picture 2>: user-selected reference image", continuation_prompt)
 
     def test_completed_segment_extracts_last_frame_before_r2v_transition(self) -> None:
         generation = {
@@ -200,7 +264,7 @@ class VideoContractTest(unittest.TestCase):
             patch.object(video, "_request_bytes", return_value=(b"segment-video", "video/mp4")),
             patch.object(video, "storage_upload_file", side_effect=["s" * 32, "f" * 32]),
             patch.object(video, "extract_last_video_frame", return_value=b"actual-last-frame") as extract,
-            patch.object(video, "_queue_r2v_continuation", return_value="r2v-prompt") as queue,
+            patch.object(video, "_queue_video_continuation", return_value="r2v-prompt") as queue,
             patch.object(video, "advance_video_generation_segment", return_value=True),
             patch.object(video, "reset_generation_progress"),
             patch.object(video, "storage_delete_file"),

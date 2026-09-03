@@ -142,6 +142,8 @@ class VaultVideoDetail(VaultVideoSummary):
     width: int
     height: int
     seed: int
+    input_segment_prompts: list[str]
+    improved_segment_prompts: list[str]
 
 
 class VaultThreeDSummary(BaseModel):
@@ -493,6 +495,8 @@ def vault_video_detail(
         width=generation["width"],
         height=generation["height"],
         seed=generation["seed"],
+        input_segment_prompts=_video_prompt_list(generation.get("input_segment_prompts")),
+        improved_segment_prompts=_video_prompt_list(generation.get("improved_segment_prompts")),
     )
 
 
@@ -828,6 +832,10 @@ def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool =
         duration_seconds=(float(generation["length"]) / float(generation["fps"])) if generation.get("fps") else None,
         file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
     )
+
+
+def _video_prompt_list(value: object) -> list[str]:
+    return value if isinstance(value, list) and all(isinstance(item, str) for item in value) else []
 
 
 def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultImageSummary:

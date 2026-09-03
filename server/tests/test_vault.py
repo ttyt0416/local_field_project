@@ -135,6 +135,41 @@ class VaultRouteTest(unittest.TestCase):
         increment.assert_called_once_with(generation_id, self.user.id)
         detail.assert_called_once_with(stored, self.user.id)
 
+    def test_video_detail_returns_every_input_and_improved_segment_prompt(self) -> None:
+        generation_id = uuid4()
+        summary = vault.VaultVideoSummary(
+            id=generation_id,
+            media_type="video",
+            mode="r2v",
+            fps=24,
+            status="completed",
+            prompt="global style",
+            video_url=None,
+            view_count=1,
+            is_favorite=False,
+            created_at=datetime.now(timezone.utc),
+            completed_at=None,
+            elapsed_seconds=1,
+            is_edited=False,
+            duration_seconds=11,
+            file_size_bytes=None,
+        )
+        stored = {
+            "width": 1344,
+            "height": 768,
+            "seed": 7,
+            "input_segment_prompts": ["input 1", "input 2"],
+            "improved_segment_prompts": ["improved 1", "improved 2"],
+        }
+        with (
+            patch.object(vault, "increment_video_generation_view_count", return_value=stored),
+            patch.object(vault, "_video_summary", return_value=summary),
+        ):
+            result = vault.vault_video_detail(generation_id, self.user)
+
+        self.assertEqual(result.input_segment_prompts, ["input 1", "input 2"])
+        self.assertEqual(result.improved_segment_prompts, ["improved 1", "improved 2"])
+
     def test_image_download_reads_owned_storage_as_attachment(self) -> None:
         generation_id = uuid4()
         stored = {"status": "completed", "storage_file_id": "image-file", "filename": "portrait.png"}

@@ -29,6 +29,8 @@
 		seed: number;
 		status: string;
 		prompt: string;
+		input_segment_prompts: string[];
+		improved_segment_prompts: string[];
 		video_url: string | null;
 		view_count: number;
 		is_favorite: boolean;
@@ -172,8 +174,8 @@
 						{:else}
 							<div class="flex min-h-[24rem] items-center justify-center bg-muted text-sm text-muted-foreground">영상 결과가 아직 없습니다.</div>
 						{/if}
-						<div class="absolute bottom-3 right-3 z-10 flex gap-2">
-							<IconOutlinedButton ariaLabel="영상 다운로드" loading={downloading} disabled={!generation.video_url} class="bg-card/90 shadow-lg" onclick={() => void downloadVideo()}><Download size={18} strokeWidth={1.9} /></IconOutlinedButton>
+						<div class="absolute bottom-16 right-3 z-10 flex gap-2">
+							<IconOutlinedButton variant="filled" ariaLabel="영상 다운로드" loading={downloading} disabled={!generation.video_url} class="bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 hover:text-primary-foreground" onclick={() => void downloadVideo()}><Download size={18} strokeWidth={1.9} /></IconOutlinedButton>
 							<IconOutlinedButton variant="filled" ariaLabel={generation.is_favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'} pressed={generation.is_favorite} loading={favoriteUpdating} class={generation.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-card/90'} onclick={() => void toggleFavorite()}><Heart size={18} strokeWidth={1.9} fill={generation.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton>
 						</div>
 					</div>
@@ -196,7 +198,17 @@
 
 			<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 				<Typography as="h2" variant="h2">생성 프롬프트</Typography>
-				<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p>
+				<div class="mt-4 space-y-4">
+					<div class="space-y-2"><span class="text-sm font-semibold">스타일·전체 배경</span><p class="whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p></div>
+					{#each generation.input_segment_prompts as inputPrompt, index}
+						<div class="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+							<div class="space-y-2"><span class="text-sm font-semibold">입력 프롬프트 {index + 1}</span><p class="whitespace-pre-wrap rounded-lg bg-background p-3 text-sm leading-6">{inputPrompt}</p></div>
+							{#if generation.improved_segment_prompts[index]}
+								<div class="space-y-2"><span class="text-sm font-semibold">개선 프롬프트 {index + 1}</span><p class="whitespace-pre-wrap rounded-lg bg-primary/5 p-3 text-sm leading-6">{generation.improved_segment_prompts[index]}</p></div>
+							{/if}
+						</div>
+					{/each}
+				</div>
 			</section>
 
 			<section class="flex flex-wrap justify-end gap-3">

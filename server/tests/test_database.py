@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -163,9 +164,19 @@ class VideoGenerationStatusTest(unittest.TestCase):
                 fps=24,
                 seed=1,
                 input_file_ids=[],
+                input_segment_prompts=["input 1", "input 2"],
+                improved_segment_prompts=["improved 1", "improved 2"],
+                continuation_mode="i2v",
+                reference_image_file_ids=["a" * 32],
             )
 
         self.assertEqual(result, (generation_id, created_at))
+        query, parameters = connection.calls[0]
+        self.assertIn("input_segment_prompts, improved_segment_prompts", query)
+        self.assertEqual(json.loads(str(parameters[14])), ["input 1", "input 2"])
+        self.assertEqual(json.loads(str(parameters[15])), ["improved 1", "improved 2"])
+        self.assertEqual(parameters[17], "i2v")
+        self.assertEqual(json.loads(str(parameters[18])), ["a" * 32])
 
     def test_nullable_media_metadata_is_typed_and_preserved(self) -> None:
         connection = FakeConnection()

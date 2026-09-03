@@ -846,7 +846,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 							{#if sourceFile}
 								<div class="overflow-hidden rounded-xl border border-border bg-muted/30">
 									<div class="relative">
-										<IconOutlinedButton ariaLabel="소스 이미지 선택 해제" title="소스 이미지 선택 해제" class="absolute right-2 top-2 z-10 bg-card/90" disabled={generating} onclick={() => clearSource()}>
+										<IconOutlinedButton variant="filled" ariaLabel="소스 이미지 선택 해제" title="소스 이미지 선택 해제" class="absolute right-2 top-2 z-10 bg-card/90" disabled={generating} onclick={() => clearSource()}>
 											<X size={16} strokeWidth={2} />
 										</IconOutlinedButton>
 										<ImageMedia source={sourceFile} sourceType="local" alt="선택한 이미지 변환 소스" class="max-h-80" />
@@ -862,7 +862,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 							{:else if sourceFileId}
 								<div class="overflow-hidden rounded-xl border border-border bg-muted/30">
 									<div class="relative">
-										<IconOutlinedButton ariaLabel="소스 이미지 선택 해제" title="소스 이미지 선택 해제" class="absolute right-2 top-2 z-10 bg-card/90" disabled={generating} onclick={clearSource}><X size={16} strokeWidth={2} /></IconOutlinedButton>
+										<IconOutlinedButton variant="filled" ariaLabel="소스 이미지 선택 해제" title="소스 이미지 선택 해제" class="absolute right-2 top-2 z-10 bg-card/90" disabled={generating} onclick={clearSource}><X size={16} strokeWidth={2} /></IconOutlinedButton>
 										{#if sourceImageUrl}
 											<ImageMedia source={sourceImageUrl} sourceType={imageSourceType(sourceImageUrl)} alt="선택한 보관함 이미지 변환 소스" class="max-h-80" />
 										{:else}
