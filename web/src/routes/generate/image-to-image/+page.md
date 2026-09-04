@@ -1,6 +1,6 @@
 # I2I
 
-`/generate/image-to-image`는 하나의 I2I route다. 페이지 family tab으로 Anima와 Illustrious를 전환하며 local image 또는 owned stored image 한 장을 source로 사용한다. Krea2 tab은 generator workflow와 generation request family validation이 제공될 때까지 disabled option으로만 표시한다. Krea2의 exact preset namespace와 Vault filter는 별도로 선택할 수 있다.
+`/generate/image-to-image`는 하나의 I2I route다. 파라미터 설정은 긍정·부정 본문 위에 각각 `긍정 프롬프트 Prefix`, `부정 프롬프트 Prefix` textarea를 제공한다. prefix는 preset에서 본문과 independent field로 저장·복원하며 server는 prefix와 본문을 합성한 final prompt를 생성·Vault에 저장한다. 페이지 family tab으로 Anima와 Illustrious를 전환하며 local image 또는 owned stored image 한 장을 source로 사용한다. Krea2 tab은 local R2I에 필요한 `krea2_style_reference.safetensors` LoRA와 dedicated reference workflow가 아직 설치되지 않아 disabled 상태다. generic VAE I2I route로 대체하지 않는다. Krea2의 exact preset namespace와 Vault filter는 별도로 선택할 수 있다.
 
 checkpoint와 LoRA selector는 ComfyUI relative model filename의 folder hierarchy를 button으로 표시한다. `전체`는 family scope 내 전체 model을, folder button은 해당 folder 및 하위 model만 표시한다. 하위 folder 선택 시 `전체` 바로 다음의 `바로 위 폴더` button으로 한 level씩 되돌아간다. family route가 바뀌면 selected folder filter를 root로 reset한다.
 

@@ -28,7 +28,7 @@
 		prompt: string;
 		negative_prompt: string;
 		checkpoint: string;
-		model_family: 'anima' | 'illustrious';
+		model_family: 'anima' | 'illustrious' | 'krea2';
 		generation_mode: 't2i' | 'i2i';
 		source_file_id: string | null;
 		source_filename: string | null;
@@ -203,8 +203,8 @@
 
 	function imagePresetType(image: VaultImageDetail): ImagePresetType {
 		return image.generation_mode === 'i2i'
-			? image.model_family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima'
-			: image.model_family === 'illustrious' ? 't2i_illustrious' : 't2i_anima';
+			? image.model_family === 'illustrious' ? 'i2i_illustrious' : image.model_family === 'krea2' ? 'i2i_krea2' : 'i2i_anima'
+			: image.model_family === 'illustrious' ? 't2i_illustrious' : image.model_family === 'krea2' ? 't2i_krea2' : 't2i_anima';
 	}
 
 	function handlePresetSaved(preset: Preset) {
@@ -309,7 +309,7 @@
 						<Typography as="h2" variant="h2">생성 파라미터</Typography>
 					</div>
 					<dl class="mt-5 space-y-4 text-sm">
-						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.generation_mode.toUpperCase()} · {generation.model_family === 'illustrious' ? 'Illustrious' : 'Anima'}</dd></div>
+						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.generation_mode.toUpperCase()} · {generation.model_family === 'illustrious' ? 'Illustrious' : generation.model_family === 'krea2' ? 'Krea2' : 'Anima'}</dd></div>
 						<div><dt class="text-muted-foreground">체크포인트</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint}</dd></div>
 						<div>
 							<dt class="text-muted-foreground">LoRA</dt>

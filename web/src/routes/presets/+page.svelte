@@ -36,7 +36,7 @@
 			? imagePresetCategories[0]
 			: imagePresetCategories.find((category) => category.value === activeType) ?? imagePresetCategories[0]
 	);
-	let isKreaPreset = $derived(activeType !== 'video' && activeImagePreset.modelFamily === 'krea2');
+	let isUnavailableKreaPreset = $derived(activeType !== 'video' && activeImagePreset.value === 'i2i_krea2');
 	let options = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
 	let editingPreset = $state<Preset | null>(null);
 	let imageEditorOpen = $state(false);
@@ -70,7 +70,7 @@
 	async function loadImageOptions(type: ImagePresetType) {
 		const family = imagePresetCategories.find((category) => category.value === type)?.modelFamily ?? 'anima';
 		optionsLoading = true;
-		if (family === 'krea2') {
+		if (type === 'i2i_krea2') {
 			options = { checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' };
 			optionsLoading = false;
 			return;
@@ -134,14 +134,14 @@
 	}
 
 	function openNew() {
-		if (isKreaPreset) return;
+		if (isUnavailableKreaPreset) return;
 		editingPreset = null;
 		if (activeType !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
 	}
 
 	function openEdit(preset: Preset) {
-		if (preset.type !== 'video' && isKreaPreset) return;
+		if (preset.type === 'i2i_krea2') return;
 		editingPreset = preset;
 		if (preset.type !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
@@ -270,7 +270,7 @@
 			</section>
 
 			<div class="flex justify-end">
-				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && (optionsLoading || isKreaPreset)} deactive={isKreaPreset}>
+				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && (optionsLoading || isUnavailableKreaPreset)} deactive={isUnavailableKreaPreset}>
 					<Plus size={17} strokeWidth={1.9} />
 					<span>새 프리셋</span>
 				</PrimaryButton>
@@ -311,7 +311,7 @@
 		</div>
 	</Layout>
 
-	{#if activeType !== 'video' && !isKreaPreset}
+	{#if activeType !== 'video' && !isUnavailableKreaPreset}
 		<ImagePresetModal bind:open={imageEditorOpen} preset={editingPreset} presetType={activeType} options={options} onSaved={handleSaved} />
 	{/if}
 	<VideoPresetModal bind:open={videoEditorOpen} preset={editingPreset} onSaved={handleSaved} />

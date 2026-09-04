@@ -24,7 +24,9 @@ export type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 export type LoraSelection = { name: string; strength: number };
 
 export type PresetValues = {
+	positive_prompt_prefix?: string;
 	prompt?: string;
+	negative_prompt_prefix?: string;
 	negative_prompt?: string;
 	prompt_enhancement_enabled?: boolean;
 	improved_prompt?: string;

@@ -1,5 +1,5 @@
 export type ImageGenerationParameters = {
-	model_family?: 'anima' | 'illustrious';
+	model_family?: 'anima' | 'illustrious' | 'krea2';
 	generation_mode?: 't2i' | 'i2i';
 	source_file_id?: string | null;
 	source_image_url?: string | null;

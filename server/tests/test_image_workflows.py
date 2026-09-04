@@ -1,11 +1,13 @@
 import asyncio
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app import comfyui
@@ -18,6 +20,8 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         checkpoint = (
             "Anima/anima_aestheticV11.safetensors"
             if family == "anima"
+            else "Krea/krea2TurboOfficialComfy_krea2TurboNvfp4.safetensors"
+            if family == "krea2"
             else "Illustrious/unholyDesireMixSinister_v80.safetensors"
         )
         return comfyui.ImageGenerationRequest(
@@ -49,6 +53,20 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["5"]["inputs"]["clip"], ["1", 1])
         self.assertEqual(workflow["9"]["inputs"]["vae"], ["1", 2])
 
+    def test_krea2_t2i_uses_the_official_turbo_contract(self) -> None:
+        payload = self._request("krea2")
+        payload.cfg = 1
+        payload.steps = 8
+        payload.scheduler = "simple"
+        workflow, _ = comfyui._build_prompt(payload)
+        self.assertEqual(workflow["1"]["class_type"], "UNETLoader")
+        self.assertEqual(workflow["3"]["inputs"]["clip_name"], "qwen3vl_4b_fp8_scaled.safetensors")
+        self.assertEqual(workflow["3"]["inputs"]["type"], "krea2")
+        self.assertEqual(workflow["4"]["inputs"]["vae_name"], "qwen_image_vae.safetensors")
+        self.assertEqual(workflow["6"]["class_type"], "ConditioningZeroOut")
+        self.assertEqual(workflow["8"]["inputs"]["steps"], 8)
+        self.assertEqual(workflow["8"]["inputs"]["cfg"], 1)
+
     def test_anima_i2i_scales_and_encodes_source(self) -> None:
         workflow, _ = comfyui._build_prompt(
             self._request("anima"), input_image="source.png", denoise=0.55
@@ -71,19 +89,25 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
 
     def test_family_options_are_isolated(self) -> None:
         object_info = {
-            "UNETLoader": {"input": {"required": {"unet_name": [["Anima/a.safetensors", "Other/x.safetensors"]]}}},
+            "UNETLoader": {"input": {"required": {"unet_name": [["Anima/a.safetensors", "Krea/krea2TurboOfficialComfy_krea2TurboNvfp4.safetensors", "Other/x.safetensors"]]}}},
             "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["Illustrious/i.safetensors", "Other/y.safetensors"]]}}},
             "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [["Anima/lora.safetensors"]]}}},
             "LoraLoader": {"input": {"required": {"lora_name": [["Illustrious/lora.safetensors"]]}}},
+            "CLIPLoader": {"input": {"required": {"clip_name": [["qwen3vl_4b_fp8_scaled.safetensors"]]}}},
+            "VAELoader": {"input": {"required": {"vae_name": [["qwen_image_vae.safetensors"]]}}},
             "KSampler": {"input": {"required": {"sampler_name": [["er_sde"]], "scheduler": [["simple"]]}}},
         }
         with patch.object(comfyui, "_request_json", return_value=object_info):
             anima = comfyui._image_options("anima")
             illustrious = comfyui._image_options("illustrious")
+            krea2 = comfyui._image_options("krea2")
         self.assertEqual(anima.checkpoints, ["Anima/a.safetensors"])
         self.assertEqual(anima.loras, ["Anima/lora.safetensors"])
         self.assertEqual(illustrious.checkpoints, ["Illustrious/i.safetensors"])
         self.assertEqual(illustrious.loras, ["Illustrious/lora.safetensors"])
+        self.assertEqual(krea2.checkpoints, ["Krea/krea2TurboOfficialComfy_krea2TurboNvfp4.safetensors"])
+        self.assertEqual(krea2.default_cfg, 1)
+        self.assertEqual(krea2.default_steps, 8)
 
     def test_embedding_options_are_scoped_to_family_folder(self) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -108,12 +132,54 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["5"]["inputs"]["text"], payload.prompt)
         self.assertEqual(workflow["6"]["inputs"]["text"], payload.negative_prompt)
 
+    def test_prompt_prefixes_are_composed_for_comfyui_conditioning(self) -> None:
+        payload = self._request("anima")
+        payload.positive_prompt_prefix = "cinematic lighting"
+        payload.negative_prompt_prefix = "bad anatomy"
+
+        workflow, _ = comfyui._build_prompt(payload)
+
+        self.assertEqual(workflow["5"]["inputs"]["text"], "cinematic lighting, 1girl, portrait")
+        self.assertEqual(workflow["6"]["inputs"]["text"], "bad anatomy, low quality")
+
+    def test_submission_persists_composed_prompt_values_for_vault(self) -> None:
+        payload = self._request("anima")
+        payload.positive_prompt_prefix = "cinematic lighting"
+        payload.negative_prompt_prefix = "bad anatomy"
+        user = UserResponse(id=uuid4(), username="tester")
+        created_at = datetime.now(timezone.utc)
+        with (
+            patch.object(comfyui, "_image_options"),
+            patch.object(comfyui, "_validate_model_choice"),
+            patch.object(comfyui, "_request_json", return_value={"prompt_id": "comfy-prompt"}),
+            patch.object(comfyui, "create_image_generation_record", return_value=(uuid4(), created_at)) as create_record,
+        ):
+            comfyui._submit_image_generation(payload, user)
+
+        self.assertEqual(create_record.call_args.kwargs["prompt"], "cinematic lighting, 1girl, portrait")
+        self.assertEqual(create_record.call_args.kwargs["negative_prompt"], "bad anatomy, low quality")
+
     def test_i2i_source_requires_exactly_one_reference(self) -> None:
         with self.assertRaises(ValidationError):
             comfyui.ImageSource()
         with self.assertRaises(ValidationError):
             comfyui.ImageSource(file_id="a" * 32, file_index=0)
         self.assertEqual(comfyui.ImageSource(file_index=0).file_index, 0)
+
+    def test_krea2_i2i_requires_its_dedicated_reference_workflow(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        request = comfyui.ImageToImageGenerationRequest(
+            **self._request("krea2").model_dump(),
+            source=comfyui.ImageSource(file_id="f" * 32),
+        )
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(
+                comfyui.create_image_to_image_generation(
+                    payload=request.model_dump_json(), files=[], user=user
+                )
+            )
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("style-reference", str(raised.exception.detail))
 
     def test_i2i_reuses_owner_checked_generated_image_without_upload(self) -> None:
         source_file_id = "f" * 32

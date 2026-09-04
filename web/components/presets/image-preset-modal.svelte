@@ -9,7 +9,9 @@
 	import type { AspectRatio, ImageOptions, ImagePresetType, LoraSelection, Preset, PresetValues } from '$lib/types/presets';
 
 	type PresetField =
+		| 'positive_prompt_prefix'
 		| 'prompt'
+		| 'negative_prompt_prefix'
 		| 'negative_prompt'
 		| 'checkpoint'
 		| 'loras'
@@ -51,7 +53,9 @@
 		'9:16': { width: 648, height: 1152 }
 	};
 	const fieldOptions: { key: PresetField; label: string }[] = [
+		{ key: 'positive_prompt_prefix', label: '긍정 프롬프트 Prefix' },
 		{ key: 'prompt', label: '긍정 프롬프트' },
+		{ key: 'negative_prompt_prefix', label: '부정 프롬프트 Prefix' },
 		{ key: 'negative_prompt', label: '부정 프롬프트' },
 		{ key: 'checkpoint', label: '체크포인트' },
 		{ key: 'loras', label: 'LoRA' },
@@ -64,7 +68,9 @@
 		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
 	];
 	const allFields: Record<PresetField, boolean> = {
+		positive_prompt_prefix: true,
 		prompt: true,
+		negative_prompt_prefix: true,
 		negative_prompt: true,
 		checkpoint: true,
 		loras: true,
@@ -79,7 +85,9 @@
 
 	let editingId = $state<string | null>(null);
 	let presetName = $state('');
+	let positivePromptPrefix = $state('');
 	let prompt = $state('');
+	let negativePromptPrefix = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let promptEnhancementEnabled = $state(false);
 	let improvedPrompt = $state('');
@@ -117,7 +125,9 @@
 		const fields = new Set(preset?.saved_fields ?? Object.keys(allFields));
 		editingId = preset?.id ?? null;
 		presetName = preset?.name ?? '';
+		positivePromptPrefix = values.positive_prompt_prefix ?? '';
 		prompt = values.prompt ?? '';
+		negativePromptPrefix = values.negative_prompt_prefix ?? '';
 		negativePrompt = values.negative_prompt ?? defaultNegativePrompt;
 		promptEnhancementEnabled = values.prompt_enhancement_enabled ?? false;
 		improvedPrompt = values.improved_prompt ?? '';
@@ -134,7 +144,9 @@
 		seed = values.seed ?? '';
 		randomSeed = values.random_seed ?? !values.seed;
 		selectedFields = {
+			positive_prompt_prefix: fields.has('positive_prompt_prefix'),
 			prompt: fields.has('prompt'),
+			negative_prompt_prefix: fields.has('negative_prompt_prefix'),
 			negative_prompt: fields.has('negative_prompt'),
 			checkpoint: fields.has('checkpoint'),
 			loras: fields.has('loras'),
@@ -171,7 +183,9 @@
 
 	function buildValues(): PresetValues {
 		const values: PresetValues = {};
+		if (selectedFields.positive_prompt_prefix) values.positive_prompt_prefix = positivePromptPrefix.trim();
 		if (selectedFields.prompt) values.prompt = prompt.trim();
+		if (selectedFields.negative_prompt_prefix) values.negative_prompt_prefix = negativePromptPrefix.trim();
 		if (selectedFields.negative_prompt) values.negative_prompt = negativePrompt.trim();
 		if (selectedFields.checkpoint) values.checkpoint = checkpoint;
 		if (selectedFields.loras) values.loras = loras.filter(({ name }) => name.trim()).map(({ name, strength }) => ({ name, strength }));
@@ -235,7 +249,9 @@
 				{/each}
 			</div>
 		</div>
+		{#if selectedFields.positive_prompt_prefix}<label class="block space-y-2" for="image-preset-positive-prefix"><span class="text-sm font-medium">긍정 프롬프트 Prefix</span><textarea id="image-preset-positive-prefix" bind:value={positivePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.prompt}<label class="block space-y-2" for="image-preset-prompt"><span class="text-sm font-medium">긍정 프롬프트</span><textarea id="image-preset-prompt" bind:value={prompt} rows="4" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
+		{#if selectedFields.negative_prompt_prefix}<label class="block space-y-2" for="image-preset-negative-prefix"><span class="text-sm font-medium">부정 프롬프트 Prefix</span><textarea id="image-preset-negative-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.negative_prompt}<label class="block space-y-2" for="image-preset-negative"><span class="text-sm font-medium">부정 프롬프트</span><textarea id="image-preset-negative" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.checkpoint}<Select id="image-preset-checkpoint" label="체크포인트" options={checkpointOptions} bind:value={checkpoint} autocomplete disabled={checkpointOptions.length === 0} required />{/if}
 		{#if selectedFields.loras}

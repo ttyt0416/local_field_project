@@ -59,6 +59,13 @@ _MAX_IMAGE_INPUT_SIZE = 50 * 1024 * 1024
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_SAMPLER = "er_sde"
 _DEFAULT_SCHEDULER = "simple"
+_KREA2_TURBO_CHECKPOINT = "Krea/krea2TurboOfficialComfy_krea2TurboNvfp4.safetensors"
+_KREA2_TURBO_TEXT_ENCODER = "qwen3vl_4b_fp8_scaled.safetensors"
+_KREA2_TURBO_VAE = "qwen_image_vae.safetensors"
+_KREA2_TURBO_DEFAULT_SAMPLER = "euler"
+_KREA2_TURBO_DEFAULT_SCHEDULER = "simple"
+_KREA2_TURBO_DEFAULT_CFG = 1.0
+_KREA2_TURBO_DEFAULT_STEPS = 8
 _PROGRESS_UNSET = object()
 _progress_lock = threading.Lock()
 _progress_states: dict[str, dict[str, Any]] = {}
@@ -69,7 +76,7 @@ class LoraSelection(BaseModel):
     strength: float = Field(default=1.0)
 
 
-ModelFamily = Literal["anima", "illustrious"]
+ModelFamily = Literal["anima", "illustrious", "krea2"]
 
 
 class ImageSource(BaseModel):
@@ -85,9 +92,11 @@ class ImageSource(BaseModel):
 
 class ImageGenerationRequest(BaseModel):
     model_family: ModelFamily = "anima"
+    positive_prompt_prefix: str = Field(default="", max_length=5000)
     prompt: str = Field(min_length=1, max_length=5000)
     prompt_enhancement_enabled: bool = False
     improved_prompt: str | None = Field(default=None, max_length=5000)
+    negative_prompt_prefix: str = Field(default="", max_length=5000)
     negative_prompt: str = Field(default=_DEFAULT_NEGATIVE_PROMPT, max_length=5000)
     checkpoint: str = Field(min_length=1, max_length=255)
     loras: list[LoraSelection] = Field(default_factory=list, max_length=8)
@@ -115,6 +124,8 @@ class ImageGenerationOptions(BaseModel):
     default_checkpoint: str
     default_sampler: str
     default_scheduler: str
+    default_cfg: float
+    default_steps: int
 
 
 class ImageOutput(BaseModel):
@@ -350,6 +361,11 @@ async def create_image_to_image_generation(
         request = ImageToImageGenerationRequest.model_validate_json(payload)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
+    if request.model_family == "krea2":
+        raise HTTPException(
+            status_code=422,
+            detail="Krea2 R2I에는 아직 설치되지 않은 style-reference LoRA workflow가 필요합니다.",
+        )
     try:
         _validate_model_choice(request, _image_options(request.model_family))
     except _ComfyUIError as exc:
@@ -401,7 +417,7 @@ def _submit_image_generation(
         prompt_id=prompt_id,
         client_id=client_id,
         prompt=_effective_positive_prompt(payload),
-        negative_prompt=payload.negative_prompt,
+        negative_prompt=_effective_negative_prompt(payload),
         checkpoint=payload.checkpoint,
         loras=[lora.model_dump() for lora in payload.loras],
         cfg=payload.cfg,
@@ -837,10 +853,30 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
         checkpoints = _family_choices(data, "UNETLoader", "unet_name", "Anima/")
         loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "Anima/")
         preferred_checkpoint = "Anima/anima_aestheticV11.safetensors"
+        default_cfg = 4.0
+        default_steps = 30
+        preferred_sampler = _DEFAULT_SAMPLER
+        preferred_scheduler = _DEFAULT_SCHEDULER
+    elif model_family == "krea2":
+        checkpoints = _family_choices(data, "UNETLoader", "unet_name", "Krea/")
+        loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "Krea/")
+        preferred_checkpoint = _KREA2_TURBO_CHECKPOINT
+        default_cfg = _KREA2_TURBO_DEFAULT_CFG
+        default_steps = _KREA2_TURBO_DEFAULT_STEPS
+        preferred_sampler = _KREA2_TURBO_DEFAULT_SAMPLER
+        preferred_scheduler = _KREA2_TURBO_DEFAULT_SCHEDULER
+        clip_names = _node_choices(data, "CLIPLoader", "clip_name")
+        vae_names = _node_choices(data, "VAELoader", "vae_name")
+        if _KREA2_TURBO_TEXT_ENCODER not in clip_names or _KREA2_TURBO_VAE not in vae_names:
+            raise _ComfyUIError("ComfyUI에서 Krea2 Turbo text encoder 또는 VAE를 찾을 수 없습니다.")
     else:
         checkpoints = _family_choices(data, "CheckpointLoaderSimple", "ckpt_name", "Illustrious/")
         loras = _family_choices(data, "LoraLoader", "lora_name", "Illustrious/")
         preferred_checkpoint = "Illustrious/unholyDesireMixSinister_v80.safetensors"
+        default_cfg = 4.0
+        default_steps = 30
+        preferred_sampler = _DEFAULT_SAMPLER
+        preferred_scheduler = _DEFAULT_SCHEDULER
     samplers = _node_choices(data, "KSampler", "sampler_name")
     schedulers = _node_choices(data, "KSampler", "scheduler")
     embeddings = _installed_family_files("embeddings", f"{model_family.title()}/")
@@ -857,8 +893,10 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
         samplers=samplers,
         schedulers=schedulers,
         default_checkpoint=default_checkpoint,
-        default_sampler=_DEFAULT_SAMPLER if _DEFAULT_SAMPLER in samplers else samplers[0],
-        default_scheduler=_DEFAULT_SCHEDULER if _DEFAULT_SCHEDULER in schedulers else schedulers[0],
+        default_sampler=preferred_sampler if preferred_sampler in samplers else samplers[0],
+        default_scheduler=preferred_scheduler if preferred_scheduler in schedulers else schedulers[0],
+        default_cfg=default_cfg,
+        default_steps=default_steps,
     )
 
 
@@ -893,7 +931,7 @@ def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list
 
 
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
-    family_name = "Anima" if payload.model_family == "anima" else "Illustrious"
+    family_name = {"anima": "Anima", "illustrious": "Illustrious", "krea2": "Krea2"}[payload.model_family]
     if options.model_family != payload.model_family or payload.checkpoint not in options.checkpoints:
         raise HTTPException(status_code=422, detail=f"선택한 {family_name} 체크포인트를 찾을 수 없습니다.")
     lora_names = [lora.name for lora in payload.loras]
@@ -909,14 +947,25 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
         raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
 
 
+def _combined_prompt(prefix: str, prompt: str, label: str) -> str:
+    combined = ", ".join(value for value in (prefix.strip(), prompt.strip()) if value)
+    if len(combined) > 5000:
+        raise HTTPException(status_code=422, detail=f"{label}는 5,000자 이하로 입력해 주세요.")
+    return combined
+
+
 def _effective_positive_prompt(payload: ImageGenerationRequest) -> str:
     base_prompt = payload.prompt.strip()
     if not payload.prompt_enhancement_enabled:
-        return base_prompt
+        return _combined_prompt(payload.positive_prompt_prefix, base_prompt, "긍정 프롬프트")
     improved_prompt = (payload.improved_prompt or "").strip()
     if not improved_prompt:
         raise HTTPException(status_code=422, detail="개선된 프롬프트를 먼저 생성해 주세요.")
-    return improved_prompt
+    return _combined_prompt(payload.positive_prompt_prefix, improved_prompt, "긍정 프롬프트")
+
+
+def _effective_negative_prompt(payload: ImageGenerationRequest) -> str:
+    return _combined_prompt(payload.negative_prompt_prefix, payload.negative_prompt, "부정 프롬프트")
 
 
 def _build_prompt(
@@ -927,6 +976,7 @@ def _build_prompt(
 ) -> tuple[dict[str, dict[str, Any]], int]:
     seed = payload.seed if payload.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     positive_prompt = _effective_positive_prompt(payload)
+    negative_prompt = _effective_negative_prompt(payload)
     prompt: dict[str, dict[str, Any]] = {}
     if payload.model_family == "anima":
         prompt.update(
@@ -952,6 +1002,40 @@ def _build_prompt(
         model: list[Any] = ["1", 0]
         clip: list[Any] = ["3", 0]
         vae: list[Any] = ["4", 0]
+        for index, lora in enumerate(payload.loras, start=20):
+            prompt[str(index)] = {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "model": model,
+                    "lora_name": lora.name,
+                    "strength_model": lora.strength,
+                },
+            }
+            model = [str(index), 0]
+    elif payload.model_family == "krea2":
+        prompt.update(
+            {
+                "1": {
+                    "class_type": "UNETLoader",
+                    "inputs": {"unet_name": payload.checkpoint, "weight_dtype": "default"},
+                },
+                "3": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {
+                        "clip_name": _KREA2_TURBO_TEXT_ENCODER,
+                        "type": "krea2",
+                        "device": "default",
+                    },
+                },
+                "4": {
+                    "class_type": "VAELoader",
+                    "inputs": {"vae_name": _KREA2_TURBO_VAE},
+                },
+            }
+        )
+        model = ["1", 0]
+        clip = ["3", 0]
+        vae = ["4", 0]
         for index, lora in enumerate(payload.loras, start=20):
             prompt[str(index)] = {
                 "class_type": "LoraLoaderModelOnly",
@@ -988,10 +1072,11 @@ def _build_prompt(
         "class_type": "CLIPTextEncode",
         "inputs": {"text": positive_prompt, "clip": clip},
     }
-    prompt["6"] = {
-        "class_type": "CLIPTextEncode",
-        "inputs": {"text": payload.negative_prompt, "clip": clip},
-    }
+    prompt["6"] = (
+        {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}}
+        if payload.model_family == "krea2"
+        else {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt, "clip": clip}}
+    )
     if input_image:
         prompt.update(
             {
@@ -1174,6 +1259,17 @@ def _request_bytes(path: str) -> tuple[bytes, str | None]:
 
 def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptEnhancementResponse:
     prompt = prompt.strip()
+    if model_family == "krea2":
+        return PromptEnhancementResponse(
+            improved_prompt=PromptEnhancementContent(
+                contents=_request_structured_content(
+                    system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+                    user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
+                    max_tokens=768,
+                    temperature=0.8,
+                )
+            )
+        )
     candidate_tags = search_danbooru_tags(prompt, limit=96)
     natural_language = (
         _request_structured_content(

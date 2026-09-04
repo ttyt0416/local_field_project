@@ -95,7 +95,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	{ value: 'uploaded', label: '업로드' },
 	{ value: 'generated', label: '생성' }
 ];
-// ponytail: Krea2 stays generator-option-only until its workflow and request validation exist.
+// ponytail: Krea2 R2I stays disabled until its dedicated style-reference LoRA is installed; add that workflow instead of routing it through generic VAE I2I.
 const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolean }[] = [
 	{ value: 'anima', label: 'ANIMA' },
 	{ value: 'illustrious', label: 'ILLUSTRIOUS' },
@@ -135,7 +135,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	let presetLoadOpen = $state(false);
 	let presetError = $state('');
 	let presetSuccess = $state('');
+	let positivePromptPrefix = $state('');
 	let prompt = $state('');
+	let negativePromptPrefix = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
@@ -301,7 +303,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function imagePresetInitialValues(): PresetValues {
 		return {
+			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
+			negative_prompt_prefix: negativePromptPrefix.trim(),
 			negative_prompt: negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
@@ -339,7 +343,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function applyPreset(preset: Preset, announce = false) {
 		const values = preset.values;
+		if (values.positive_prompt_prefix !== undefined) positivePromptPrefix = values.positive_prompt_prefix;
 		if (values.prompt !== undefined) prompt = values.prompt;
+		if (values.negative_prompt_prefix !== undefined) negativePromptPrefix = values.negative_prompt_prefix;
 		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
 		if (values.checkpoint !== undefined && options.checkpoints.includes(values.checkpoint)) checkpoint = values.checkpoint;
 		if (values.loras !== undefined) loras = values.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
@@ -619,7 +625,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (sourceFile && sourceMetadataLoading) return '소스 이미지 정보를 확인하는 중입니다.';
 		if (sourceFile && !sourceDimensions) return '원본 크기를 확인할 수 있는 이미지를 선택해 주세요.';
 		if (!prompt.trim()) return '생성할 프롬프트를 입력해 주세요.';
+		if (positivePromptPrefix.trim().length > 5000) return '긍정 프롬프트 Prefix는 5,000자 이하로 입력해 주세요.';
 		if (prompt.trim().length > 5000) return '긍정 프롬프트는 5,000자 이하로 입력해 주세요.';
+		if (negativePromptPrefix.trim().length > 5000) return '부정 프롬프트 Prefix는 5,000자 이하로 입력해 주세요.';
 		if (negativePrompt.trim().length > 5000) return '부정 프롬프트는 5,000자 이하로 입력해 주세요.';
 		if (!checkpoint || !options.checkpoints.includes(checkpoint)) return '체크포인트를 선택해 주세요.';
 		if (loras.length > 8 || new Set(loras.map(({ name }) => name)).size !== loras.length) return 'LoRA 선택을 확인해 주세요.';
@@ -664,7 +672,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		form.append('payload', JSON.stringify({
 			model_family: requestFamily,
 			source: sourceFile ? { file_index: 0 } : { file_id: sourceFileId },
+			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
+			negative_prompt_prefix: negativePromptPrefix.trim(),
 			negative_prompt: negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength: Number(strength) })),
@@ -887,6 +897,10 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 						</div>
 
 						<div class="space-y-2">
+							<label class="block space-y-2" for="i2i-positive-prompt-prefix">
+								<span class="text-sm font-medium">긍정 프롬프트 Prefix</span>
+								<textarea id="i2i-positive-prompt-prefix" bind:value={positivePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+							</label>
 							<div class="flex items-center justify-between gap-3">
 								<label for="i2i-prompt" class="text-sm font-medium">긍정 프롬프트</label>
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
@@ -895,6 +909,10 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 						</div>
 
 						<div class="space-y-2">
+							<label class="block space-y-2" for="i2i-negative-prompt-prefix">
+								<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
+								<textarea id="i2i-negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+							</label>
 							<div class="flex items-center justify-between gap-3">
 								<label for="i2i-negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}

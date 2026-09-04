@@ -27,7 +27,9 @@ class PresetLora(BaseModel):
 class PresetValues(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    positive_prompt_prefix: str | None = Field(default=None, max_length=5000)
     prompt: str | None = Field(default=None, min_length=1, max_length=5000)
+    negative_prompt_prefix: str | None = Field(default=None, max_length=5000)
     negative_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     prompt_enhancement_enabled: bool | None = None
     improved_prompt: str | None = Field(default=None, min_length=1, max_length=5000)

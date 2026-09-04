@@ -72,6 +72,22 @@ class PresetRequestTest(unittest.TestCase):
         self.assertEqual(payload.values.scheduler, "normal")
         self.assertEqual(payload.values.seed, "123")
 
+    def test_image_preset_keeps_independent_prompt_prefixes(self) -> None:
+        values = PresetValues(
+            positive_prompt_prefix="cinematic lighting",
+            negative_prompt_prefix="",
+            prompt="portrait",
+        )
+
+        self.assertEqual(
+            values.model_dump(exclude_none=True),
+            {
+                "positive_prompt_prefix": "cinematic lighting",
+                "negative_prompt_prefix": "",
+                "prompt": "portrait",
+            },
+        )
+
     def test_all_image_namespaces_are_accepted(self) -> None:
         preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2")
         payload_types = [

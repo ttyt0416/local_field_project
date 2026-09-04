@@ -23,8 +23,8 @@
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 
-	type ModelFamily = 'anima' | 'illustrious';
-	type ModelFamilyTab = ModelFamily | 'krea2';
+	type ModelFamily = 'anima' | 'illustrious' | 'krea2';
+	type ModelFamilyTab = ModelFamily;
 	type ImageOptions = {
 		model_family: ModelFamily;
 		checkpoints: string[];
@@ -35,6 +35,8 @@
 		default_checkpoint: string;
 		default_sampler: string;
 		default_scheduler: string;
+		default_cfg: number;
+		default_steps: number;
 	};
 
 	type LoraSelection = {
@@ -43,7 +45,9 @@
 	};
 
 	type PresetField =
+		| 'positive_prompt_prefix'
 		| 'prompt'
+		| 'negative_prompt_prefix'
 		| 'negative_prompt'
 		| 'checkpoint'
 		| 'loras'
@@ -54,7 +58,9 @@
 		| 'seed'
 		| 'prompt_enhancement';
 	type PresetValues = {
+		positive_prompt_prefix?: string;
 		prompt?: string;
+		negative_prompt_prefix?: string;
 		negative_prompt?: string;
 		prompt_enhancement_enabled?: boolean;
 		improved_prompt?: string;
@@ -72,7 +78,7 @@
 	};
 	type Preset = {
 		id: string;
-		type: 't2i_anima' | 't2i_illustrious';
+		type: 't2i_anima' | 't2i_illustrious' | 't2i_krea2';
 		name: string;
 		values: PresetValues;
 		is_default: boolean;
@@ -85,15 +91,15 @@
 	type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 	type ImageSize = { width: number; height: number };
 
-	const modelFamily: ModelFamily = page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima';
-	const presetType: Preset['type'] = modelFamily === 'illustrious' ? 't2i_illustrious' : 't2i_anima';
-	const familyLabel = modelFamily === 'illustrious' ? 'Illustrious' : 'Anima';
+	const requestedFamily = page.url.searchParams.get('family');
+	const modelFamily: ModelFamily = requestedFamily === 'illustrious' || requestedFamily === 'krea2' ? requestedFamily : 'anima';
+	const presetType: Preset['type'] = modelFamily === 'illustrious' ? 't2i_illustrious' : modelFamily === 'krea2' ? 't2i_krea2' : 't2i_anima';
+	const familyLabel = modelFamily === 'illustrious' ? 'Illustrious' : modelFamily === 'krea2' ? 'Krea2' : 'Anima';
 	const pageTitle = 'T2I';
-	// ponytail: Krea2 stays generator-option-only until its workflow and request validation exist.
 	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
 		{ value: 'anima', label: 'ANIMA' },
 		{ value: 'illustrious', label: 'ILLUSTRIOUS' },
-		{ value: 'krea2', label: 'KREA2', disabled: true }
+		{ value: 'krea2', label: 'KREA2' }
 	];
 	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
@@ -114,7 +120,9 @@
 		'9:16': { width: 648, height: 1152 }
 	};
 	const presetFieldOptions: { key: PresetField; label: string }[] = [
+		{ key: 'positive_prompt_prefix', label: '긍정 프롬프트 Prefix' },
 		{ key: 'prompt', label: '긍정 프롬프트' },
+		{ key: 'negative_prompt_prefix', label: '부정 프롬프트 Prefix' },
 		{ key: 'negative_prompt', label: '부정 프롬프트' },
 		{ key: 'checkpoint', label: '체크포인트' },
 		{ key: 'loras', label: 'LoRA' },
@@ -126,7 +134,9 @@
 		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
 	];
 	const defaultPresetFieldSelection: Record<PresetField, boolean> = {
+		positive_prompt_prefix: true,
 		prompt: true,
+		negative_prompt_prefix: true,
 		negative_prompt: true,
 		checkpoint: true,
 		loras: true,
@@ -177,11 +187,15 @@
 		schedulers: [],
 		default_checkpoint: '',
 		default_sampler: '',
-		default_scheduler: ''
+		default_scheduler: '',
+		default_cfg: 4,
+		default_steps: 30
 	});
+	let positivePromptPrefix = $state('');
 	let prompt = $state('');
 	let promptEnhancementEnabled = $state(false);
 	let improvedPrompt = $state('');
+	let negativePromptPrefix = $state('');
 	let negativePrompt = $state(defaultNegativePrompt);
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
@@ -298,7 +312,9 @@
 
 	function buildPresetValues(): PresetValues {
 		const values: PresetValues = {};
+		if (selectedPresetFields.positive_prompt_prefix) values.positive_prompt_prefix = positivePromptPrefix.trim();
 		if (selectedPresetFields.prompt) values.prompt = prompt.trim();
+		if (selectedPresetFields.negative_prompt_prefix) values.negative_prompt_prefix = negativePromptPrefix.trim();
 		if (selectedPresetFields.negative_prompt) values.negative_prompt = negativePrompt.trim();
 		if (selectedPresetFields.checkpoint) values.checkpoint = checkpoint;
 		if (selectedPresetFields.loras) {
@@ -372,7 +388,9 @@
 
 	function applyPreset(preset: Preset, announce = false) {
 		const values = preset.values;
+		if (values.positive_prompt_prefix !== undefined) positivePromptPrefix = values.positive_prompt_prefix;
 		if (values.prompt !== undefined) prompt = values.prompt;
+		if (values.negative_prompt_prefix !== undefined) negativePromptPrefix = values.negative_prompt_prefix;
 		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
 		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
 		if (values.improved_prompt !== undefined) {
@@ -495,6 +513,8 @@
 			checkpoint = options.default_checkpoint;
 			samplerName = options.default_sampler;
 			scheduler = options.default_scheduler;
+			cfg = options.default_cfg;
+			steps = options.default_steps;
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 			} else {
@@ -547,9 +567,11 @@
 				method: 'POST',
 				json: {
 					model_family: modelFamily,
+					positive_prompt_prefix: positivePromptPrefix.trim(),
 					prompt: prompt.trim(),
 					prompt_enhancement_enabled: promptEnhancementEnabled,
 					improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
+					negative_prompt_prefix: negativePromptPrefix.trim(),
 					negative_prompt: negativePrompt.trim(),
 					checkpoint,
 					loras: loras.filter(({ name }) => name).map(({ name, strength }) => ({ name, strength })),
@@ -621,7 +643,7 @@
 	}
 
 	function selectModelFamily(nextFamily: ModelFamilyTab) {
-		if (nextFamily === modelFamily || nextFamily === 'krea2') return false;
+		if (nextFamily === modelFamily) return false;
 		window.location.assign(`/generate/image?family=${nextFamily}`);
 		return false;
 	}
@@ -750,6 +772,10 @@
 
 					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
+							<label class="block space-y-2" for="positive-prompt-prefix">
+								<span class="text-sm font-medium">긍정 프롬프트 Prefix</span>
+								<textarea id="positive-prompt-prefix" bind:value={positivePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+							</label>
 							<div class="flex items-center justify-between gap-3">
 								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
 								<div class="flex items-center gap-2">
@@ -783,13 +809,19 @@
 							{/if}
 						</div>
 
-						<div class="space-y-2">
-							<div class="flex items-center justify-between gap-3">
-								<label for="negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
-								{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
+						{#if modelFamily !== 'krea2'}
+							<div class="space-y-2">
+								<label class="block space-y-2" for="negative-prompt-prefix">
+									<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
+									<textarea id="negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+								</label>
+								<div class="flex items-center justify-between gap-3">
+									<label for="negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
+									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
+								</div>
+								<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 							</div>
-							<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
-						</div>
+						{/if}
 
 						<div class="space-y-2">
 							<span class="text-sm font-medium">체크포인트</span>
