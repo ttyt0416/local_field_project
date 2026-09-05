@@ -153,23 +153,23 @@
 
 {#if !ready}
 	<div class="min-h-screen bg-muted/30 px-4 py-8 text-foreground dark:bg-background sm:px-6 lg:px-8">
-		<main class="mx-auto max-w-6xl space-y-6">
+		<main class="mx-auto w-full min-w-0 max-w-6xl space-y-6">
 			<a href="/vault?tab=videos" class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground"><ArrowLeft size={16} strokeWidth={1.8} />보관함으로 돌아가기</a>
 			<section><Typography as="h1" variant="display">동영상 콘텐츠 상세</Typography><div class="flex min-h-[24rem] items-center justify-center"><LoadingSpinner size="lg" label="동영상 상세 정보를 불러오는 중" /></div></section>
 		</main>
 	</div>
 {:else if generation}
 	<div class="min-h-screen bg-muted/30 px-4 py-8 text-foreground dark:bg-background sm:px-6 lg:px-8">
-		<main class="mx-auto max-w-6xl space-y-6">
+		<main class="mx-auto w-full min-w-0 max-w-6xl space-y-6">
 			<a href="/vault?tab=videos" class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground"><ArrowLeft size={16} strokeWidth={1.8} />보관함으로 돌아가기</a>
 			<section>
 				<Typography as="h1" variant="display">동영상 콘텐츠 상세</Typography>
 				{#if generation.is_edited}<span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">편집 결과</span>{/if}
-				<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 재생 시간 {formatElapsedSeconds(generation.duration_seconds ?? 0)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
+				<p class="mt-3 break-words text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 재생 시간 {formatElapsedSeconds(generation.duration_seconds ?? 0)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
 			</section>
 
-			<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
-				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+			<div class="grid min-w-0 max-w-full gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
+				<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="relative overflow-hidden rounded-xl bg-black">
 						{#if generation.video_url}
 							<VideoMedia source={generation.video_url} sourceType="server" preview={false} muted={false} class="min-h-[24rem] sm:min-h-[36rem]" />
@@ -183,7 +183,7 @@
 					</div>
 				</section>
 
-				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+				<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="flex items-center gap-2"><Video size={18} class="text-primary" strokeWidth={1.8} /><Typography as="h2" variant="h2">생성 파라미터</Typography></div>
 					<dl class="mt-5 space-y-4 text-sm">
 						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.media_type}</dd></div>
@@ -199,15 +199,15 @@
 				</section>
 			</div>
 
-			<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+			<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 				<Typography as="h2" variant="h2">생성 프롬프트</Typography>
 				<div class="mt-4 space-y-4">
-					<div class="space-y-2"><span class="text-sm font-semibold">스타일·전체 배경</span><p class="whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p></div>
+					<div class="min-w-0 max-w-full space-y-2"><span class="text-sm font-semibold">스타일·전체 배경</span><p class="max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p></div>
 					{#each generation.input_segment_prompts as inputPrompt, index}
-						<div class="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
-							<div class="space-y-2"><span class="text-sm font-semibold">입력 프롬프트 {index + 1}</span><p class="whitespace-pre-wrap rounded-lg bg-background p-3 text-sm leading-6">{inputPrompt}</p></div>
+						<div class="min-w-0 max-w-full space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+							<div class="min-w-0 max-w-full space-y-2"><span class="text-sm font-semibold">입력 프롬프트 {index + 1}</span><p class="max-w-full break-words whitespace-pre-wrap rounded-lg bg-background p-3 text-sm leading-6">{inputPrompt}</p></div>
 							{#if generation.improved_segment_prompts[index]}
-								<div class="space-y-2"><span class="text-sm font-semibold">개선 프롬프트 {index + 1}</span><p class="whitespace-pre-wrap rounded-lg bg-primary/5 p-3 text-sm leading-6">{generation.improved_segment_prompts[index]}</p></div>
+								<div class="min-w-0 max-w-full space-y-2"><span class="text-sm font-semibold">개선 프롬프트 {index + 1}</span><p class="max-w-full break-words whitespace-pre-wrap rounded-lg bg-primary/5 p-3 text-sm leading-6">{generation.improved_segment_prompts[index]}</p></div>
 							{/if}
 						</div>
 					{/each}

@@ -71,19 +71,23 @@ _MAX_INPUT_SIZE = 50 * 1024 * 1024
 _SEGMENT_SECONDS = 10.0
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _EROS_CHECKPOINT = "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors"
+_DASIWA_CHECKPOINT = "MiniMaxH3/DasiwaMinimaxH3_dasiwaHybridV1_int8.safetensors"
 _VBVR_LORA = "MiniMax/VBVR_H3_attn_only.safetensors"
 _VIDEO_CHECKPOINTS = {
     "i2v": {
         "eros": _EROS_CHECKPOINT,
         "minimax": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "dasiwa": _DASIWA_CHECKPOINT,
     },
     "fl2v": {
         "eros": _EROS_CHECKPOINT,
         "minimax": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "dasiwa": _DASIWA_CHECKPOINT,
     },
     "r2v": {
         "eros": _EROS_CHECKPOINT,
         "minimax": "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "dasiwa": _DASIWA_CHECKPOINT,
     },
 }
 _VIDEO_CHECKPOINT_MODELS = {

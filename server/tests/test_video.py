@@ -52,6 +52,7 @@ class VideoContractTest(unittest.TestCase):
             video._EROS_CHECKPOINT,
             video._VIDEO_CHECKPOINTS["i2v"]["minimax"],
             video._VIDEO_CHECKPOINTS["r2v"]["minimax"],
+            video._DASIWA_CHECKPOINT,
         ]
         object_info = {"UNETLoader": {"input": {"required": {"unet_name": [available]}}}}
         with patch.object(video, "_request_json", return_value=object_info):
@@ -59,7 +60,7 @@ class VideoContractTest(unittest.TestCase):
             with self.assertRaises(video.HTTPException):
                 video._validated_video_checkpoint("r2v", video._VIDEO_CHECKPOINTS["i2v"]["minimax"])
 
-        self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._VIDEO_CHECKPOINTS["r2v"]["minimax"]])
+        self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._VIDEO_CHECKPOINTS["r2v"]["minimax"], video._DASIWA_CHECKPOINT])
         self.assertEqual(options.default_checkpoint, video._VIDEO_CHECKPOINTS["r2v"]["minimax"])
 
     def test_eros_checkpoint_removes_turbo_lora_and_uses_six_steps(self) -> None:
@@ -82,9 +83,52 @@ class VideoContractTest(unittest.TestCase):
 
     def test_continuation_resolves_minimax_profile_to_its_mode_base(self) -> None:
         model, checkpoint = video._workflow_checkpoint("r2v", video._VIDEO_CHECKPOINTS["i2v"]["minimax"])
+        dasiwa_model, dasiwa_checkpoint = video._workflow_checkpoint("r2v", video._DASIWA_CHECKPOINT)
 
         self.assertEqual(model, "minimax")
         self.assertEqual(checkpoint, video._VIDEO_CHECKPOINTS["r2v"]["minimax"])
+        self.assertEqual(dasiwa_model, "dasiwa")
+        self.assertEqual(dasiwa_checkpoint, video._DASIWA_CHECKPOINT)
+
+    def test_dasiwa_checkpoint_keeps_vbvr_and_mode_turbo_loras(self) -> None:
+        requests = {
+            "i2v": video.VideoGenerationRequest(
+                prompt="move",
+                checkpoint=video._DASIWA_CHECKPOINT,
+                first_frame=video.VideoAsset(kind="image", file_index=0),
+            ),
+            "fl2v": video.VideoGenerationRequest(
+                prompt="move",
+                checkpoint=video._DASIWA_CHECKPOINT,
+                first_frame=video.VideoAsset(kind="image", file_index=0),
+                last_frame=video.VideoAsset(kind="image", file_index=1),
+            ),
+            "r2v": video.VideoGenerationRequest(
+                prompt="move",
+                checkpoint=video._DASIWA_CHECKPOINT,
+                reference_images=[video.VideoAsset(kind="image", file_index=0)],
+            ),
+        }
+        turbo_loras = {
+            "i2v": "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+            "fl2v": "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+            "r2v": "MiniMax/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        }
+        resolved = {
+            "index:0": video._ResolvedAsset(file_id="a" * 32, filename="first.png", content=b"i", media_type="image/png", kind="image"),
+            "index:1": video._ResolvedAsset(file_id="b" * 32, filename="last.png", content=b"i", media_type="image/png", kind="image"),
+        }
+
+        with patch.object(video, "_upload_to_comfy", side_effect=lambda _resolved, asset, _kind: f"{asset.file_index}.png"):
+            for mode, request in requests.items():
+                prompt, _ = video._build_prompt(mode, request, resolved)
+                unet = next(node for node in prompt.values() if node["class_type"] == "UNETLoader")
+                loras = [(node_id, node) for node_id, node in prompt.items() if node["class_type"] == "LoraLoaderModelOnly"]
+                scheduler = next(node for node in prompt.values() if node["class_type"] == "BasicScheduler")
+
+                self.assertEqual(unet["inputs"]["unet_name"], video._DASIWA_CHECKPOINT)
+                self.assertEqual([node["inputs"]["lora_name"] for _, node in loras], [video._VBVR_LORA, turbo_loras[mode]])
+                self.assertEqual(scheduler["inputs"], {"model": [loras[1][0], 0], "scheduler": "simple", "steps": 4, "denoise": 1})
 
     def test_reference_markers_are_normalized_to_minimax_contract(self) -> None:
         self.assertEqual(

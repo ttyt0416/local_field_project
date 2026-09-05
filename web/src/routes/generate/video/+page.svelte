@@ -927,15 +927,15 @@
 	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="동영상 생성 페이지를 불러오는 중" /></div>
 {:else}
 	<Layout>
-		<div class="space-y-6">
+		<div class="min-w-0 max-w-full space-y-6">
 			<div class="flex flex-wrap items-end justify-between gap-4">
 				<Typography as="h1" variant="display">동영상 생성</Typography>
 			</div>
 
-			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
-				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-result-title">
+			<div class="grid min-w-0 max-w-full gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
+				<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-result-title">
 					<div class="flex items-center justify-between gap-4">
-						<div>
+						<div class="min-w-0">
 							<div id="video-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
 							{#if status}<Typography as="p" variant="muted" class="mt-1">상태: {statusLabel(status)}{#if sequenceSegmentCount > 1} · 구간 {sequenceSegmentIndex + 1}/{sequenceSegmentCount}{/if}{#if status === 'queued' || status === 'processing'} · {Math.round(progress)}% · 경과 {formatElapsedSeconds(elapsedSeconds)}{:else} · 소요 {formatElapsedSeconds(elapsedSeconds)}{/if}{#if status === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}</Typography>{/if}
 						</div>
@@ -958,9 +958,9 @@
 					{/if}
 				</section>
 
-				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-settings-title">
+				<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-settings-title">
 					<div class="flex items-center justify-between gap-4">
-						<div id="video-settings-title"><Typography as="h2" variant="h2">동영상 설정</Typography></div>
+						<div id="video-settings-title" class="min-w-0"><Typography as="h2" variant="h2">동영상 설정</Typography></div>
 						<div class="flex items-center gap-2">
 							<IconOutlinedButton ariaLabel="동영상 프리셋 저장" title="프리셋 저장" disabled={generating} onclick={openVideoPresetSave}>
 								<Save size={17} strokeWidth={1.8} />
@@ -980,11 +980,11 @@
 						</button>
 					</div>
 
-					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form class="mt-5 min-w-0 max-w-full space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
-							<div class="flex items-center justify-between gap-3">
+							<div class="flex flex-wrap items-center justify-between gap-3">
 								<span class="text-sm font-medium">스타일·전체 배경</span>
-								<div class="flex items-center gap-2">
+								<div class="flex flex-wrap items-center gap-2">
 									<label for="video-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="video-prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} onchange={resetImprovedPrompts} class="peer sr-only" />
 										<span>프롬프트 개선</span>
@@ -1004,7 +1004,7 @@
 							</div>
 							{#if promptEnhancementEnabled}
 								<div class="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
-									<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">출력 언어</span><span class="text-xs text-muted-foreground">복수 선택 가능</span></div>
+									<div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">출력 언어</span><span class="text-xs text-muted-foreground">복수 선택 가능</span></div>
 									<div class="grid gap-2 sm:grid-cols-3">
 										{#each promptLanguageOptions as language}
 											<label class="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm transition hover:bg-muted">
