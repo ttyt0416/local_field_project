@@ -70,7 +70,6 @@
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
 
-	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const emptyOptions: ImageOptions = {
 		checkpoints: [],
 		loras: [],
@@ -138,7 +137,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	let positivePromptPrefix = $state('');
 	let prompt = $state('');
 	let negativePromptPrefix = $state('');
-	let negativePrompt = $state(defaultNegativePrompt);
+	let negativePrompt = $state('');
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
 	let cfg = $state(4);
@@ -588,10 +587,6 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	function toggleLora(name: string) {
 		if (generating) return;
 		const selected = loras.some((lora) => lora.name === name);
-		if (!selected && loras.length >= 8) {
-			generationError = 'LoRA는 최대 8개까지 선택할 수 있습니다.';
-			return;
-		}
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
 	}
 
@@ -630,7 +625,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (negativePromptPrefix.trim().length > 5000) return '부정 프롬프트 Prefix는 5,000자 이하로 입력해 주세요.';
 		if (negativePrompt.trim().length > 5000) return '부정 프롬프트는 5,000자 이하로 입력해 주세요.';
 		if (!checkpoint || !options.checkpoints.includes(checkpoint)) return '체크포인트를 선택해 주세요.';
-		if (loras.length > 8 || new Set(loras.map(({ name }) => name)).size !== loras.length) return 'LoRA 선택을 확인해 주세요.';
+		if (new Set(loras.map(({ name }) => name)).size !== loras.length) return 'LoRA 선택을 확인해 주세요.';
 		if (loras.some(({ name, strength }) => !name.trim() || !options.loras.includes(name) || !Number.isFinite(Number(strength)))) return 'LoRA와 Strength 값을 확인해 주세요.';
 		if (!isValidDimension(width) || !isValidDimension(height)) return '이미지 가로·세로는 64~2048 범위의 8의 배수여야 합니다.';
 		if (!Number.isFinite(Number(denoise)) || Number(denoise) < 0 || Number(denoise) > 1) return 'Denoise는 0.0에서 1.0 사이로 입력해 주세요.';
@@ -930,7 +925,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 						<div class="space-y-3">
 							<div class="flex items-center justify-between gap-3">
-								<span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length}/8)</span></span>
+								<span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length})</span></span>
 								<button type="button" onclick={() => (loraModalOpen = true)} disabled={generating || optionsLoading || options.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button>
 							</div>
 							{#if loras.length === 0}
@@ -1018,7 +1013,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		</div>
 	</Modal>
 
-	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 최대 8개를 선택하세요.">
+	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 선택하세요.">
 		<div class="space-y-3">
 			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LoRA folder filter">
 				<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>

@@ -88,6 +88,11 @@ class PresetRequestTest(unittest.TestCase):
             },
         )
 
+    def test_preset_accepts_more_than_eight_loras(self) -> None:
+        values = PresetValues.model_validate({"loras": [{"name": f"style-{index}.safetensors", "strength": 1.0} for index in range(9)]})
+
+        self.assertEqual(len(values.loras or []), 9)
+
     def test_all_image_namespaces_are_accepted(self) -> None:
         preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2")
         payload_types = [

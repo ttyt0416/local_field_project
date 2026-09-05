@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Plus, Trash2 } from '@lucide/svelte';
+	import { Check, Trash2 } from '@lucide/svelte';
 	import Modal from '../modals/modal.svelte';
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
@@ -7,6 +7,7 @@
 	import SamplingSelectionModal from './sampling-selection-modal.svelte';
 	import { apiJson } from '$lib/utils/api';
 	import type { AspectRatio, ImageOptions, ImagePresetType, LoraSelection, Preset, PresetValues } from '$lib/types/presets';
+	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 
 	type PresetField =
 		| 'positive_prompt_prefix'
@@ -34,7 +35,6 @@
 	let { open = $bindable(false), preset, initialValues = {}, presetType, options, onSaved }: Props = $props();
 	let isI2I = $derived(presetType.startsWith('i2i_'));
 	let isT2I = $derived(!isI2I);
-	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
 		{ value: 'custom', label: '커스텀' },
@@ -88,7 +88,7 @@
 	let positivePromptPrefix = $state('');
 	let prompt = $state('');
 	let negativePromptPrefix = $state('');
-	let negativePrompt = $state(defaultNegativePrompt);
+	let negativePrompt = $state('');
 	let promptEnhancementEnabled = $state(false);
 	let improvedPrompt = $state('');
 	let checkpoint = $state('');
@@ -102,13 +102,19 @@
 	let samplerName = $state('');
 	let scheduler = $state('');
 	let samplingOpen = $state(false);
+	let checkpointModalOpen = $state(false);
+	let loraModalOpen = $state(false);
+	let checkpointFolder = $state('');
+	let loraFolder = $state('');
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let selectedFields = $state<Record<PresetField, boolean>>({ ...allFields });
 	let saving = $state(false);
 	let error = $state('');
-	let checkpointOptions = $derived(options.checkpoints.map((value) => ({ value, label: value })));
-	let loraOptions = $derived(options.loras.map((value) => ({ value, label: value })));
+	let checkpointFolders = $derived(modelFolders(options.checkpoints));
+	let loraFolders = $derived(modelFolders(options.loras));
+	let visibleCheckpoints = $derived(filterModelFolder(options.checkpoints, checkpointFolder));
+	let visibleLoras = $derived(filterModelFolder(options.loras, loraFolder));
 
 	$effect(() => {
 		if (!open) return;
@@ -128,7 +134,7 @@
 		positivePromptPrefix = values.positive_prompt_prefix ?? '';
 		prompt = values.prompt ?? '';
 		negativePromptPrefix = values.negative_prompt_prefix ?? '';
-		negativePrompt = values.negative_prompt ?? defaultNegativePrompt;
+		negativePrompt = values.negative_prompt ?? '';
 		promptEnhancementEnabled = values.prompt_enhancement_enabled ?? false;
 		improvedPrompt = values.improved_prompt ?? '';
 		checkpoint = values.checkpoint ?? options.default_checkpoint;
@@ -158,17 +164,14 @@
 			seed: fields.has('seed') || fields.has('random_seed'),
 			prompt_enhancement: isT2I && (fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt'))
 		};
+		checkpointFolder = '';
+		loraFolder = '';
 		error = '';
 	});
 
-	function availableLoraOptions(index: number) {
-		const selected = new Set(loras.filter((_, currentIndex) => currentIndex !== index).map((lora) => lora.name));
-		return loraOptions.filter((option) => option.value === loras[index]?.name || !selected.has(option.value));
-	}
-
-	function addLora() {
-		if (loras.some((lora) => !lora.name) || loras.length >= loraOptions.length) return;
-		loras = [...loras, { name: '', strength: 1.0 }];
+	function toggleLora(name: string) {
+		const selected = loras.some((lora) => lora.name === name);
+		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
 	}
 
 	function removeLora(index: number) {
@@ -253,10 +256,10 @@
 		{#if selectedFields.prompt}<label class="block space-y-2" for="image-preset-prompt"><span class="text-sm font-medium">긍정 프롬프트</span><textarea id="image-preset-prompt" bind:value={prompt} rows="4" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.negative_prompt_prefix}<label class="block space-y-2" for="image-preset-negative-prefix"><span class="text-sm font-medium">부정 프롬프트 Prefix</span><textarea id="image-preset-negative-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.negative_prompt}<label class="block space-y-2" for="image-preset-negative"><span class="text-sm font-medium">부정 프롬프트</span><textarea id="image-preset-negative" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
-		{#if selectedFields.checkpoint}<Select id="image-preset-checkpoint" label="체크포인트" options={checkpointOptions} bind:value={checkpoint} autocomplete disabled={checkpointOptions.length === 0} required />{/if}
+		{#if selectedFields.checkpoint}<div class="space-y-2"><span class="text-sm font-medium">체크포인트</span><button type="button" onclick={() => (checkpointModalOpen = true)} disabled={options.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="min-w-0 truncate">{checkpoint || '체크포인트를 선택해 주세요'}</span><span class="shrink-0 text-xs font-semibold text-primary">선택</span></button></div>{/if}
 		{#if selectedFields.loras}
-			<div class="space-y-3"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">LoRA</span><button type="button" onclick={addLora} disabled={loraOptions.length === 0 || loras.length >= loraOptions.length || loras.some((lora) => !lora.name)} class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"><Plus size={14} strokeWidth={2} /><span>LoRA 추가</span></button></div>
-				{#each loras as lora, index (index)}<div class="rounded-lg border border-border p-3"><div class="flex items-start gap-2"><div class="min-w-0 flex-1"><Select id={`image-preset-lora-${index}`} label={`LoRA ${index + 1}`} options={availableLoraOptions(index)} bind:value={lora.name} autocomplete /></div><button type="button" aria-label={`LoRA ${index + 1} 제거`} onclick={() => removeLora(index)} class="mt-7 inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"><Trash2 size={15} strokeWidth={1.8} /></button></div>{#if lora.name}<label class="mt-3 block space-y-2" for={`image-preset-lora-strength-${index}`}><span class="text-sm font-medium">Strength</span><input id={`image-preset-lora-strength-${index}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} /></label>{/if}</div>{/each}
+			<div class="space-y-3"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length})</span></span><button type="button" onclick={() => (loraModalOpen = true)} disabled={options.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button></div>
+				{#if loras.length === 0}<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>{:else}{#each loras as lora, index (lora.name)}<div class="rounded-lg border border-border p-3"><div class="flex items-start gap-2"><p class="min-w-0 flex-1 break-all text-sm font-medium">{lora.name}</p><button type="button" aria-label={`${lora.name} 제거`} onclick={() => removeLora(index)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"><Trash2 size={15} strokeWidth={1.8} /></button></div><label class="mt-3 block space-y-2" for={`image-preset-lora-strength-${index}`}><span class="text-sm font-medium">Strength</span><input id={`image-preset-lora-strength-${index}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} /></label></div>{/each}{/if}
 			</div>
 		{/if}
 		{#if selectedFields.aspect_ratio}<Select id="image-preset-aspect" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} /><div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-width"><span class="text-sm font-medium">가로</span><input id="image-preset-width" type="number" min="64" max="2048" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label><label class="block space-y-2" for="image-preset-height"><span class="text-sm font-medium">세로</span><input id="image-preset-height" type="number" min="64" max="2048" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label></div>{/if}
@@ -268,6 +271,33 @@
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>
 	{#snippet footer()}<OutlinedButton disabled={saving} onclick={() => (open = false)}>취소</OutlinedButton><PrimaryButton loading={saving} disabled={!presetName.trim() || !selectedFieldCount()} onclick={() => void save()}>{editingId ? '수정' : '저장'}</PrimaryButton>{/snippet}
+</Modal>
+
+<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="전체 또는 하위 folder에서 하나를 선택하세요.">
+	<div class="space-y-3">
+		<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="체크포인트 folder filter">
+			<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === ''} onclick={() => (checkpointFolder = '')}>전체</OutlinedButton>
+			{#if checkpointFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (checkpointFolder = parentModelFolder(checkpointFolder))}>바로 위 폴더</OutlinedButton>{/if}
+			{#each checkpointFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === folder} onclick={() => (checkpointFolder = folder)}>{folder}</OutlinedButton>{/each}
+		</div>
+		<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+			{#each visibleCheckpoints as value}<button type="button" onclick={() => { checkpoint = value; checkpointModalOpen = false; }} aria-pressed={checkpoint === value} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === value ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{value}</span>{#if checkpoint === value}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
+		</div>
+	</div>
+</Modal>
+
+<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 선택하세요.">
+	<div class="space-y-3">
+		<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LoRA folder filter">
+			<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>
+			{#if loraFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (loraFolder = parentModelFolder(loraFolder))}>바로 위 폴더</OutlinedButton>{/if}
+			{#each loraFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === folder} onclick={() => (loraFolder = folder)}>{folder}</OutlinedButton>{/each}
+		</div>
+		<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+			{#each visibleLoras as value}{@const selected = loras.some((lora) => lora.name === value)}<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{value}</span>{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
+		</div>
+	</div>
+	{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 </Modal>
 
 <SamplingSelectionModal

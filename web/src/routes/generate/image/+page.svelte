@@ -101,7 +101,6 @@
 		{ value: 'illustrious', label: 'ILLUSTRIOUS' },
 		{ value: 'krea2', label: 'KREA2' }
 	];
-	const defaultNegativePrompt = 'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia';
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
 		{ value: 'custom', label: '커스텀' },
@@ -196,7 +195,7 @@
 	let promptEnhancementEnabled = $state(false);
 	let improvedPrompt = $state('');
 	let negativePromptPrefix = $state('');
-	let negativePrompt = $state(defaultNegativePrompt);
+	let negativePrompt = $state('');
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
 	let cfg = $state(4);
@@ -241,10 +240,6 @@
 
 	function toggleLora(name: string) {
 		const selected = loras.some((lora) => lora.name === name);
-		if (!selected && loras.length >= 8) {
-			generationError = 'LoRA는 최대 8개까지 선택할 수 있습니다.';
-			return;
-		}
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
 	}
 
@@ -932,7 +927,7 @@
 		</div>
 	</Modal>
 
-	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 최대 8개를 선택하세요.">
+	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="전체 또는 하위 folder에서 선택하세요.">
 		<div class="space-y-3">
 			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LoRA folder filter">
 				<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>

@@ -50,7 +50,6 @@ from .storage import (
 
 
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
-_DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"
 _COMFYUI_TIMEOUT_SECONDS = 30
 _VLLM_TIMEOUT_SECONDS = 600
 _SSE_HEARTBEAT_SECONDS = 15
@@ -97,9 +96,9 @@ class ImageGenerationRequest(BaseModel):
     prompt_enhancement_enabled: bool = False
     improved_prompt: str | None = Field(default=None, max_length=5000)
     negative_prompt_prefix: str = Field(default="", max_length=5000)
-    negative_prompt: str = Field(default=_DEFAULT_NEGATIVE_PROMPT, max_length=5000)
+    negative_prompt: str = Field(default="", max_length=5000)
     checkpoint: str = Field(min_length=1, max_length=255)
-    loras: list[LoraSelection] = Field(default_factory=list, max_length=8)
+    loras: list[LoraSelection] = Field(default_factory=list)
     cfg: float = Field(default=4, ge=0, le=20)
     steps: int = Field(default=30, ge=1, le=100)
     sampler_name: str = Field(default=_DEFAULT_SAMPLER, min_length=1, max_length=64)

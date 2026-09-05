@@ -34,7 +34,7 @@ class PresetValues(BaseModel):
     prompt_enhancement_enabled: bool | None = None
     improved_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
-    loras: list[PresetLora] | None = Field(default=None, max_length=8)
+    loras: list[PresetLora] | None = None
     aspect_ratio: PresetAspectRatio | None = None
     width: int | None = Field(default=None, ge=32, le=2048)
     height: int | None = Field(default=None, ge=32, le=2048)

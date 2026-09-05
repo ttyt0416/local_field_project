@@ -45,6 +45,29 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["7"]["class_type"], "EmptyLatentImage")
         self.assertEqual(workflow["8"]["inputs"]["denoise"], 1.0)
 
+    def test_image_request_defaults_to_an_empty_negative_prompt(self) -> None:
+        payload = comfyui.ImageGenerationRequest(prompt="portrait", checkpoint="Anima/anima_aestheticV11.safetensors")
+
+        self.assertEqual(payload.negative_prompt, "")
+
+    def test_image_request_accepts_more_than_eight_loras(self) -> None:
+        payload = comfyui.ImageGenerationRequest(
+            prompt="portrait",
+            checkpoint="Anima/anima_aestheticV11.safetensors",
+            loras=[comfyui.LoraSelection(name=f"style-{index}.safetensors", strength=1.0) for index in range(9)],
+        )
+
+        self.assertEqual(len(payload.loras), 9)
+
+    def test_image_workflow_chains_more_than_eight_loras(self) -> None:
+        payload = self._request("anima")
+        payload.loras = [comfyui.LoraSelection(name=f"style-{index}.safetensors", strength=1.0) for index in range(9)]
+
+        workflow, _ = comfyui._build_prompt(payload)
+
+        self.assertEqual([workflow[str(index)]["inputs"]["lora_name"] for index in range(20, 29)], [lora.name for lora in payload.loras])
+        self.assertEqual(workflow["28"]["inputs"]["model"], ["27", 0])
+
     def test_illustrious_t2i_uses_checkpoint_outputs(self) -> None:
         workflow, _ = comfyui._build_prompt(self._request("illustrious"))
         self.assertEqual(workflow["1"]["class_type"], "CheckpointLoaderSimple")
