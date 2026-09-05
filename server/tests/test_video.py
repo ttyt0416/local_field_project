@@ -17,21 +17,35 @@ class VideoContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.user = UserResponse(id=uuid4(), username="tester")
 
-    def test_video_workflows_use_10eros_vbvr_defaults(self) -> None:
+    def test_video_workflows_chain_vbvr_and_mode_turbo_on_minimax_bases(self) -> None:
         workflows = Path(video.__file__).with_name("workflows")
-        for filename in ("video_i2v.json", "video_fl2v.json", "video_r2v.json"):
+        expected = {
+            "video_i2v.json": (
+                "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+            ),
+            "video_fl2v.json": (
+                "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+            ),
+            "video_r2v.json": (
+                "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                "MiniMax/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+            ),
+        }
+        for filename, (checkpoint, turbo_lora) in expected.items():
             workflow = json.loads((workflows / filename).read_text())
             unet = next(node for node in workflow.values() if node["class_type"] == "UNETLoader")
-            lora_id, lora = next(
-                (node_id, node) for node_id, node in workflow.items() if node["class_type"] == "LoraLoaderModelOnly"
-            )
+            loras = [(node_id, node) for node_id, node in workflow.items() if node["class_type"] == "LoraLoaderModelOnly"]
             sampler = next(node for node in workflow.values() if node["class_type"] == "KSamplerSelect")
             scheduler = next(node for node in workflow.values() if node["class_type"] == "BasicScheduler")
 
-            self.assertEqual(unet["inputs"]["unet_name"], "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors")
-            self.assertEqual(lora["inputs"]["lora_name"], "MiniMax/VBVR_H3_attn_only.safetensors")
+            self.assertEqual(unet["inputs"]["unet_name"], checkpoint)
+            self.assertEqual([lora["inputs"]["lora_name"] for _, lora in loras], ["MiniMax/VBVR_H3_attn_only.safetensors", turbo_lora])
+            self.assertEqual(loras[0][1]["inputs"]["model"], ["1", 0])
+            self.assertEqual(loras[1][1]["inputs"]["model"], [loras[0][0], 0])
             self.assertEqual(sampler["inputs"]["sampler_name"], "res_multistep")
-            self.assertEqual(scheduler["inputs"], {"model": [lora_id, 0], "scheduler": "simple", "steps": 6, "denoise": 1})
+            self.assertEqual(scheduler["inputs"], {"model": [loras[1][0], 0], "scheduler": "simple", "steps": 4, "denoise": 1})
 
     def test_reference_markers_are_normalized_to_minimax_contract(self) -> None:
         self.assertEqual(

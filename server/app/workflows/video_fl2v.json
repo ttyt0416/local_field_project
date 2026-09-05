@@ -2,7 +2,7 @@
   "1": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors",
+      "unet_name": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "weight_dtype": "default"
     }
   },
@@ -41,6 +41,14 @@
       "strength_model": 1
     }
   },
+  "18": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["5", 0],
+      "lora_name": "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+      "strength_model": 1
+    }
+  },
   "6": {
     "class_type": "RandomNoise",
     "inputs": {
@@ -50,7 +58,7 @@
   "7": {
     "class_type": "BasicGuider",
     "inputs": {
-      "model": ["5", 0],
+      "model": ["18", 0],
       "conditioning": ["4", 0]
     }
   },
@@ -63,9 +71,9 @@
   "9": {
     "class_type": "BasicScheduler",
     "inputs": {
-      "model": ["5", 0],
+      "model": ["18", 0],
       "scheduler": "simple",
-      "steps": 6,
+      "steps": 4,
       "denoise": 1
     }
   },
