@@ -28,6 +28,7 @@
 		height: number;
 		seed: number;
 		checkpoint: string | null;
+		loras: { name: string; strength: number }[];
 		status: string;
 		prompt: string;
 		input_segment_prompts: string[];
@@ -128,6 +129,7 @@
 			prompt: generation.prompt,
 			mode: generation.mode,
 			...(generation.checkpoint ? { checkpoint: generation.checkpoint } : {}),
+			loras: generation.loras,
 			width: generation.width,
 			height: generation.height,
 			duration: generation.duration_seconds ?? 0,
@@ -193,6 +195,7 @@
 						<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 						<div><dt class="text-muted-foreground">Checkpoint</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint ?? '기록 없음'}</dd></div>
+						{#if generation.loras.length > 0}<div><dt class="text-muted-foreground">LoRA</dt><dd class="mt-1 space-y-1">{#each generation.loras as lora (lora.name)}<p class="break-all font-medium">{lora.name} · {lora.strength}</p>{/each}</dd></div>{/if}
 						<div><dt class="text-muted-foreground">재생 시간</dt><dd class="mt-1 font-medium">{formatElapsedSeconds(generation.duration_seconds ?? 0)}</dd></div>
 						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 					</dl>

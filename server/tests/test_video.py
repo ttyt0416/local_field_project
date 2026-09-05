@@ -63,6 +63,47 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._DASIWA_CHECKPOINT])
         self.assertEqual(options.default_checkpoint, video._DASIWA_CHECKPOINT)
 
+    def test_ltx_loras_are_allowlisted_and_injected_in_selection_order(self) -> None:
+        options = video.VideoGenerationOptions(
+            mode="i2v",
+            checkpoints=[video._LTX_CHECKPOINT],
+            default_checkpoint=video._LTX_CHECKPOINT,
+            checkpoint_families={video._LTX_CHECKPOINT: "ltx"},
+            loras=["LTX/first.safetensors", "LTX/second.safetensors"],
+        )
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            checkpoint=video._LTX_CHECKPOINT,
+            loras=[
+                video.VideoLoraSelection(name="LTX/first.safetensors", strength=0.7),
+                video.VideoLoraSelection(name="LTX/second.safetensors", strength=1.2),
+            ],
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        with patch.object(video, "_video_options", return_value=options), patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            video._validate_video_loras("i2v", request)
+            prompt, _ = video._build_prompt("i2v", request, {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")})
+
+        loras = [(node_id, node) for node_id, node in prompt.items() if node["class_type"] == "LoraLoaderModelOnly"]
+        self.assertEqual([node["inputs"]["lora_name"] for _, node in loras], ["LTX/first.safetensors", "LTX/second.safetensors"])
+        self.assertEqual(loras[0][1]["inputs"]["model"], ["1", 0])
+        self.assertEqual(loras[1][1]["inputs"]["model"], [loras[0][0], 0])
+        self.assertTrue(any(node.get("inputs", {}).get("model") == [loras[1][0], 0] for node in prompt.values()))
+
+    def test_video_lora_rejects_minimax_and_unknown_ltx_artifacts(self) -> None:
+        options = video.VideoGenerationOptions(
+            mode="i2v",
+            checkpoints=[video._LTX_CHECKPOINT],
+            default_checkpoint=video._LTX_CHECKPOINT,
+            checkpoint_families={video._LTX_CHECKPOINT: "ltx"},
+            loras=["LTX/allowed.safetensors"],
+        )
+        with patch.object(video, "_video_options", return_value=options):
+            with self.assertRaises(video.HTTPException):
+                video._validate_video_loras("i2v", video.VideoGenerationRequest(prompt="move", checkpoint=video._DASIWA_CHECKPOINT, loras=[video.VideoLoraSelection(name="LTX/allowed.safetensors")]))
+            with self.assertRaises(video.HTTPException):
+                video._validate_video_loras("i2v", video.VideoGenerationRequest(prompt="move", checkpoint=video._LTX_CHECKPOINT, loras=[video.VideoLoraSelection(name="LTX/unknown.safetensors")]))
+
     def test_eros_checkpoint_removes_turbo_lora_and_uses_six_steps(self) -> None:
         request = video.VideoGenerationRequest(
             prompt="move",

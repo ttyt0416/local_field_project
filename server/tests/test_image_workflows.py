@@ -110,6 +110,13 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["9"]["inputs"]["vae"], ["1", 2])
         self.assertIn("Illustrious_I2I", workflow["10"]["inputs"]["filename_prefix"])
 
+    def test_node_choices_supports_classic_and_combo_options(self) -> None:
+        classic = {"Node": {"input": {"required": {"value": [["b", "a"]]}}}}
+        combo = {"Node": {"input": {"required": {"value": ["COMBO", {"options": ["b", "a"]}]}}}}
+
+        self.assertEqual(comfyui._node_choices(classic, "Node", "value"), ["a", "b"])
+        self.assertEqual(comfyui._node_choices(combo, "Node", "value"), ["a", "b"])
+
     def test_family_options_are_isolated(self) -> None:
         object_info = {
             "UNETLoader": {"input": {"required": {"unet_name": [["Anima/a.safetensors", "Krea/krea2TurboOfficialComfy_krea2TurboNvfp4.safetensors", "Other/x.safetensors"]]}}},

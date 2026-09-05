@@ -143,6 +143,7 @@ class VaultVideoDetail(VaultVideoSummary):
     height: int
     seed: int
     checkpoint: str | None
+    loras: list[VaultLora]
     input_segment_prompts: list[str]
     improved_segment_prompts: list[str]
 
@@ -497,6 +498,7 @@ def vault_video_detail(
         height=generation["height"],
         seed=generation["seed"],
         checkpoint=generation.get("checkpoint") or None,
+        loras=_loras(generation),
         input_segment_prompts=_video_prompt_list(generation.get("input_segment_prompts")),
         improved_segment_prompts=_video_prompt_list(generation.get("improved_segment_prompts")),
     )

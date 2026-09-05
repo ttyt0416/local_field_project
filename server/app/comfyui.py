@@ -925,7 +925,7 @@ def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list
         return []
     required = node.get("input", {}).get("required", {})
     values = required.get(input_name, []) if isinstance(required, dict) else []
-    choices = values[0] if values and isinstance(values[0], list) else []
+    choices = values[0] if values and isinstance(values[0], list) else values[1].get("options", []) if len(values) > 1 and values[0] == "COMBO" and isinstance(values[1], dict) else []
     return sorted(value for value in choices if isinstance(value, str))
 
 

@@ -7,9 +7,9 @@
 	import Tab from '../tabs/tab.svelte';
 	import { apiJson } from '$lib/utils/api';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
-	import { videoModelFamilyTabs, type Preset, type PresetValues, type VideoGenerationOptions, type VideoMode, type VideoModelFamily } from '$lib/types/presets';
+	import { videoModelFamilyTabs, type LoraSelection, type Preset, type PresetValues, type VideoGenerationOptions, type VideoMode, type VideoModelFamily } from '$lib/types/presets';
 
-	type PresetField = 'prompt' | 'mode' | 'checkpoint' | 'size' | 'duration' | 'fps' | 'seed';
+	type PresetField = 'prompt' | 'mode' | 'checkpoint' | 'loras' | 'size' | 'duration' | 'fps' | 'seed';
 	type Props = {
 		open?: boolean;
 		preset: Preset | null;
@@ -24,6 +24,7 @@
 		{ key: 'prompt', label: '프롬프트' },
 		{ key: 'mode', label: '생성 방식' },
 		{ key: 'checkpoint', label: 'checkpoint' },
+		{ key: 'loras', label: 'LoRA' },
 		{ key: 'size', label: '영상 크기' },
 		{ key: 'duration', label: '길이(초)' },
 		{ key: 'fps', label: 'FPS' },
@@ -34,7 +35,7 @@
 		{ value: 'fl2v', label: 'FL2V' },
 		{ value: 'r2v', label: 'R2V' }
 	];
-	const allFields: Record<PresetField, boolean> = { prompt: true, mode: true, checkpoint: true, size: true, duration: true, fps: true, seed: true };
+	const allFields: Record<PresetField, boolean> = { prompt: true, mode: true, checkpoint: true, loras: true, size: true, duration: true, fps: true, seed: true };
 
 	let editingId = $state<string | null>(null);
 	let presetName = $state('');
@@ -42,11 +43,14 @@
 	let videoMode = $state<VideoMode>('i2v');
 	let videoModelFamily = $state<VideoModelFamily>('minimax');
 	let checkpoint = $state('');
-	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '' });
+	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', checkpoint_families: {}, loras: [] });
 	let videoOptionsLoading = $state(false);
 	let videoOptionsRequestId = 0;
 	let checkpointModalOpen = $state(false);
 	let checkpointFolder = $state('');
+	let loraModalOpen = $state(false);
+	let loraFolder = $state('');
+	let loras = $state<LoraSelection[]>([]);
 	let width = $state(1344);
 	let height = $state(768);
 	let duration = $state(5);
@@ -56,8 +60,12 @@
 	let selectedFields = $state<Record<PresetField, boolean>>({ ...allFields });
 	let saving = $state(false);
 	let error = $state('');
-	let checkpointFolders = $derived(modelFolders(videoOptions.checkpoints));
-	let filteredCheckpoints = $derived(filterModelFolder(videoOptions.checkpoints, checkpointFolder));
+	let familyCheckpoints = $derived(videoOptions.checkpoints.filter((option) => videoOptions.checkpoint_families[option] === videoModelFamily));
+	let checkpointFolders = $derived(modelFolders(familyCheckpoints));
+	let filteredCheckpoints = $derived(filterModelFolder(familyCheckpoints, checkpointFolder));
+	let loraFolders = $derived(modelFolders(videoOptions.loras));
+	let visibleLoras = $derived(filterModelFolder(videoOptions.loras, loraFolder));
+	let isLtxCheckpoint = $derived(videoOptions.checkpoint_families[checkpoint] === 'ltx');
 
 	$effect(() => {
 		if (!open) return;
@@ -70,6 +78,7 @@
 		prompt = values.prompt ?? '';
 		videoMode = values.mode ?? 'i2v';
 		checkpoint = values.checkpoint ?? '';
+		loras = values.loras ?? [];
 		width = values.width ?? 1344;
 		height = values.height ?? 768;
 		duration = values.duration ?? 5;
@@ -80,6 +89,7 @@
 			prompt: fields.has('prompt'),
 			mode: fields.has('mode') || fields.has('checkpoint'),
 			checkpoint: fields.has('checkpoint'),
+			loras: fields.has('loras'),
 			size: hasSize,
 			duration: fields.has('duration'),
 			fps: fields.has('fps'),
@@ -101,11 +111,15 @@
 			if (requestId !== videoOptionsRequestId) return;
 			videoOptions = options;
 			checkpoint = options.checkpoints.includes(checkpoint) ? checkpoint : options.default_checkpoint;
+			videoModelFamily = options.checkpoint_families[checkpoint] === 'ltx' ? 'ltx' : 'minimax';
 			checkpointFolder = '';
+			loraFolder = '';
+			loras = loras.filter((lora) => options.loras.includes(lora.name));
 		} catch (reason) {
 			if (requestId !== videoOptionsRequestId) return;
-			videoOptions = { mode, checkpoints: [], default_checkpoint: '' };
+			videoOptions = { mode, checkpoints: [], default_checkpoint: '', checkpoint_families: {}, loras: [] };
 			checkpoint = '';
+			loras = [];
 			error = reason instanceof Error ? reason.message : '동영상 checkpoint 목록을 불러오지 못했습니다.';
 		} finally {
 			if (requestId === videoOptionsRequestId) videoOptionsLoading = false;
@@ -122,11 +136,17 @@
 		return fieldOptions.filter(({ key }) => selectedFields[key]).length;
 	}
 
+	function toggleLora(name: string) {
+		const selected = loras.some((lora) => lora.name === name);
+		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1 }];
+	}
+
 	function buildValues(): PresetValues {
 		const values: PresetValues = {};
 		if (selectedFields.prompt) values.prompt = prompt.trim();
 		if (selectedFields.mode) values.mode = videoMode;
 		if (selectedFields.checkpoint) values.checkpoint = checkpoint;
+		if (selectedFields.loras) values.loras = loras.map(({ name, strength }) => ({ name, strength }));
 		if (selectedFields.size) {
 			values.width = width;
 			values.height = height;
@@ -170,6 +190,7 @@
 		{#if selectedFields.prompt}<label class="block space-y-2" for="video-preset-prompt"><span class="text-sm font-medium">프롬프트</span><textarea id="video-preset-prompt" bind:value={prompt} rows="4" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.mode}<Select id="video-preset-mode" label="생성 방식" options={videoModeOptions} bind:value={videoMode} />{/if}
 		{#if selectedFields.checkpoint}<div class="space-y-2"><span class="text-sm font-medium">체크포인트</span><Tab items={videoModelFamilyTabs} bind:value={videoModelFamily} ariaLabel="동영상 모델 family" /><button type="button" onclick={() => (checkpointModalOpen = true)} disabled={videoOptionsLoading || videoOptions.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="min-w-0 truncate">{videoOptionsLoading ? '체크포인트 목록을 불러오는 중' : checkpoint || '체크포인트를 선택해 주세요'}</span><span class="shrink-0 text-xs font-semibold text-primary">선택</span></button></div>{/if}
+		{#if selectedFields.loras && isLtxCheckpoint}<div class="space-y-3"><div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length})</span></span><button type="button" onclick={() => (loraModalOpen = true)} disabled={videoOptionsLoading || videoOptions.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button></div>{#if loras.length === 0}<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>{:else}<div class="space-y-3">{#each loras as lora (lora.name)}<div class="rounded-lg border border-border p-3"><p class="break-all text-sm font-medium">{lora.name}</p><label class="mt-3 block space-y-2" for={`video-preset-lora-strength-${lora.name}`}><span class="text-sm font-medium">Strength</span><input id={`video-preset-lora-strength-${lora.name}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} /></label></div>{/each}</div>{/if}</div>{/if}
 		{#if selectedFields.size}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-width"><span class="text-sm font-medium">가로</span><input id="video-preset-width" type="number" min="32" max="1344" step="32" bind:value={width} class={numberInputClass} /></label><label class="block space-y-2" for="video-preset-height"><span class="text-sm font-medium">세로</span><input id="video-preset-height" type="number" min="32" max="1344" step="32" bind:value={height} class={numberInputClass} /></label></div>{/if}
 		{#if selectedFields.duration}<label class="block space-y-2" for="video-preset-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-preset-duration" type="number" step="0.1" bind:value={duration} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.fps}<label class="block space-y-2" for="video-preset-fps"><span class="text-sm font-medium">FPS</span><input id="video-preset-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={numberInputClass} /></label>{/if}
@@ -187,7 +208,24 @@
 			{#each checkpointFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === folder} onclick={() => (checkpointFolder = folder)}>{folder}</OutlinedButton>{/each}
 		</div>
 		<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-			{#each filteredCheckpoints as option (option)}<button type="button" onclick={() => { checkpoint = option; checkpointModalOpen = false; }} aria-pressed={checkpoint === option} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === option ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{option}</span>{#if checkpoint === option}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
+			{#each filteredCheckpoints as option (option)}<button type="button" onclick={() => { checkpoint = option; videoModelFamily = videoOptions.checkpoint_families[option] === 'ltx' ? 'ltx' : 'minimax'; checkpointModalOpen = false; }} aria-pressed={checkpoint === option} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === option ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{option}</span>{#if checkpoint === option}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
 		</div>
 	</div>
+</Modal>
+
+<Modal bind:open={loraModalOpen} title="LoRA 선택" description="LTX folder의 LoRA만 선택할 수 있습니다.">
+	<div class="space-y-3">
+		<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LTX LoRA folder filter">
+			<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>
+			{#if loraFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (loraFolder = parentModelFolder(loraFolder))}>바로 위 폴더</OutlinedButton>{/if}
+			{#each loraFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === folder} onclick={() => (loraFolder = folder)}>{folder}</OutlinedButton>{/each}
+		</div>
+		<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+			{#each visibleLoras as value}
+				{@const selected = loras.some((lora) => lora.name === value)}
+				<button type="button" onclick={() => toggleLora(value)} aria-pressed={selected} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{value}</span>{#if selected}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>
+			{/each}
+		</div>
+	</div>
+	{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 </Modal>

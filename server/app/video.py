@@ -72,25 +72,50 @@ _SEGMENT_SECONDS = 10.0
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _EROS_CHECKPOINT = "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors"
 _DASIWA_CHECKPOINT = "MiniMaxH3/DasiwaMinimaxH3_dasiwaHybridV1_int8.safetensors"
+_LTX_CHECKPOINT = "LTX/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+_LTX_TEXT_ENCODER = "LTX/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
+_LTX_VIDEO_VAE = "LTX/ltx-2.5-video-vae-bf16.safetensors"
+_LTX_AUDIO_VAE = "LTX/ltx-2.5-audio-vae-bf16.safetensors"
+_LTX_SPATIAL_UPSCALER = "LTX/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+_LTX_LORA_PREFIX = "LTX/"
 _VBVR_LORA = "MiniMax/VBVR_H3_attn_only.safetensors"
 _VIDEO_CHECKPOINTS = {
     "i2v": {
         "eros": _EROS_CHECKPOINT,
         "dasiwa": _DASIWA_CHECKPOINT,
+        "ltx": _LTX_CHECKPOINT,
     },
     "fl2v": {
         "eros": _EROS_CHECKPOINT,
         "dasiwa": _DASIWA_CHECKPOINT,
+        "ltx": _LTX_CHECKPOINT,
     },
     "r2v": {
         "eros": _EROS_CHECKPOINT,
         "dasiwa": _DASIWA_CHECKPOINT,
+        "ltx": _LTX_CHECKPOINT,
     },
 }
 _VIDEO_CHECKPOINT_MODELS = {
     checkpoint: model
     for checkpoints in _VIDEO_CHECKPOINTS.values()
     for model, checkpoint in checkpoints.items()
+}
+_VIDEO_CHECKPOINT_FAMILIES = {
+    checkpoint: "ltx" if model == "ltx" else "minimax"
+    for checkpoint, model in _VIDEO_CHECKPOINT_MODELS.items()
+}
+_LTX_REQUIRED_NODES = {
+    "LTXVAddGuide",
+    "LTXVAudioVAEDecode",
+    "LTXVConditioning",
+    "LTXVCropGuides",
+    "LTXVDualCFGGuider",
+    "LTXVEmptyLatentAudio",
+    "LTXVImgToVideoInplace",
+    "LTXVLatentUpsampler",
+    "LTXVPreprocess",
+    "LTXVSeparateAVLatent",
 }
 _VIDEO_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
 _VIDEO_PROMPT_LANGUAGE_CHARS = {
@@ -113,9 +138,15 @@ class VideoAsset(BaseModel):
     file_index: int | None = Field(default=None, ge=0, le=20)
 
 
+class VideoLoraSelection(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    strength: float = Field(default=1.0)
+
+
 class VideoGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
+    loras: list[VideoLoraSelection] = Field(default_factory=list)
     prompt_enhancement_enabled: bool = False
     improved_prompt: str | None = Field(default=None, max_length=5000)
     segment_prompts: list[str] = Field(default_factory=list, max_length=360)
@@ -176,6 +207,8 @@ class VideoGenerationOptions(BaseModel):
     mode: Literal["i2v", "fl2v", "r2v"]
     checkpoints: list[str]
     default_checkpoint: str
+    checkpoint_families: dict[str, str]
+    loras: list[str]
 
 
 class VideoOutput(BaseModel):
@@ -249,6 +282,7 @@ async def create_video(
     try:
         request = VideoGenerationRequest.model_validate_json(payload)
         request = request.model_copy(update={"checkpoint": _validated_video_checkpoint(mode, request.checkpoint)})
+        _validate_video_loras(mode, request)
         _validate_request(mode, request, files)
         segment_durations = _video_segment_durations(request.duration)
         input_segment_prompts = _input_segment_prompts(request, len(segment_durations))
@@ -276,9 +310,10 @@ async def create_video(
         mode=mode,
         prompt=request.prompt.strip(),
         checkpoint=request.checkpoint or "",
+        loras=[lora.model_dump() for lora in request.loras],
         width=request.width,
         height=request.height,
-        length=_frame_length(request.duration, request.fps),
+        length=_video_frame_length(request),
         fps=request.fps,
         seed=seed,
         input_file_ids=input_file_ids,
@@ -457,12 +492,31 @@ def _sse_message(event_name: str, data: dict[str, Any]) -> str:
 
 
 def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOptions:
-    available = set(_node_choices(_request_json("GET", "/object_info"), "UNETLoader", "unet_name"))
+    object_info = _request_json("GET", "/object_info")
+    available = set(_node_choices(object_info, "UNETLoader", "unet_name"))
     checkpoints = [checkpoint for checkpoint in _VIDEO_CHECKPOINTS[mode].values() if checkpoint in available]
+    if _LTX_CHECKPOINT in checkpoints and not _ltx_bundle_available(object_info):
+        checkpoints.remove(_LTX_CHECKPOINT)
     default_checkpoint = _DASIWA_CHECKPOINT
     if default_checkpoint not in checkpoints:
         raise _ComfyUIError("기본 Dasiwa 영상 checkpoint를 ComfyUI에서 찾을 수 없습니다.")
-    return VideoGenerationOptions(mode=mode, checkpoints=checkpoints, default_checkpoint=default_checkpoint)
+    return VideoGenerationOptions(
+        mode=mode,
+        checkpoints=checkpoints,
+        default_checkpoint=default_checkpoint,
+        checkpoint_families={checkpoint: _VIDEO_CHECKPOINT_FAMILIES[checkpoint] for checkpoint in checkpoints},
+        loras=[name for name in _node_choices(object_info, "LoraLoaderModelOnly", "lora_name") if name.startswith(_LTX_LORA_PREFIX)],
+    )
+
+
+def _ltx_bundle_available(object_info: dict[str, Any]) -> bool:
+    return (
+        _LTX_TEXT_ENCODER in _node_choices(object_info, "CLIPLoader", "clip_name")
+        and _LTX_VIDEO_VAE in _node_choices(object_info, "VAELoader", "vae_name")
+        and _LTX_AUDIO_VAE in _node_choices(object_info, "VAELoader", "vae_name")
+        and _LTX_SPATIAL_UPSCALER in _node_choices(object_info, "LatentUpscaleModelLoader", "model_name")
+        and _LTX_REQUIRED_NODES.issubset(object_info)
+    )
 
 
 def _validated_video_checkpoint(mode: Literal["i2v", "fl2v", "r2v"], checkpoint: str | None) -> str:
@@ -471,6 +525,18 @@ def _validated_video_checkpoint(mode: Literal["i2v", "fl2v", "r2v"], checkpoint:
     if selected not in options.checkpoints:
         raise HTTPException(status_code=422, detail="선택한 영상 checkpoint는 현재 생성 방식에서 사용할 수 없습니다.")
     return selected
+
+
+def _validate_video_loras(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGenerationRequest) -> None:
+    names = [lora.name for lora in request.loras]
+    if len(names) != len(set(names)):
+        raise HTTPException(status_code=422, detail="같은 LoRA를 중복 선택할 수 없습니다.")
+    if not names:
+        return
+    if not _is_ltx_checkpoint(request.checkpoint):
+        raise HTTPException(status_code=422, detail="LoRA는 LTX video checkpoint에서만 선택할 수 있습니다.")
+    if any(name not in _video_options(mode).loras for name in names):
+        raise HTTPException(status_code=422, detail="선택한 LTX LoRA를 찾을 수 없습니다.")
 
 
 def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
@@ -507,10 +573,143 @@ def _configure_eros_workflow(prompt: dict[str, dict[str, Any]]) -> None:
     prompt.pop(turbo_node_id)
 
 
+def _ltx_frame_length(duration: float, fps: float = 24) -> int:
+    frames = max(9, round(duration * fps))
+    return frames + (1 - frames % 8) % 8
+
+
+def _configure_ltx_workflow(
+    mode: str,
+    prompt: dict[str, dict[str, Any]],
+    request: VideoGenerationRequest,
+    resolved: dict[str, _ResolvedAsset],
+    seed: int,
+    effective_prompt: str,
+    checkpoint: str,
+) -> None:
+    frames = _ltx_frame_length(request.duration, request.fps)
+    base_width = request.width // 2 if mode == "i2v" else request.width
+    base_height = request.height // 2 if mode == "i2v" else request.height
+    for offset, node in enumerate(prompt.values()):
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        class_type = node.get("class_type")
+        if class_type == "UNETLoader":
+            inputs["unet_name"] = checkpoint
+        elif class_type == "CLIPTextEncode" and inputs.get("text") == "__PROMPT__":
+            inputs["text"] = effective_prompt
+        elif class_type == "RandomNoise":
+            inputs["noise_seed"] = (seed + offset) % (_MAX_SEED + 1)
+        elif class_type == "LTXVConditioning":
+            inputs["frame_rate"] = request.fps
+        elif class_type == "EmptyLTXVLatentVideo":
+            inputs.update(width=base_width, height=base_height, length=frames)
+        elif class_type == "LTXVEmptyLatentAudio":
+            inputs.update(frames_number=frames, frame_rate=request.fps)
+        elif class_type == "CreateVideo":
+            inputs["fps"] = request.fps
+
+    if mode == "i2v":
+        prompt["12"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
+        _inject_ltx_loras(prompt, request.loras)
+        return
+    if mode == "fl2v":
+        prompt["10"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
+        prompt["11"]["inputs"]["image"] = _upload_to_comfy(resolved, request.last_frame, "image")
+        for node_id in ("12", "13"):
+            prompt[node_id]["inputs"].update(
+                {"resize_type.width": request.width, "resize_type.height": request.height}
+            )
+        _inject_ltx_loras(prompt, request.loras)
+        return
+
+    previous_guide_id: str | None = None
+    image_count = len(request.reference_images)
+    for index, asset in enumerate(request.reference_images):
+        load_id, resize_id, preprocess_id, guide_id = (
+            str(100 + index),
+            str(200 + index),
+            str(300 + index),
+            str(400 + index),
+        )
+        prompt[load_id] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": _upload_to_comfy(resolved, asset, "image")},
+        }
+        prompt[resize_id] = {
+            "class_type": "ResizeImageMaskNode",
+            "inputs": {
+                "input": [load_id, 0],
+                "resize_type": "scale dimensions",
+                "resize_type.width": request.width,
+                "resize_type.height": request.height,
+                "resize_type.crop": "center",
+                "scale_method": "nearest-exact",
+            },
+        }
+        prompt[preprocess_id] = {
+            "class_type": "LTXVPreprocess",
+            "inputs": {"image": [resize_id, 0], "img_compression": 18},
+        }
+        prompt[guide_id] = {
+            "class_type": "LTXVAddGuide",
+            "inputs": {
+                "positive": [previous_guide_id, 0] if previous_guide_id else ["7", 0],
+                "negative": [previous_guide_id, 1] if previous_guide_id else ["7", 1],
+                "vae": ["3", 0],
+                "latent": [previous_guide_id, 2] if previous_guide_id else ["8", 0],
+                "image": [preprocess_id, 0],
+                "frame_idx": 0 if image_count == 1 else round(index * (frames - 1) / (image_count - 1)),
+                "strength": 0.7,
+            },
+        }
+        previous_guide_id = guide_id
+    if previous_guide_id is None:
+        raise _ComfyUIError("LTX R2V에는 참조 이미지가 필요합니다.")
+    for node_id in ("13", "17"):
+        prompt[node_id]["inputs"].update(
+            {"positive": [previous_guide_id, 0], "negative": [previous_guide_id, 1]}
+        )
+    prompt["14"]["inputs"]["video_latent"] = [previous_guide_id, 2]
+    _inject_ltx_loras(prompt, request.loras)
+
+
+def _inject_ltx_loras(prompt: dict[str, dict[str, Any]], loras: Sequence[VideoLoraSelection]) -> None:
+    model: list[Any] = ["1", 0]
+    next_id = 50
+    for lora in loras:
+        while str(next_id) in prompt:
+            next_id += 1
+        node_id = str(next_id)
+        prompt[node_id] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": model, "lora_name": lora.name, "strength_model": lora.strength},
+        }
+        model = [node_id, 0]
+        next_id += 1
+    if model == ["1", 0]:
+        return
+    for node in prompt.values():
+        if node.get("class_type") == "LoraLoaderModelOnly":
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for name, value in inputs.items():
+            if value == ["1", 0]:
+                inputs[name] = model
+
+
 def _validate_request(mode: str, request: VideoGenerationRequest, files: list[UploadFile]) -> None:
     if mode not in _ALLOWED_MODES:
         raise HTTPException(status_code=404, detail="지원하지 않는 영상 생성 방식입니다.")
     assets = _request_assets(mode, request)
+    if _is_ltx_checkpoint(request.checkpoint):
+        if request.width % 32 or request.height % 32:
+            raise HTTPException(status_code=422, detail="LTX 영상 크기는 가로·세로 모두 32의 배수여야 합니다.")
+        if mode == "i2v" and (request.width % 64 or request.height % 64):
+            raise HTTPException(status_code=422, detail="LTX I2V 영상 크기는 가로·세로 모두 64의 배수여야 합니다.")
     if len(files) > 20:
         raise HTTPException(status_code=422, detail="영상 입력 파일은 한 번에 20개까지 선택할 수 있습니다.")
     for asset in assets:
@@ -553,11 +752,17 @@ def _request_assets(mode: str, request: VideoGenerationRequest) -> list[VideoAss
         raise HTTPException(status_code=422, detail="R2V 참조 동영상 구성이 올바르지 않습니다.")
     if any(asset.kind != "audio" for asset in request.reference_audios):
         raise HTTPException(status_code=422, detail="R2V 참조 오디오 구성이 올바르지 않습니다.")
+    if _is_ltx_checkpoint(request.checkpoint) and (request.reference_videos or request.reference_audios):
+        raise HTTPException(status_code=422, detail="LTX R2V는 참조 이미지만 지원합니다.")
     if not request.reference_images and not request.reference_videos and not request.reference_audios:
         raise HTTPException(status_code=422, detail="R2V에는 참조 이미지·동영상 또는 오디오가 필요합니다.")
     if len(_video_segment_durations(request.duration)) > 1 and len(request.reference_images) > 8:
         raise HTTPException(status_code=422, detail="10초를 초과하는 R2V는 참조 이미지를 최대 8개까지 사용할 수 있습니다.")
     return [*request.reference_images, *request.reference_videos, *request.reference_audios]
+
+
+def _is_ltx_checkpoint(checkpoint: str | None) -> bool:
+    return _VIDEO_CHECKPOINT_MODELS.get(checkpoint or _DASIWA_CHECKPOINT) == "ltx"
 
 
 async def _resolve_assets(
@@ -886,15 +1091,19 @@ def _build_prompt(
     *,
     effective_prompt: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
+    model, checkpoint = _workflow_checkpoint(mode, request.checkpoint)
     try:
-        with (_WORKFLOW_DIR / f"video_{mode}.json").open(encoding="utf-8") as handle:
+        workflow_name = f"video_ltx_{mode}.json" if model == "ltx" else f"video_{mode}.json"
+        with (_WORKFLOW_DIR / workflow_name).open(encoding="utf-8") as handle:
             prompt = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
         raise _ComfyUIError(f"{mode} 영상 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
-    model, checkpoint = _workflow_checkpoint(mode, request.checkpoint)
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     effective_prompt = effective_prompt if effective_prompt is not None else _effective_video_prompt(mode, request)
+    if model == "ltx":
+        _configure_ltx_workflow(mode, prompt, request, resolved, seed, effective_prompt, checkpoint)
+        return prompt, seed
     for node in prompt.values():
         if isinstance(node, dict) and isinstance(node.get("inputs"), dict):
             inputs = node["inputs"]
@@ -1003,6 +1212,13 @@ def _generation_segment_prompts(generation: dict[str, Any]) -> list[str]:
     if isinstance(values, list) and values and all(isinstance(value, str) and value for value in values):
         return values
     return [str(generation.get("prompt") or "")]
+
+
+def _stored_video_loras(generation: dict[str, Any]) -> list[VideoLoraSelection]:
+    stored = generation.get("loras")
+    if not isinstance(stored, list):
+        return []
+    return [VideoLoraSelection.model_validate(value) for value in stored if isinstance(value, dict)]
 
 
 def _video_sequence_fields(generation: dict[str, Any]) -> dict[str, int]:
@@ -1196,6 +1412,7 @@ def _queue_video_continuation(
         request = VideoGenerationRequest(
             prompt=prompts[next_index],
             checkpoint=checkpoint,
+            loras=_stored_video_loras(generation),
             width=int(generation["width"]),
             height=int(generation["height"]),
             duration=durations[next_index],
@@ -1208,6 +1425,7 @@ def _queue_video_continuation(
         request = VideoGenerationRequest(
             prompt=prompts[next_index],
             checkpoint=checkpoint,
+            loras=_stored_video_loras(generation),
             width=int(generation["width"]),
             height=int(generation["height"]),
             duration=durations[next_index],
@@ -1345,6 +1563,10 @@ def _raw_video_outputs(outputs: Any) -> list[dict[str, Any]]:
 def _frame_length(duration: float, fps: float = 24) -> int:
     frames = max(5, round(duration * fps))
     return frames + (5 - frames % 17) % 17
+
+
+def _video_frame_length(request: VideoGenerationRequest) -> int:
+    return _ltx_frame_length(request.duration, request.fps) if _is_ltx_checkpoint(request.checkpoint) else _frame_length(request.duration, request.fps)
 
 
 def _multiple_of_32(value: int) -> int:
