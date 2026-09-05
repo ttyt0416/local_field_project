@@ -27,6 +27,7 @@
 		width: number;
 		height: number;
 		seed: number;
+		checkpoint: string | null;
 		status: string;
 		prompt: string;
 		input_segment_prompts: string[];
@@ -126,6 +127,7 @@
 		return {
 			prompt: generation.prompt,
 			mode: generation.mode,
+			...(generation.checkpoint ? { checkpoint: generation.checkpoint } : {}),
 			width: generation.width,
 			height: generation.height,
 			duration: generation.duration_seconds ?? 0,
@@ -190,6 +192,7 @@
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
 						<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
+						<div><dt class="text-muted-foreground">Checkpoint</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint ?? '기록 없음'}</dd></div>
 						<div><dt class="text-muted-foreground">재생 시간</dt><dd class="mt-1 font-medium">{formatElapsedSeconds(generation.duration_seconds ?? 0)}</dd></div>
 						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 					</dl>

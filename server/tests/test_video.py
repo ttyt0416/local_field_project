@@ -47,6 +47,45 @@ class VideoContractTest(unittest.TestCase):
             self.assertEqual(sampler["inputs"]["sampler_name"], "res_multistep")
             self.assertEqual(scheduler["inputs"], {"model": [loras[1][0], 0], "scheduler": "simple", "steps": 4, "denoise": 1})
 
+    def test_video_checkpoint_options_are_mode_filtered_and_default_to_minimax(self) -> None:
+        available = [
+            video._EROS_CHECKPOINT,
+            video._VIDEO_CHECKPOINTS["i2v"]["minimax"],
+            video._VIDEO_CHECKPOINTS["r2v"]["minimax"],
+        ]
+        object_info = {"UNETLoader": {"input": {"required": {"unet_name": [available]}}}}
+        with patch.object(video, "_request_json", return_value=object_info):
+            options = video._video_options("r2v")
+            with self.assertRaises(video.HTTPException):
+                video._validated_video_checkpoint("r2v", video._VIDEO_CHECKPOINTS["i2v"]["minimax"])
+
+        self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._VIDEO_CHECKPOINTS["r2v"]["minimax"]])
+        self.assertEqual(options.default_checkpoint, video._VIDEO_CHECKPOINTS["r2v"]["minimax"])
+
+    def test_eros_checkpoint_removes_turbo_lora_and_uses_six_steps(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            checkpoint=video._EROS_CHECKPOINT,
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            prompt, _ = video._build_prompt("i2v", request, resolved)
+
+        unet = next(node for node in prompt.values() if node["class_type"] == "UNETLoader")
+        loras = [(node_id, node) for node_id, node in prompt.items() if node["class_type"] == "LoraLoaderModelOnly"]
+        scheduler = next(node for node in prompt.values() if node["class_type"] == "BasicScheduler")
+        self.assertEqual(unet["inputs"]["unet_name"], video._EROS_CHECKPOINT)
+        self.assertEqual([node["inputs"]["lora_name"] for _, node in loras], [video._VBVR_LORA])
+        self.assertEqual(scheduler["inputs"]["model"], [loras[0][0], 0])
+        self.assertEqual(scheduler["inputs"]["steps"], 6)
+
+    def test_continuation_resolves_minimax_profile_to_its_mode_base(self) -> None:
+        model, checkpoint = video._workflow_checkpoint("r2v", video._VIDEO_CHECKPOINTS["i2v"]["minimax"])
+
+        self.assertEqual(model, "minimax")
+        self.assertEqual(checkpoint, video._VIDEO_CHECKPOINTS["r2v"]["minimax"])
+
     def test_reference_markers_are_normalized_to_minimax_contract(self) -> None:
         self.assertEqual(
             video._normalize_video_reference_markers("[Image1] @video2 [Audio 3]"),

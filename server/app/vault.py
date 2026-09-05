@@ -142,6 +142,7 @@ class VaultVideoDetail(VaultVideoSummary):
     width: int
     height: int
     seed: int
+    checkpoint: str | None
     input_segment_prompts: list[str]
     improved_segment_prompts: list[str]
 
@@ -495,6 +496,7 @@ def vault_video_detail(
         width=generation["width"],
         height=generation["height"],
         seed=generation["seed"],
+        checkpoint=generation.get("checkpoint") or None,
         input_segment_prompts=_video_prompt_list(generation.get("input_segment_prompts")),
         improved_segment_prompts=_video_prompt_list(generation.get("improved_segment_prompts")),
     )

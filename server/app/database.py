@@ -333,6 +333,12 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
             ) THEN
                 ALTER TABLE video_generations ADD COLUMN segment_file_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
             END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'checkpoint'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN checkpoint VARCHAR(255) NOT NULL DEFAULT '';
+            END IF;
             UPDATE video_generations
             SET active_prompt_id = prompt_id
             WHERE active_prompt_id IS NULL AND status IN ('queued', 'processing');
@@ -474,6 +480,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         client_id VARCHAR(128) NOT NULL,
         active_prompt_id VARCHAR(128),
         mode VARCHAR(8) NOT NULL,
+        checkpoint VARCHAR(255) NOT NULL DEFAULT '',
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
         prompt TEXT NOT NULL,
         width INTEGER NOT NULL,
@@ -1306,7 +1313,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, active_prompt_id, mode, status, prompt, width, height, length, fps, seed, "
+    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations, continuation_mode, reference_image_file_ids, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
@@ -1318,6 +1325,7 @@ def create_video_generation(
     client_id: str,
     mode: str,
     prompt: str,
+    checkpoint: str,
     width: int,
     height: int,
     length: int,
@@ -1337,10 +1345,10 @@ def create_video_generation(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, active_prompt_id, mode, prompt, width, height, length, fps, seed,
+                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, prompt, width, height, length, fps, seed,
                  input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations,
                  continuation_mode, reference_image_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1350,6 +1358,7 @@ def create_video_generation(
                 client_id,
                 active_prompt_id or prompt_id,
                 mode,
+                checkpoint,
                 prompt,
                 width,
                 height,

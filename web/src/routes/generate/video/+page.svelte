@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ArrowLeftRight, AudioLines, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Save, Sparkles, Video, X } from '@lucide/svelte';
+	import { ArrowLeftRight, AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Save, Sparkles, Video, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -21,7 +21,8 @@
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
-	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
+	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues, type VideoGenerationOptions } from '$lib/types/presets';
 
 	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
 	type SelectionTarget = 'first' | 'last' | 'images' | 'videos' | 'audios';
@@ -71,6 +72,12 @@
 
 	let ready = $state(false);
 	let mode = $state<VideoMode>('i2v');
+	let checkpoint = $state('');
+	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '' });
+	let videoOptionsLoading = $state(false);
+	let videoOptionsRequestId = 0;
+	let checkpointModalOpen = $state(false);
+	let checkpointFolder = $state('');
 	let prompt = $state('');
 	let segmentPrompts = $state<string[]>(['']);
 	let promptEnhancementEnabled = $state(false);
@@ -150,6 +157,8 @@
 						: '참조 오디오 선택'
 	);
 
+	let checkpointFolders = $derived(modelFolders(videoOptions.checkpoints));
+	let filteredCheckpoints = $derived(filterModelFolder(videoOptions.checkpoints, checkpointFolder));
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
 	let selectionMax = $derived(selectionTarget === 'images' ? (mode === 'r2v' && segmentCount > 1 ? 8 : 9) : selectionMultiple ? 3 : 1);
 
@@ -203,6 +212,7 @@
 		}
 		await generationJobStore.initialize();
 		applyPendingSelection();
+		await loadVideoOptions(mode);
 		ready = true;
 	}
 
@@ -225,6 +235,25 @@
 		});
 	}
 
+	async function loadVideoOptions(nextMode: VideoMode) {
+		const requestId = ++videoOptionsRequestId;
+		videoOptionsLoading = true;
+		try {
+			const options = await apiJson<VideoGenerationOptions>(`generation/video/options?mode=${nextMode}`);
+			if (!active || requestId !== videoOptionsRequestId) return;
+			videoOptions = options;
+			checkpoint = options.checkpoints.includes(checkpoint) ? checkpoint : options.default_checkpoint;
+			checkpointFolder = '';
+		} catch (reason) {
+			if (!active || requestId !== videoOptionsRequestId) return;
+			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '' };
+			checkpoint = '';
+			error = reason instanceof Error ? reason.message : '동영상 checkpoint 목록을 불러오지 못했습니다.';
+		} finally {
+			if (requestId === videoOptionsRequestId) videoOptionsLoading = false;
+		}
+	}
+
 	function selectMode(next: VideoMode) {
 		if (generating) return false;
 		if (mode === next) return;
@@ -242,6 +271,7 @@
 		selectedReferenceAudios = [];
 		mediaDimensionRequests.clear();
 		mediaDimensions = {};
+		void loadVideoOptions(next);
 	}
 
 	function togglePromptLanguage(language: VideoPromptLanguage, checked: boolean) {
@@ -711,11 +741,16 @@
 			error = '시드를 입력하거나 무작위 시드를 선택해 주세요.';
 			return;
 		}
+		if (videoOptionsLoading || !checkpoint || !videoOptions.checkpoints.includes(checkpoint)) {
+			error = '생성할 동영상 checkpoint를 선택해 주세요.';
+			return;
+		}
 		const form = new FormData();
 		const newFiles: File[] = [];
 		try {
 			const payload: Record<string, unknown> = {
 				prompt: prompt.trim(),
+				checkpoint,
 				segment_prompts: segmentPrompts.map((value) => value.trim()),
 				prompt_enhancement_enabled: promptEnhancementEnabled,
 				improved_prompt: promptEnhancementEnabled ? improvedSegmentPrompts[0].trim() : null,
@@ -810,6 +845,7 @@
 		videoPresetInitialValues = {
 			prompt: prompt.trim(),
 			mode,
+			checkpoint,
 			width: Number(width),
 			height: Number(height),
 			duration: Number(duration),
@@ -836,8 +872,10 @@
 
 	function applyVideoPreset(preset: Preset) {
 		const values = preset.values;
+		const presetMode = values.mode ?? mode;
 		if (values.prompt !== undefined) setPrompt(values.prompt);
 		if (values.mode !== undefined && values.mode !== mode) selectMode(values.mode);
+		if (values.checkpoint !== undefined) checkpoint = values.checkpoint;
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
 		if (values.duration !== undefined) duration = values.duration;
@@ -847,6 +885,7 @@
 			seed = values.seed;
 			randomSeed = false;
 		}
+		void loadVideoOptions(presetMode);
 		videoPresetLoadOpen = false;
 		success = `'${preset.name}' 프리셋을 불러왔습니다.`;
 	}
@@ -856,6 +895,7 @@
 		const labels: Record<string, string> = {
 			prompt: '프롬프트',
 			mode: '생성 방식',
+			checkpoint: 'checkpoint',
 			size: '영상 크기',
 			width: '영상 크기',
 			height: '영상 크기',
@@ -932,6 +972,13 @@
 					</div>
 					<Tab items={modeTabs} bind:value={mode} ariaLabel="동영상 생성 방식" onselect={selectMode} class="mt-5" />
 					<p class="mt-2 text-xs text-muted-foreground">{modes.find((item) => item.value === mode)?.description}</p>
+					<div class="mt-4 space-y-2">
+						<span class="text-sm font-medium">체크포인트</span>
+						<button type="button" onclick={() => (checkpointModalOpen = true)} disabled={generating || videoOptionsLoading || videoOptions.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
+							<span class="min-w-0 truncate">{videoOptionsLoading ? '체크포인트 목록을 불러오는 중' : checkpoint || '체크포인트를 선택해 주세요'}</span>
+							<span class="shrink-0 text-xs font-semibold text-primary">선택</span>
+						</button>
+					</div>
 
 					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
@@ -1147,7 +1194,7 @@
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || enhancingPrompt} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || enhancingPrompt || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>
@@ -1155,6 +1202,19 @@
 	</Layout>
 
 	<VideoPresetModal bind:open={videoPresetOpen} preset={null} initialValues={videoPresetInitialValues} onSaved={handleVideoPresetSaved} />
+
+	<Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="전체 또는 하위 folder에서 하나를 선택하세요.">
+		<div class="space-y-3">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="체크포인트 folder filter">
+				<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === ''} onclick={() => (checkpointFolder = '')}>전체</OutlinedButton>
+				{#if checkpointFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (checkpointFolder = parentModelFolder(checkpointFolder))}>바로 위 폴더</OutlinedButton>{/if}
+				{#each checkpointFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === folder} onclick={() => (checkpointFolder = folder)}>{folder}</OutlinedButton>{/each}
+			</div>
+			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
+				{#each filteredCheckpoints as option (option)}<button type="button" onclick={() => { checkpoint = option; checkpointModalOpen = false; }} aria-pressed={checkpoint === option} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === option ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{option}</span>{#if checkpoint === option}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
+			</div>
+		</div>
+	</Modal>
 
 	<Modal bind:open={videoPresetLoadOpen} title="VIDEO GEN 프리셋 불러오기" description="저장된 동영상 설정을 선택해 적용합니다." closeOnBackdrop={!videoPresetsLoading}>
 		{#if videoPresetsLoading}

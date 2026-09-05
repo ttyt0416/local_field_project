@@ -67,3 +67,9 @@ export type ImageOptions = {
 	default_sampler: string;
 	default_scheduler: string;
 };
+
+export type VideoGenerationOptions = {
+	mode: VideoMode;
+	checkpoints: string[];
+	default_checkpoint: string;
+};

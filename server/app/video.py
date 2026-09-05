@@ -31,6 +31,7 @@ from .comfyui import (
     cancel_comfy_generation,
     _queue_position,
     _comfy_url,
+    _node_choices,
     generation_progress,
     reset_generation_progress,
     _request_bytes,
@@ -69,6 +70,27 @@ _MAX_SEED = 2**63 - 1
 _MAX_INPUT_SIZE = 50 * 1024 * 1024
 _SEGMENT_SECONDS = 10.0
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_EROS_CHECKPOINT = "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors"
+_VBVR_LORA = "MiniMax/VBVR_H3_attn_only.safetensors"
+_VIDEO_CHECKPOINTS = {
+    "i2v": {
+        "eros": _EROS_CHECKPOINT,
+        "minimax": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    },
+    "fl2v": {
+        "eros": _EROS_CHECKPOINT,
+        "minimax": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    },
+    "r2v": {
+        "eros": _EROS_CHECKPOINT,
+        "minimax": "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    },
+}
+_VIDEO_CHECKPOINT_MODELS = {
+    checkpoint: model
+    for checkpoints in _VIDEO_CHECKPOINTS.values()
+    for model, checkpoint in checkpoints.items()
+}
 _VIDEO_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
 _VIDEO_PROMPT_LANGUAGE_CHARS = {
     "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
@@ -92,6 +114,7 @@ class VideoAsset(BaseModel):
 
 class VideoGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=5000)
+    checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
     prompt_enhancement_enabled: bool = False
     improved_prompt: str | None = Field(default=None, max_length=5000)
     segment_prompts: list[str] = Field(default_factory=list, max_length=360)
@@ -148,6 +171,12 @@ class VideoGenerationAccepted(BaseModel):
     elapsed_seconds: float = Field(default=0, ge=0)
 
 
+class VideoGenerationOptions(BaseModel):
+    mode: Literal["i2v", "fl2v", "r2v"]
+    checkpoints: list[str]
+    default_checkpoint: str
+
+
 class VideoOutput(BaseModel):
     url: str
     filename: str
@@ -188,6 +217,14 @@ class _ResolvedAsset:
         self.kind = kind
 
 
+@router.get("/options", response_model=VideoGenerationOptions)
+def video_options(
+    mode: Literal["i2v", "fl2v", "r2v"] = Query(default="i2v"),
+    _: UserResponse = Depends(current_user),
+) -> VideoGenerationOptions:
+    return _video_options(mode)
+
+
 @router.post("/enhance-prompt", response_model=PromptEnhancementResponse)
 def enhance_video_prompt(
     payload: VideoPromptEnhancementRequest,
@@ -210,6 +247,7 @@ async def create_video(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     try:
         request = VideoGenerationRequest.model_validate_json(payload)
+        request = request.model_copy(update={"checkpoint": _validated_video_checkpoint(mode, request.checkpoint)})
         _validate_request(mode, request, files)
         segment_durations = _video_segment_durations(request.duration)
         input_segment_prompts = _input_segment_prompts(request, len(segment_durations))
@@ -236,6 +274,7 @@ async def create_video(
         active_prompt_id=prompt_id,
         mode=mode,
         prompt=request.prompt.strip(),
+        checkpoint=request.checkpoint or "",
         width=request.width,
         height=request.height,
         length=_frame_length(request.duration, request.fps),
@@ -414,6 +453,57 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOptions:
+    available = set(_node_choices(_request_json("GET", "/object_info"), "UNETLoader", "unet_name"))
+    checkpoints = [checkpoint for checkpoint in _VIDEO_CHECKPOINTS[mode].values() if checkpoint in available]
+    default_checkpoint = _VIDEO_CHECKPOINTS[mode]["minimax"]
+    if default_checkpoint not in checkpoints:
+        raise _ComfyUIError("기본 MiniMax 영상 checkpoint를 ComfyUI에서 찾을 수 없습니다.")
+    return VideoGenerationOptions(mode=mode, checkpoints=checkpoints, default_checkpoint=default_checkpoint)
+
+
+def _validated_video_checkpoint(mode: Literal["i2v", "fl2v", "r2v"], checkpoint: str | None) -> str:
+    options = _video_options(mode)
+    selected = checkpoint or options.default_checkpoint
+    if selected not in options.checkpoints:
+        raise HTTPException(status_code=422, detail="선택한 영상 checkpoint는 현재 생성 방식에서 사용할 수 없습니다.")
+    return selected
+
+
+def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
+    model = _VIDEO_CHECKPOINT_MODELS.get(checkpoint or _VIDEO_CHECKPOINTS[mode]["minimax"])
+    selected = _VIDEO_CHECKPOINTS.get(mode, {}).get(model or "")
+    if selected is None:
+        raise _ComfyUIError("영상 checkpoint 구성이 올바르지 않습니다.")
+    return model or "", selected
+
+
+def _configure_eros_workflow(prompt: dict[str, dict[str, Any]]) -> None:
+    loras = {
+        node_id: node
+        for node_id, node in prompt.items()
+        if node.get("class_type") == "LoraLoaderModelOnly"
+        and isinstance(node.get("inputs"), dict)
+    }
+    vbvr_node_id = next(
+        (node_id for node_id, node in loras.items() if node["inputs"].get("lora_name") == _VBVR_LORA),
+        None,
+    )
+    turbo_node_ids = [node_id for node_id in loras if node_id != vbvr_node_id]
+    if vbvr_node_id is None or len(turbo_node_ids) != 1:
+        raise _ComfyUIError("Eros 영상 workflow의 LoRA 구성이 올바르지 않습니다.")
+    turbo_node_id = turbo_node_ids[0]
+    for node in prompt.values():
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        if inputs.get("model") == [turbo_node_id, 0]:
+            inputs["model"] = [vbvr_node_id, 0]
+        if node.get("class_type") == "BasicScheduler":
+            inputs["steps"] = 6
+    prompt.pop(turbo_node_id)
 
 
 def _validate_request(mode: str, request: VideoGenerationRequest, files: list[UploadFile]) -> None:
@@ -801,6 +891,7 @@ def _build_prompt(
     except (OSError, json.JSONDecodeError) as exc:
         raise _ComfyUIError(f"{mode} 영상 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
+    model, checkpoint = _workflow_checkpoint(mode, request.checkpoint)
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     effective_prompt = effective_prompt if effective_prompt is not None else _effective_video_prompt(mode, request)
     for node in prompt.values():
@@ -810,12 +901,16 @@ def _build_prompt(
                 inputs["prompt"] = effective_prompt
             if node.get("class_type") == "RandomNoise":
                 inputs["noise_seed"] = seed
+            if node.get("class_type") == "UNETLoader":
+                inputs["unet_name"] = checkpoint
             if node.get("class_type") in {"MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"}:
                 inputs["width"] = _multiple_of_32(request.width)
                 inputs["height"] = _multiple_of_32(request.height)
                 inputs["length"] = _frame_length(request.duration, request.fps)
             if node.get("class_type") == "CreateVideo":
                 inputs["fps"] = request.fps
+    if model == "eros":
+        _configure_eros_workflow(prompt)
     if mode == "i2v":
         prompt["10"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
     elif mode == "fl2v":
@@ -1080,6 +1175,8 @@ def _queue_video_continuation(
         )
     }
     continuation_mode = generation.get("continuation_mode", "r2v")
+    checkpoint = generation.get("checkpoint")
+    checkpoint = checkpoint if isinstance(checkpoint, str) and checkpoint else None
     if continuation_mode == "r2v":
         original_images = [
             VideoAsset(kind="image", file_id=file_id)
@@ -1097,6 +1194,7 @@ def _queue_video_continuation(
             )
         request = VideoGenerationRequest(
             prompt=prompts[next_index],
+            checkpoint=checkpoint,
             width=int(generation["width"]),
             height=int(generation["height"]),
             duration=durations[next_index],
@@ -1108,6 +1206,7 @@ def _queue_video_continuation(
     elif continuation_mode == "i2v":
         request = VideoGenerationRequest(
             prompt=prompts[next_index],
+            checkpoint=checkpoint,
             width=int(generation["width"]),
             height=int(generation["height"]),
             duration=durations[next_index],
