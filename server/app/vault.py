@@ -87,6 +87,8 @@ class VaultLora(BaseModel):
 class VaultImageDetail(VaultImageSummary):
     prompt_id: str
     negative_prompt: str
+    positive_prompt_prefix: str
+    negative_prompt_prefix: str
     loras: list[VaultLora]
     cfg: float
     steps: int
@@ -146,6 +148,7 @@ class VaultVideoDetail(VaultVideoSummary):
     seed: int
     checkpoint: str | None
     loras: list[VaultLora]
+    upscale: bool
     input_segment_prompts: list[str]
     improved_segment_prompts: list[str]
 
@@ -502,6 +505,7 @@ def vault_video_detail(
         seed=generation["seed"],
         checkpoint=generation.get("checkpoint") or None,
         loras=_loras(generation),
+        upscale=generation.get("upscale") is not False,
         input_segment_prompts=_video_prompt_list(generation.get("input_segment_prompts")),
         improved_segment_prompts=_video_prompt_list(generation.get("improved_segment_prompts")),
     )
@@ -902,6 +906,8 @@ def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
         **_summary(generation, user_id, include_file_size=True).model_dump(),
         prompt_id=generation["prompt_id"],
         negative_prompt=generation["negative_prompt"],
+        positive_prompt_prefix=generation["positive_prompt_prefix"],
+        negative_prompt_prefix=generation["negative_prompt_prefix"],
         loras=_loras(generation),
         cfg=generation["cfg"],
         steps=generation["steps"],

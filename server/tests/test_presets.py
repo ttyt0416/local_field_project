@@ -46,9 +46,11 @@ class PresetRequestTest(unittest.TestCase):
                 {
                     "prompt": "a moving portrait",
                     "mode": "i2v",
+                    "video_model_family": "ltx",
                     "width": 1344,
                     "height": 768,
                     "duration": 100,
+                    "upscale": False,
                     "loras": [{"name": "style.safetensors", "strength": -100}],
                     "random_seed": True,
                 }
@@ -57,7 +59,9 @@ class PresetRequestTest(unittest.TestCase):
 
         self.assertEqual(payload.type, "video")
         self.assertEqual(payload.values.mode, "i2v")
+        self.assertEqual(payload.values.video_model_family, "ltx")
         self.assertEqual(payload.values.duration, 100)
+        self.assertFalse(payload.values.upscale)
         self.assertEqual(payload.values.loras[0].strength, -100)
 
     def test_image_preset_accepts_sampler_scheduler_and_seed(self) -> None:

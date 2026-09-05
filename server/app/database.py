@@ -423,6 +423,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
         prompt TEXT NOT NULL,
         negative_prompt TEXT NOT NULL,
+        positive_prompt_prefix TEXT NOT NULL DEFAULT '',
+        negative_prompt_prefix TEXT NOT NULL DEFAULT '',
         checkpoint VARCHAR(255) NOT NULL,
         loras JSONB NOT NULL DEFAULT '[]'::jsonb,
         cfg DOUBLE PRECISION NOT NULL,
@@ -457,6 +459,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS source_file_id TEXT",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS source_filename VARCHAR(255)",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS denoise DOUBLE PRECISION NOT NULL DEFAULT 1.0",
+    "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS positive_prompt_prefix TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS negative_prompt_prefix TEXT NOT NULL DEFAULT ''",
     """
     CREATE INDEX IF NOT EXISTS image_generations_user_id_idx ON image_generations(user_id)
     """,
@@ -488,6 +492,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         mode VARCHAR(8) NOT NULL,
         checkpoint VARCHAR(255) NOT NULL DEFAULT '',
         loras JSONB NOT NULL DEFAULT '[]'::jsonb,
+        upscale BOOLEAN NOT NULL DEFAULT TRUE,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
         prompt TEXT NOT NULL,
         width INTEGER NOT NULL,
@@ -519,6 +524,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale BOOLEAN NOT NULL DEFAULT TRUE",
     """
     CREATE TABLE IF NOT EXISTS music_generations (
         id UUID PRIMARY KEY,
@@ -680,7 +686,7 @@ def initialize_database() -> None:
 
 
 _IMAGE_GENERATION_FIELDS = (
-    "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint, "
+    "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint, "
     "loras, cfg, steps, sampler_name, scheduler, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
     "source_generation_id, is_edited, size_bytes, model_family, generation_mode, source_file_id, "
@@ -695,6 +701,8 @@ def create_image_generation(
     client_id: str,
     prompt: str,
     negative_prompt: str,
+    positive_prompt_prefix: str,
+    negative_prompt_prefix: str,
     checkpoint: str,
     loras: list[dict[str, Any]],
     cfg: float,
@@ -715,11 +723,11 @@ def create_image_generation(
         row = connection.execute(
             """
             INSERT INTO image_generations
-                (id, user_id, prompt_id, client_id, prompt, negative_prompt, checkpoint,
+                (id, user_id, prompt_id, client_id, prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, model_family,
                  generation_mode, source_file_id, source_filename, denoise)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
             """,
             (
@@ -729,6 +737,8 @@ def create_image_generation(
                 client_id,
                 prompt,
                 negative_prompt,
+                positive_prompt_prefix,
+                negative_prompt_prefix,
                 checkpoint,
                 json.dumps(loras, ensure_ascii=False),
                 cfg,
@@ -768,11 +778,11 @@ def create_image_edit(
         row = connection.execute(
             """
             INSERT INTO image_generations
-                (id, user_id, prompt_id, client_id, status, prompt, negative_prompt, checkpoint,
+                (id, user_id, prompt_id, client_id, status, prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, storage_file_id, filename, subfolder,
                  image_type, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes,
                  model_family, generation_mode, source_file_id, source_filename, denoise)
-            SELECT %s, user_id, %s, %s, 'completed', prompt, negative_prompt, checkpoint,
+            SELECT %s, user_id, %s, %s, 'completed', prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                    loras, cfg, steps, sampler_name, scheduler, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s, model_family, generation_mode, source_file_id, source_filename, denoise
             FROM image_generations
@@ -1320,7 +1330,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, status, prompt, width, height, length, fps, seed, "
+    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, upscale, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations, continuation_mode, reference_image_file_ids, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
@@ -1347,16 +1357,17 @@ def create_video_generation(
     continuation_mode: str = "r2v",
     reference_image_file_ids: list[str] | None = None,
     loras: list[dict[str, Any]] | None = None,
+    upscale: bool = True,
 ) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, prompt, width, height, length, fps, seed,
+                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, upscale, prompt, width, height, length, fps, seed,
                  input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations,
                  continuation_mode, reference_image_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1368,6 +1379,7 @@ def create_video_generation(
                 mode,
                 checkpoint,
                 json.dumps(loras or []),
+                upscale,
                 prompt,
                 width,
                 height,
@@ -1490,10 +1502,10 @@ def create_video_edit(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, mode, status, prompt, width, height, length,
+                (id, user_id, prompt_id, client_id, mode, status, prompt, loras, upscale, width, height, length,
                  fps, seed, input_file_ids, storage_file_id, filename, subfolder, video_type,
                  completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes)
-            SELECT %s, user_id, %s, %s, mode, 'completed', prompt, %s, %s, %s,
+            SELECT %s, user_id, %s, %s, mode, 'completed', prompt, loras, upscale, %s, %s, %s,
                    fps, seed, input_file_ids, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s
             FROM video_generations

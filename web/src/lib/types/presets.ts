@@ -46,8 +46,10 @@ export type PresetValues = {
 	sampler_name?: string;
 	scheduler?: string;
 	mode?: VideoMode;
+	video_model_family?: VideoModelFamily;
 	duration?: number;
 	fps?: number;
+	upscale?: boolean;
 	seed?: string;
 	random_seed?: boolean;
 };
@@ -79,4 +81,5 @@ export type VideoGenerationOptions = {
 	default_checkpoint: string;
 	checkpoint_families: Record<string, VideoModelFamily>;
 	loras: string[];
+	lora_families: Record<string, VideoModelFamily>;
 };

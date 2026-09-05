@@ -4,7 +4,9 @@ export type ImageGenerationParameters = {
 	source_file_id?: string | null;
 	source_image_url?: string | null;
 	denoise?: number;
+	positive_prompt_prefix?: string;
 	prompt: string;
+	negative_prompt_prefix?: string;
 	negative_prompt: string;
 	checkpoint: string;
 	loras: { name: string; strength: number }[];

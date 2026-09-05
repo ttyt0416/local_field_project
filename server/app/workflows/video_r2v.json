@@ -29,30 +29,23 @@
   "5": {
     "class_type": "MiniMaxH3ReferenceToVideo",
     "inputs": {
-      "clip": ["2", 0],
-      "vae": ["3", 0],
-      "audio_vae": ["4", 0],
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "audio_vae": [
+        "4",
+        0
+      ],
       "prompt": "",
       "width": 1344,
       "height": 768,
       "length": 124,
       "ref_image_size": "match"
-    }
-  },
-  "6": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "model": ["1", 0],
-      "lora_name": "MiniMax/VBVR_H3_attn_only.safetensors",
-      "strength_model": 1
-    }
-  },
-  "16": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "model": ["6", 0],
-      "lora_name": "MiniMax/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-      "strength_model": 1
     }
   },
   "7": {
@@ -64,8 +57,14 @@
   "8": {
     "class_type": "BasicGuider",
     "inputs": {
-      "model": ["16", 0],
-      "conditioning": ["5", 0]
+      "model": [
+        "1",
+        0
+      ],
+      "conditioning": [
+        "5",
+        0
+      ]
     }
   },
   "9": {
@@ -77,7 +76,10 @@
   "10": {
     "class_type": "BasicScheduler",
     "inputs": {
-      "model": ["16", 0],
+      "model": [
+        "1",
+        0
+      ],
       "scheduler": "simple",
       "steps": 4,
       "denoise": 1
@@ -86,39 +88,75 @@
   "11": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
-      "noise": ["7", 0],
-      "guider": ["8", 0],
-      "sampler": ["9", 0],
-      "sigmas": ["10", 0],
-      "latent_image": ["5", 1]
+      "noise": [
+        "7",
+        0
+      ],
+      "guider": [
+        "8",
+        0
+      ],
+      "sampler": [
+        "9",
+        0
+      ],
+      "sigmas": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "5",
+        1
+      ]
     }
   },
   "12": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["11", 0],
-      "vae": ["3", 0]
+      "samples": [
+        "11",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
     }
   },
   "13": {
     "class_type": "VAEDecodeAudio",
     "inputs": {
-      "samples": ["11", 0],
-      "vae": ["4", 0]
+      "samples": [
+        "11",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
     }
   },
   "14": {
     "class_type": "CreateVideo",
     "inputs": {
-      "images": ["12", 0],
+      "images": [
+        "12",
+        0
+      ],
       "fps": 24,
-      "audio": ["13", 0]
+      "audio": [
+        "13",
+        0
+      ]
     }
   },
   "15": {
     "class_type": "SaveVideo",
     "inputs": {
-      "video": ["14", 0],
+      "video": [
+        "14",
+        0
+      ],
       "filename_prefix": "video/LocalField_MiniMaxH3",
       "format": "mp4",
       "codec": "h264"

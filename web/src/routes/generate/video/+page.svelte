@@ -73,7 +73,7 @@
 	let mode = $state<VideoMode>('i2v');
 	let videoModelFamily = $state<VideoModelFamily>('minimax');
 	let checkpoint = $state('');
-	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', checkpoint_families: {}, loras: [] });
+	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', checkpoint_families: {}, loras: [], lora_families: {} });
 	let videoOptionsLoading = $state(false);
 	let videoOptionsRequestId = 0;
 	let checkpointModalOpen = $state(false);
@@ -92,6 +92,7 @@
 	let duration = $state(5);
 	let continuationMode = $state<ContinuationMode>('r2v');
 	let fps = $state(24);
+	let upscale = $state(true);
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let firstFile = $state<File | null>(null);
@@ -163,9 +164,11 @@
 	let familyCheckpoints = $derived(videoOptions.checkpoints.filter((option) => videoOptions.checkpoint_families[option] === videoModelFamily));
 	let checkpointFolders = $derived(modelFolders(familyCheckpoints));
 	let filteredCheckpoints = $derived(filterModelFolder(familyCheckpoints, checkpointFolder));
-	let loraFolders = $derived(modelFolders(videoOptions.loras));
-	let visibleLoras = $derived(filterModelFolder(videoOptions.loras, loraFolder));
+	let familyLoras = $derived(videoOptions.loras.filter((option) => videoOptions.lora_families[option] === videoModelFamily));
+	let loraFolders = $derived(modelFolders(familyLoras));
+	let visibleLoras = $derived(filterModelFolder(familyLoras, loraFolder));
 	let isLtxCheckpoint = $derived(videoOptions.checkpoint_families[checkpoint] === 'ltx');
+	let isLtxI2v = $derived(isLtxCheckpoint && mode === 'i2v');
 	let videoDimensionStep = $derived(isLtxCheckpoint && mode === 'i2v' ? 64 : 32);
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
 	let selectionMax = $derived(selectionTarget === 'images' ? (mode === 'r2v' && segmentCount > 1 ? 8 : 9) : selectionMultiple ? 3 : 1);
@@ -258,20 +261,39 @@
 			const options = await apiJson<VideoGenerationOptions>(`generation/video/options?mode=${nextMode}`);
 			if (!active || requestId !== videoOptionsRequestId) return;
 			videoOptions = options;
-			checkpoint = options.checkpoints.includes(checkpoint) ? checkpoint : options.default_checkpoint;
-			videoModelFamily = options.checkpoint_families[checkpoint] === 'ltx' ? 'ltx' : 'minimax';
+			selectVideoCheckpoint(options.checkpoints.includes(checkpoint) ? checkpoint : options.default_checkpoint);
 			checkpointFolder = '';
 			loraFolder = '';
-			loras = loras.filter((lora) => options.loras.includes(lora.name));
+			loras = loras.filter((lora) => options.lora_families[lora.name] === videoModelFamily);
 		} catch (reason) {
 			if (!active || requestId !== videoOptionsRequestId) return;
-			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '', checkpoint_families: {}, loras: [] };
+			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '', checkpoint_families: {}, loras: [], lora_families: {} };
 			checkpoint = '';
 			loras = [];
 			error = reason instanceof Error ? reason.message : '동영상 checkpoint 목록을 불러오지 못했습니다.';
 		} finally {
 			if (requestId === videoOptionsRequestId) videoOptionsLoading = false;
 		}
+	}
+
+	function selectVideoCheckpoint(nextCheckpoint: string) {
+		const previousFamily = videoModelFamily;
+		checkpoint = nextCheckpoint;
+		videoModelFamily = videoOptions.checkpoint_families[nextCheckpoint] === 'ltx' ? 'ltx' : 'minimax';
+		if (videoModelFamily !== previousFamily) loras = [];
+	}
+
+	function selectVideoModelFamily(nextFamily: VideoModelFamily) {
+		if (generating || videoOptionsLoading || nextFamily === videoModelFamily) return false;
+		const nextCheckpoint = videoOptions.checkpoint_families[videoOptions.default_checkpoint] === nextFamily
+			? videoOptions.default_checkpoint
+			: videoOptions.checkpoints.find((option) => videoOptions.checkpoint_families[option] === nextFamily);
+		if (!nextCheckpoint) {
+			error = `${nextFamily.toUpperCase()} checkpoint를 찾을 수 없습니다.`;
+			return false;
+		}
+		selectVideoCheckpoint(nextCheckpoint);
+		checkpointFolder = '';
 	}
 
 	function selectMode(next: VideoMode) {
@@ -295,6 +317,7 @@
 	}
 
 	function toggleLora(name: string) {
+		if (videoOptions.lora_families[name] !== videoModelFamily) return;
 		const selected = loras.some((lora) => lora.name === name);
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1 }];
 	}
@@ -787,6 +810,7 @@
 				duration: Number(duration),
 				continuation_mode: continuationMode,
 				fps: Number(fps),
+				upscale: isLtxI2v ? upscale : true,
 				seed: randomSeed ? null : seed.trim() || null
 			};
 			if (mode === 'i2v') payload.first_frame = assetRef('image', firstFile, selectedFirst, newFiles, form);
@@ -873,12 +897,14 @@
 		videoPresetInitialValues = {
 			prompt: prompt.trim(),
 			mode,
+			video_model_family: videoModelFamily,
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
 			width: Number(width),
 			height: Number(height),
 			duration: Number(duration),
 			fps: Number(fps),
+			upscale,
 			random_seed: randomSeed,
 			...(randomSeed || !seed.trim() ? {} : { seed: seed.trim() })
 		};
@@ -899,23 +925,29 @@
 		}
 	}
 
-	function applyVideoPreset(preset: Preset) {
+	async function applyVideoPreset(preset: Preset) {
 		const values = preset.values;
 		const presetMode = values.mode ?? mode;
 		if (values.prompt !== undefined) setPrompt(values.prompt);
 		if (values.mode !== undefined && values.mode !== mode) selectMode(values.mode);
-		if (values.checkpoint !== undefined) checkpoint = values.checkpoint;
-		if (values.loras !== undefined) loras = values.loras;
+		await loadVideoOptions(presetMode);
+		const checkpointFamily = values.checkpoint ? videoOptions.checkpoint_families[values.checkpoint] : undefined;
+		const presetFamily = values.video_model_family ?? checkpointFamily ?? videoModelFamily;
+		const presetCheckpoint = values.checkpoint && videoOptions.checkpoint_families[values.checkpoint] === presetFamily
+			? values.checkpoint
+			: videoOptions.checkpoints.find((option) => videoOptions.checkpoint_families[option] === presetFamily);
+		if (presetCheckpoint) selectVideoCheckpoint(presetCheckpoint);
+		if (values.loras !== undefined) loras = values.loras.filter((lora) => videoOptions.lora_families[lora.name] === videoModelFamily);
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
 		if (values.duration !== undefined) duration = values.duration;
 		if (values.fps !== undefined) fps = values.fps;
+		if (values.upscale !== undefined) upscale = values.upscale;
 		if (values.random_seed !== undefined) randomSeed = values.random_seed;
 		if (values.seed !== undefined) {
 			seed = values.seed;
 			randomSeed = false;
 		}
-		void loadVideoOptions(presetMode);
 		videoPresetLoadOpen = false;
 		success = `'${preset.name}' 프리셋을 불러왔습니다.`;
 	}
@@ -932,12 +964,14 @@
 			height: '영상 크기',
 			duration: '길이',
 			fps: 'FPS',
+			upscale: 'LTX 업스케일',
 			seed: 'Seed',
 			random_seed: 'Seed'
 		};
 		if (fields.has('width') || fields.has('height')) fields.add('size');
 		fields.delete('width');
 		fields.delete('height');
+		fields.delete('video_model_family');
 		return [...fields].map((field) => labels[field] ?? field).join(', ');
 	}
 	function handleVideoPresetSaved(preset: Preset) {
@@ -1001,7 +1035,7 @@
 							</IconOutlinedButton>
 						</div>
 					</div>
-					<Tab items={videoModelFamilyTabs} bind:value={videoModelFamily} ariaLabel="동영상 모델 family" class="mt-5" />
+					<Tab items={videoModelFamilyTabs} bind:value={videoModelFamily} ariaLabel="동영상 모델 family" onselect={selectVideoModelFamily} class="mt-5" />
 					<Tab items={modeTabs} bind:value={mode} ariaLabel="동영상 생성 방식" onselect={selectMode} class="mt-3" />
 					<p class="mt-2 text-xs text-muted-foreground">{modes.find((item) => item.value === mode)?.description}</p>
 					<div class="mt-4 space-y-2">
@@ -1011,11 +1045,10 @@
 							<span class="shrink-0 text-xs font-semibold text-primary">선택</span>
 						</button>
 					</div>
-					{#if isLtxCheckpoint}
-						<div class="space-y-3">
+					<div class="space-y-3">
 							<div class="flex flex-wrap items-center justify-between gap-3">
 								<span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length})</span></span>
-								<button type="button" onclick={() => (loraModalOpen = true)} disabled={generating || videoOptionsLoading || videoOptions.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button>
+								<button type="button" onclick={() => (loraModalOpen = true)} disabled={generating || videoOptionsLoading || familyLoras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button>
 							</div>
 							{#if loras.length === 0}
 								<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>
@@ -1030,7 +1063,6 @@
 								</div>
 							{/if}
 						</div>
-					{/if}
 
 					<form class="mt-5 min-w-0 max-w-full space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
@@ -1244,6 +1276,7 @@
 						<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">영상 크기</span><IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={height} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label></div>
+						{#if isLtxI2v}<label class="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="video-ltx-upscale"><span><span class="block font-medium">업스케일 사용</span><span class="mt-0.5 block text-xs text-muted-foreground">끄면 first-pass 해상도로 생성합니다.</span></span><input id="video-ltx-upscale" type="checkbox" bind:checked={upscale} disabled={generating} class="size-4 accent-primary" /></label>{/if}
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
 						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || enhancingPrompt || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
@@ -1263,14 +1296,14 @@
 				{#each checkpointFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={checkpointFolder === folder} onclick={() => (checkpointFolder = folder)}>{folder}</OutlinedButton>{/each}
 			</div>
 			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-				{#each filteredCheckpoints as option (option)}<button type="button" onclick={() => { checkpoint = option; videoModelFamily = videoOptions.checkpoint_families[option] === 'ltx' ? 'ltx' : 'minimax'; checkpointModalOpen = false; }} aria-pressed={checkpoint === option} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === option ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{option}</span>{#if checkpoint === option}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
+				{#each filteredCheckpoints as option (option)}<button type="button" onclick={() => { selectVideoCheckpoint(option); checkpointModalOpen = false; }} aria-pressed={checkpoint === option} class={`flex min-h-14 items-center justify-between gap-2 break-all rounded-lg border px-3 py-2 text-left text-xs transition ${checkpoint === option ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'}`}><span>{option}</span>{#if checkpoint === option}<Check size={15} class="shrink-0" strokeWidth={2} />{/if}</button>{/each}
 			</div>
 		</div>
 	</Modal>
 
-	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="LTX folder의 LoRA만 선택할 수 있습니다.">
+	<Modal bind:open={loraModalOpen} title="LoRA 선택" description="현재 모델 family의 LoRA만 선택할 수 있습니다.">
 		<div class="space-y-3">
-			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="LTX LoRA folder filter">
+			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="동영상 LoRA folder filter">
 				<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === ''} onclick={() => (loraFolder = '')}>전체</OutlinedButton>
 				{#if loraFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (loraFolder = parentModelFolder(loraFolder))}>바로 위 폴더</OutlinedButton>{/if}
 				{#each loraFolders as folder}<OutlinedButton class="min-h-9 px-3 text-xs" active={loraFolder === folder} onclick={() => (loraFolder = folder)}>{folder}</OutlinedButton>{/each}
@@ -1300,7 +1333,7 @@
 							<p class="truncate text-sm font-semibold">{preset.name}</p>
 							<p class="mt-1 truncate text-xs text-muted-foreground">{videoPresetLabels(preset)}</p>
 						</div>
-						<OutlinedButton class="shrink-0 px-3 text-xs" onclick={() => applyVideoPreset(preset)}>불러오기</OutlinedButton>
+						<OutlinedButton class="shrink-0 px-3 text-xs" onclick={() => void applyVideoPreset(preset)}>불러오기</OutlinedButton>
 					</div>
 				{/each}
 			</div>

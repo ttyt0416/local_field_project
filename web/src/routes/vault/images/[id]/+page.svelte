@@ -27,6 +27,8 @@
 		prompt_id: string;
 		prompt: string;
 		negative_prompt: string;
+		positive_prompt_prefix: string;
+		negative_prompt_prefix: string;
 		checkpoint: string;
 		model_family: 'anima' | 'illustrious' | 'krea2';
 		generation_mode: 't2i' | 'i2i';
@@ -145,7 +147,9 @@
 			source_file_id: generation.source_file_id,
 			source_image_url: generation.source_image_url,
 			denoise: generation.denoise,
+			positive_prompt_prefix: generation.positive_prompt_prefix,
 			prompt: generation.prompt,
+			negative_prompt_prefix: generation.negative_prompt_prefix,
 			negative_prompt: generation.negative_prompt,
 			checkpoint: generation.checkpoint,
 			cfg: generation.cfg,
@@ -183,7 +187,9 @@
 	function presetValues(): PresetValues {
 		if (!generation) return {};
 		return {
+			positive_prompt_prefix: generation.positive_prompt_prefix,
 			prompt: generation.prompt,
+			negative_prompt_prefix: generation.negative_prompt_prefix,
 			negative_prompt: generation.negative_prompt,
 			checkpoint: generation.checkpoint,
 			loras: generation.loras.map(({ name, strength }) => ({ name, strength })),

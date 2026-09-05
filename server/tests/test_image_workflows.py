@@ -172,7 +172,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["5"]["inputs"]["text"], "cinematic lighting, 1girl, portrait")
         self.assertEqual(workflow["6"]["inputs"]["text"], "bad anatomy, low quality")
 
-    def test_submission_persists_composed_prompt_values_for_vault(self) -> None:
+    def test_submission_persists_prefixes_separately_from_prompt_bodies(self) -> None:
         payload = self._request("anima")
         payload.positive_prompt_prefix = "cinematic lighting"
         payload.negative_prompt_prefix = "bad anatomy"
@@ -186,8 +186,10 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         ):
             comfyui._submit_image_generation(payload, user)
 
-        self.assertEqual(create_record.call_args.kwargs["prompt"], "cinematic lighting, 1girl, portrait")
-        self.assertEqual(create_record.call_args.kwargs["negative_prompt"], "bad anatomy, low quality")
+        self.assertEqual(create_record.call_args.kwargs["prompt"], "1girl, portrait")
+        self.assertEqual(create_record.call_args.kwargs["positive_prompt_prefix"], "cinematic lighting")
+        self.assertEqual(create_record.call_args.kwargs["negative_prompt"], "low quality")
+        self.assertEqual(create_record.call_args.kwargs["negative_prompt_prefix"], "bad anatomy")
 
     def test_i2i_source_requires_exactly_one_reference(self) -> None:
         with self.assertRaises(ValidationError):

@@ -280,7 +280,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function applyGenerationParameters(parameters: ImageGenerationParameters) {
 		if (parameters.generation_mode !== 'i2i' || (parameters.model_family && parameters.model_family !== family)) return;
+		positivePromptPrefix = parameters.positive_prompt_prefix ?? '';
 		prompt = parameters.prompt;
+		negativePromptPrefix = parameters.negative_prompt_prefix ?? '';
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
 		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));

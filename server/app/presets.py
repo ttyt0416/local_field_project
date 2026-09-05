@@ -15,6 +15,7 @@ router = APIRouter(prefix="/presets", tags=["presets"])
 PresetType = Literal["t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2", "video"]
 PresetAspectRatio = Literal["custom", "2:3", "3:2", "1:1", "16:9", "9:16"]
 PresetVideoMode = Literal["i2v", "fl2v", "r2v"]
+PresetVideoModelFamily = Literal["minimax", "ltx"]
 
 
 class PresetLora(BaseModel):
@@ -44,8 +45,10 @@ class PresetValues(BaseModel):
     sampler_name: str | None = Field(default=None, min_length=1, max_length=64)
     scheduler: str | None = Field(default=None, min_length=1, max_length=64)
     mode: PresetVideoMode | None = None
+    video_model_family: PresetVideoModelFamily | None = None
     duration: float | None = None
     fps: float | None = Field(default=None, ge=1, le=120)
+    upscale: bool | None = None
     seed: str | None = Field(default=None, min_length=1, max_length=19, pattern=r"^[0-9]+$")
     random_seed: bool | None = None
 

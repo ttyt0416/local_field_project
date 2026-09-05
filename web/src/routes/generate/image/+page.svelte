@@ -421,7 +421,9 @@
 	}
 
 	function applyGenerationParameters(parameters: ImageGenerationParameters) {
+		positivePromptPrefix = parameters.positive_prompt_prefix ?? '';
 		prompt = parameters.prompt;
+		negativePromptPrefix = parameters.negative_prompt_prefix ?? '';
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
 		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));

@@ -78,7 +78,7 @@ _LTX_VIDEO_VAE = "LTX/ltx-2.5-video-vae-bf16.safetensors"
 _LTX_AUDIO_VAE = "LTX/ltx-2.5-audio-vae-bf16.safetensors"
 _LTX_SPATIAL_UPSCALER = "LTX/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
 _LTX_LORA_PREFIX = "LTX/"
-_VBVR_LORA = "MiniMax/VBVR_H3_attn_only.safetensors"
+_MINIMAX_LORA_PREFIX = "MiniMax/"
 _VIDEO_CHECKPOINTS = {
     "i2v": {
         "eros": _EROS_CHECKPOINT,
@@ -157,6 +157,7 @@ class VideoGenerationRequest(BaseModel):
     duration: float = Field(default=5)
     continuation_mode: Literal["r2v", "i2v"] = "r2v"
     fps: float = Field(default=24, ge=1, le=120)
+    upscale: bool = True
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
     first_frame: VideoAsset | None = None
     last_frame: VideoAsset | None = None
@@ -209,6 +210,7 @@ class VideoGenerationOptions(BaseModel):
     default_checkpoint: str
     checkpoint_families: dict[str, str]
     loras: list[str]
+    lora_families: dict[str, Literal["minimax", "ltx"]]
 
 
 class VideoOutput(BaseModel):
@@ -311,6 +313,7 @@ async def create_video(
         prompt=request.prompt.strip(),
         checkpoint=request.checkpoint or "",
         loras=[lora.model_dump() for lora in request.loras],
+        upscale=request.upscale,
         width=request.width,
         height=request.height,
         length=_video_frame_length(request),
@@ -500,12 +503,20 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
     default_checkpoint = _DASIWA_CHECKPOINT
     if default_checkpoint not in checkpoints:
         raise _ComfyUIError("기본 Dasiwa 영상 checkpoint를 ComfyUI에서 찾을 수 없습니다.")
+    checkpoint_families = {checkpoint: _VIDEO_CHECKPOINT_FAMILIES[checkpoint] for checkpoint in checkpoints}
+    loras = [
+        name
+        for name in _node_choices(object_info, "LoraLoaderModelOnly", "lora_name")
+        if (name.startswith(_MINIMAX_LORA_PREFIX) and "minimax" in checkpoint_families.values())
+        or (name.startswith(_LTX_LORA_PREFIX) and "ltx" in checkpoint_families.values())
+    ]
     return VideoGenerationOptions(
         mode=mode,
         checkpoints=checkpoints,
         default_checkpoint=default_checkpoint,
-        checkpoint_families={checkpoint: _VIDEO_CHECKPOINT_FAMILIES[checkpoint] for checkpoint in checkpoints},
-        loras=[name for name in _node_choices(object_info, "LoraLoaderModelOnly", "lora_name") if name.startswith(_LTX_LORA_PREFIX)],
+        checkpoint_families=checkpoint_families,
+        loras=loras,
+        lora_families={name: "ltx" if name.startswith(_LTX_LORA_PREFIX) else "minimax" for name in loras},
     )
 
 
@@ -533,10 +544,12 @@ def _validate_video_loras(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGen
         raise HTTPException(status_code=422, detail="같은 LoRA를 중복 선택할 수 없습니다.")
     if not names:
         return
-    if not _is_ltx_checkpoint(request.checkpoint):
-        raise HTTPException(status_code=422, detail="LoRA는 LTX video checkpoint에서만 선택할 수 있습니다.")
-    if any(name not in _video_options(mode).loras for name in names):
-        raise HTTPException(status_code=422, detail="선택한 LTX LoRA를 찾을 수 없습니다.")
+    checkpoint_family = _VIDEO_CHECKPOINT_FAMILIES.get(request.checkpoint or "")
+    options = _video_options(mode)
+    if checkpoint_family not in {"minimax", "ltx"} or any(
+        options.lora_families.get(name) != checkpoint_family for name in names
+    ):
+        raise HTTPException(status_code=422, detail="선택한 checkpoint family에서 사용할 수 없는 LoRA입니다.")
 
 
 def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
@@ -548,29 +561,12 @@ def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
 
 
 def _configure_eros_workflow(prompt: dict[str, dict[str, Any]]) -> None:
-    loras = {
-        node_id: node
-        for node_id, node in prompt.items()
-        if node.get("class_type") == "LoraLoaderModelOnly"
-        and isinstance(node.get("inputs"), dict)
-    }
-    vbvr_node_id = next(
-        (node_id for node_id, node in loras.items() if node["inputs"].get("lora_name") == _VBVR_LORA),
-        None,
-    )
-    turbo_node_ids = [node_id for node_id in loras if node_id != vbvr_node_id]
-    if vbvr_node_id is None or len(turbo_node_ids) != 1:
-        raise _ComfyUIError("Eros 영상 workflow의 LoRA 구성이 올바르지 않습니다.")
-    turbo_node_id = turbo_node_ids[0]
     for node in prompt.values():
         inputs = node.get("inputs")
         if not isinstance(inputs, dict):
             continue
-        if inputs.get("model") == [turbo_node_id, 0]:
-            inputs["model"] = [vbvr_node_id, 0]
         if node.get("class_type") == "BasicScheduler":
             inputs["steps"] = 6
-    prompt.pop(turbo_node_id)
 
 
 def _ltx_frame_length(duration: float, fps: float = 24) -> int:
@@ -612,7 +608,13 @@ def _configure_ltx_workflow(
 
     if mode == "i2v":
         prompt["12"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
-        _inject_ltx_loras(prompt, request.loras)
+        if not request.upscale:
+            # ponytail: only LTX I2V has an upscale pass; add mode branches if its other workflows gain one.
+            prompt["30"]["inputs"]["samples"] = ["19", 0]
+            prompt["31"]["inputs"]["samples"] = ["19", 1]
+            for node_id in map(str, range(20, 30)):
+                prompt.pop(node_id)
+        _inject_video_loras(prompt, request.loras)
         return
     if mode == "fl2v":
         prompt["10"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
@@ -621,7 +623,7 @@ def _configure_ltx_workflow(
             prompt[node_id]["inputs"].update(
                 {"resize_type.width": request.width, "resize_type.height": request.height}
             )
-        _inject_ltx_loras(prompt, request.loras)
+        _inject_video_loras(prompt, request.loras)
         return
 
     previous_guide_id: str | None = None
@@ -672,10 +674,10 @@ def _configure_ltx_workflow(
             {"positive": [previous_guide_id, 0], "negative": [previous_guide_id, 1]}
         )
     prompt["14"]["inputs"]["video_latent"] = [previous_guide_id, 2]
-    _inject_ltx_loras(prompt, request.loras)
+    _inject_video_loras(prompt, request.loras)
 
 
-def _inject_ltx_loras(prompt: dict[str, dict[str, Any]], loras: Sequence[VideoLoraSelection]) -> None:
+def _inject_video_loras(prompt: dict[str, dict[str, Any]], loras: Sequence[VideoLoraSelection]) -> None:
     model: list[Any] = ["1", 0]
     next_id = 50
     for lora in loras:
@@ -1121,6 +1123,7 @@ def _build_prompt(
                 inputs["fps"] = request.fps
     if model == "eros":
         _configure_eros_workflow(prompt)
+    _inject_video_loras(prompt, request.loras)
     if mode == "i2v":
         prompt["10"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
     elif mode == "fl2v":
@@ -1413,6 +1416,7 @@ def _queue_video_continuation(
             prompt=prompts[next_index],
             checkpoint=checkpoint,
             loras=_stored_video_loras(generation),
+            upscale=generation.get("upscale") is not False,
             width=int(generation["width"]),
             height=int(generation["height"]),
             duration=durations[next_index],
@@ -1426,6 +1430,7 @@ def _queue_video_continuation(
             prompt=prompts[next_index],
             checkpoint=checkpoint,
             loras=_stored_video_loras(generation),
+            upscale=generation.get("upscale") is not False,
             width=int(generation["width"]),
             height=int(generation["height"]),
             duration=durations[next_index],

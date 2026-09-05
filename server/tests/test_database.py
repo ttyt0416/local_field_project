@@ -90,6 +90,8 @@ class VideoGenerationStatusTest(unittest.TestCase):
                 client_id="image-client",
                 prompt="prompt",
                 negative_prompt="",
+                positive_prompt_prefix="prefix",
+                negative_prompt_prefix="negative prefix",
                 checkpoint="checkpoint",
                 loras=[],
                 cfg=7,
@@ -176,10 +178,11 @@ class VideoGenerationStatusTest(unittest.TestCase):
         self.assertIn("input_segment_prompts, improved_segment_prompts", query)
         self.assertEqual(parameters[6], "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors")
         self.assertEqual(json.loads(str(parameters[7])), [])
-        self.assertEqual(json.loads(str(parameters[16])), ["input 1", "input 2"])
-        self.assertEqual(json.loads(str(parameters[17])), ["improved 1", "improved 2"])
-        self.assertEqual(parameters[19], "i2v")
-        self.assertEqual(json.loads(str(parameters[20])), ["a" * 32])
+        self.assertTrue(parameters[8])
+        self.assertEqual(json.loads(str(parameters[17])), ["input 1", "input 2"])
+        self.assertEqual(json.loads(str(parameters[18])), ["improved 1", "improved 2"])
+        self.assertEqual(parameters[20], "i2v")
+        self.assertEqual(json.loads(str(parameters[21])), ["a" * 32])
 
     def test_nullable_media_metadata_is_typed_and_preserved(self) -> None:
         connection = FakeConnection()
