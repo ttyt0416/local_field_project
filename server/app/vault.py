@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from pydantic import BaseModel, Field, model_validator
 
 from .auth import UserResponse, current_user
-from .comfyui import _request_bytes
+from .comfyui import _request_bytes, cancel_image_generation
 from .database import (
     create_image_edit,
     create_video_edit,
@@ -50,6 +50,8 @@ from .storage import (
     file_size as storage_file_size,
 )
 from .media_editing import MediaEditError, edit_video
+from .three_d import cancel_three_d
+from .video import cancel_video_generation
 
 
 router = APIRouter(prefix="/vault", tags=["vault"])
@@ -319,7 +321,7 @@ def delete_filtered_vault_three_d(
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(
         deleted_count=_delete_generation_rows(
-            generations, generation_ids, delete_three_d_generations, user
+            generations, generation_ids, delete_three_d_generations, user, "3d"
         )
     )
 
@@ -336,7 +338,7 @@ def delete_filtered_vault_videos(
     _validate_filtered_delete(len(generations), expected_count, confirmed)
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(
-        deleted_count=_delete_generation_rows(generations, generation_ids, delete_video_generations, user)
+        deleted_count=_delete_generation_rows(generations, generation_ids, delete_video_generations, user, "video")
     )
 
 
@@ -362,7 +364,7 @@ def delete_filtered_vault_images(
     _validate_filtered_delete(len(generations), expected_count, confirmed)
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(
-        deleted_count=_delete_generation_rows(generations, generation_ids, delete_image_generations, user)
+        deleted_count=_delete_generation_rows(generations, generation_ids, delete_image_generations, user, "image")
     )
 
 
@@ -471,6 +473,7 @@ def delete_vault_three_d(
     generation = get_three_d_generation_by_id(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
+    _cancel_active_generation(generation, "3d", user)
     storage_file_id = generation.get("storage_file_id")
     if storage_file_id and not has_media_asset(storage_file_id, user.id):
         if not storage_enabled():
@@ -544,6 +547,7 @@ def delete_vault_video(
     generation = get_video_generation_by_id(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
+    _cancel_active_generation(generation, "video", user)
     storage_file_id = generation.get("storage_file_id")
     if storage_file_id and not has_media_asset(storage_file_id, user.id):
         if not storage_enabled():
@@ -565,7 +569,7 @@ def delete_vault_images(
     generations = get_image_generations_by_ids(payload.generation_ids, user.id)
     if len(generations) != len(payload.generation_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
-    deleted_count = _delete_generation_rows(generations, payload.generation_ids, delete_image_generations, user)
+    deleted_count = _delete_generation_rows(generations, payload.generation_ids, delete_image_generations, user, "image")
     if deleted_count != len(payload.generation_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
     return BulkDeleteResponse(deleted_count=deleted_count)
@@ -576,9 +580,12 @@ def _delete_generation_rows(
     generation_ids: list[UUID],
     delete_records: Callable[[list[UUID], UUID], int],
     user: UserResponse,
+    media_type: Literal["image", "video", "3d"],
 ) -> int:
     if not generation_ids:
         return 0
+    for generation in generations:
+        _cancel_active_generation(generation, media_type, user)
     storage_file_ids = list(
         dict.fromkeys(
             generation["storage_file_id"]
@@ -606,6 +613,25 @@ def _delete_generation_rows(
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return deleted_count
+
+
+def _cancel_active_generation(
+    generation: dict, media_type: Literal["image", "video", "3d"], user: UserResponse
+) -> None:
+    if generation.get("status") not in {"queued", "processing"}:
+        return
+    prompt_id = generation.get("prompt_id")
+    if not isinstance(prompt_id, str) or not prompt_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="진행 중인 콘텐츠를 취소할 수 없습니다.")
+    if media_type == "image":
+        cancel_image_generation(prompt_id, user)
+    elif media_type == "video":
+        mode = generation.get("mode")
+        if mode not in {"i2v", "fl2v", "r2v"}:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="진행 중인 콘텐츠를 취소할 수 없습니다.")
+        cancel_video_generation(mode, prompt_id, user)
+    else:
+        cancel_three_d(prompt_id, user)
 
 
 def _validate_filtered_delete(actual_count: int, expected_count: int, confirmed: bool) -> None:
@@ -762,6 +788,7 @@ def delete_vault_image(
     generation = get_image_generation_by_id(generation_id, user.id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
+    _cancel_active_generation(generation, "image", user)
 
     storage_file_id = generation.get("storage_file_id")
     if storage_file_id and not has_media_asset(storage_file_id, user.id):

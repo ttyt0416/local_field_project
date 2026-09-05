@@ -1233,16 +1233,11 @@ def _request_action(method: str, path: str, payload: dict[str, Any] | None = Non
 
 
 def cancel_comfy_generation(prompt_id: str) -> bool:
-    queue = _request_json("GET", "/queue")
-    running = queue.get("queue_running", [])
-    if any(isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id for item in running):
-        _request_action("POST", "/interrupt", {"prompt_id": prompt_id})
-        return True
-    pending = queue.get("queue_pending", [])
-    if any(isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id for item in pending):
-        _request_action("POST", "/queue", {"delete": [prompt_id]})
-        return True
-    return False
+    response = _request_json("POST", f"/api/jobs/{prompt_id}/cancel")
+    cancelled = response.get("cancelled")
+    if not isinstance(cancelled, bool):
+        raise _ComfyUIError("ComfyUI 취소 응답 형식이 올바르지 않습니다.")
+    return cancelled
 
 
 def _request_bytes(path: str) -> tuple[bytes, str | None]:

@@ -147,17 +147,21 @@ class ModelDownloadsTest(unittest.TestCase):
 
     def test_lookup_auto_changes_checkpoint_diffusion_and_lora_destinations(self) -> None:
         cases = (
-            ("Checkpoint", "Anima", "diffusion_model", "Anima"),
-            ("Checkpoint", "MiniMax H3", "diffusion_model", "MiniMaxH3"),
-            ("Checkpoint", "Illustrious", "checkpoint", "Illustrious"),
-            ("LORA", "Illustrious", "lora", "Illustrious"),
+            ("Checkpoint", "Anima", "checkpoint", "diffusion_model", "Anima"),
+            ("Checkpoint", "MiniMax H3", "checkpoint", "diffusion_model", "MiniMaxH3"),
+            ("Checkpoint", "LTXV", "checkpoint", "diffusion_model", "LTX"),
+            ("Checkpoint", "Illustrious", "checkpoint", "checkpoint", "Illustrious"),
+            ("LORA", "Illustrious", "checkpoint", "lora", "Illustrious"),
+            ("LORA", "LTXV", "checkpoint", "lora", "LTX"),
+            ("VAE", "LTXV", "vae", "vae", "LTX"),
+            ("TextEncoder", "LTXV", "text_encoder", "text_encoder", "LTX"),
         )
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            for folder in ("diffusion_models/Anima", "diffusion_models/MiniMaxH3", "checkpoints/Illustrious", "loras/Illustrious"):
+            for folder in ("diffusion_models/Anima", "diffusion_models/MiniMaxH3", "diffusion_models/LTX", "checkpoints/Illustrious", "loras/Illustrious", "loras/LTX", "text_encoders/LTX", "vae/LTX"):
                 (root / folder).mkdir(parents=True)
             with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
-                for civitai_type, base_model, expected_type, expected_folder in cases:
+                for civitai_type, base_model, fallback_type, expected_type, expected_folder in cases:
                     version = CivitaiVersion(
                         version_id=1,
                         model_id=None,
@@ -167,7 +171,7 @@ class ModelDownloadsTest(unittest.TestCase):
                         base_model=base_model,
                         files=(CivitaiFile("model.safetensors", "Model", "https://civitai.com/file", 1, None, True),),
                     )
-                    response = _lookup_response(version, _detected_model_type(version) or "checkpoint", 0, (version,))
+                    response = _lookup_response(version, _detected_model_type(version) or cast(ModelType, fallback_type), 0, (version,))
                     self.assertEqual(response.target_model_type, expected_type)
                     self.assertEqual(response.suggested_subfolder, expected_folder)
 

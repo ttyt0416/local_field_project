@@ -6,6 +6,6 @@
 
 `GET /generation/3d/options`는 static workflow의 node type과 필요한 INT8 TRELLIS.2, DINOv3 vision, shape/texture VAE, BiRefNet filename이 live ComfyUI `/object_info`에 노출되는지 확인한다. classic combo와 Comfy `COMBO.options` schema를 모두 처리한다.
 
-status·SSE stage는 `queued`, `background_cleanup`, `structure`, `shape`, `texture`, `mesh`, `storage`, `completed` 순서다. global diffusion percentage를 stage 전체 진행률로 오인하지 않으며 Comfy KSampler가 제공한 값만 `progress`로 전달한다. cancel은 공통 Comfy queue delete·targeted interrupt를 재사용한다.
+status·SSE stage는 `queued`, `background_cleanup`, `structure`, `shape`, `texture`, `mesh`, `storage`, `completed` 순서다. global diffusion percentage를 stage 전체 진행률로 오인하지 않으며 Comfy KSampler가 제공한 값만 `progress`로 전달한다. cancel은 공통 ComfyUI `POST /api/jobs/{prompt_id}/cancel`을 사용하며, target job이 실행 중이면 interrupt하고 pending이면 dequeue한다.
 
 완료 history의 `outputs[*].3d`에서 `.glb`만 수집한다. `/view` 바이트의 GLB magic `glTF`를 확인한 뒤 `model/gltf-binary` MIME으로 Storage에 업로드하고 DB row를 완료한다. GLB가 없거나 magic이 다르면 성공으로 기록하지 않는다. 결과 mesh가 watertight 또는 3D printing-ready임을 보장하지 않는다.

@@ -177,21 +177,14 @@ class VideoContractTest(unittest.TestCase):
             "<Picture 1> <Video 2> <Audio 3>",
         )
 
-    def test_cancel_running_comfy_prompt_uses_targeted_interrupt(self) -> None:
-        with (
-            patch("app.comfyui._request_json", return_value={"queue_running": [["item", "prompt-1"]], "queue_pending": []}),
-            patch("app.comfyui._request_action") as request_action,
-        ):
+    def test_cancel_comfy_prompt_uses_targeted_job_cancel(self) -> None:
+        with patch("app.comfyui._request_json", return_value={"cancelled": True}) as request_json:
             self.assertTrue(cancel_comfy_generation("prompt-1"))
-        request_action.assert_called_once_with("POST", "/interrupt", {"prompt_id": "prompt-1"})
+        request_json.assert_called_once_with("POST", "/api/jobs/prompt-1/cancel")
 
-    def test_cancel_pending_comfy_prompt_deletes_only_target(self) -> None:
-        with (
-            patch("app.comfyui._request_json", return_value={"queue_running": [], "queue_pending": [["item", "prompt-2"]]}),
-            patch("app.comfyui._request_action") as request_action,
-        ):
-            self.assertTrue(cancel_comfy_generation("prompt-2"))
-        request_action.assert_called_once_with("POST", "/queue", {"delete": ["prompt-2"]})
+    def test_cancel_comfy_prompt_preserves_comfy_noop(self) -> None:
+        with patch("app.comfyui._request_json", return_value={"cancelled": False}):
+            self.assertFalse(cancel_comfy_generation("prompt-2"))
 
         requests = {
             "i2v": video.VideoGenerationRequest(

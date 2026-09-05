@@ -549,11 +549,11 @@ def _detected_model_type(version: CivitaiVersion) -> ModelType | None:
     if version_type != "checkpoint":
         return None
     base_model = _normalized_label(version.base_model or "")
-    return "diffusion_model" if "anima" in base_model or "minimax" in base_model else "checkpoint"
+    return "diffusion_model" if any(family in base_model for family in ("anima", "minimax", "ltx")) else "checkpoint"
 
 
 def _suggested_subfolder(model_type: ModelType, base_model: str | None) -> str:
-    family = next((name for name in ("anima", "minimax", "illustrious") if name in _normalized_label(base_model or "")), None)
+    family = next((name for name in ("anima", "minimax", "illustrious", "ltx") if name in _normalized_label(base_model or "")), None)
     if family is None:
         return ""
     try:

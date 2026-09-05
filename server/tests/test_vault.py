@@ -269,6 +269,60 @@ class VaultRouteTest(unittest.TestCase):
         list_filtered.assert_called_once_with(self.user.id, search="portrait", favorites_only=True)
         delete_rows.assert_called_once_with(generation_ids, self.user.id)
 
+    def test_vault_delete_cancels_active_image_video_and_three_d(self) -> None:
+        cases = (
+            (
+                vault.delete_vault_image,
+                "get_image_generation_by_id",
+                "delete_image_generation",
+                "cancel_image_generation",
+                {"status": "queued", "prompt_id": "image-prompt"},
+                ("image-prompt", self.user),
+            ),
+            (
+                vault.delete_vault_video,
+                "get_video_generation_by_id",
+                "delete_video_generation",
+                "cancel_video_generation",
+                {"status": "processing", "prompt_id": "video-prompt", "mode": "i2v"},
+                ("i2v", "video-prompt", self.user),
+            ),
+            (
+                vault.delete_vault_three_d,
+                "get_three_d_generation_by_id",
+                "delete_three_d_generation",
+                "cancel_three_d",
+                {"status": "queued", "prompt_id": "three-d-prompt"},
+                ("three-d-prompt", self.user),
+            ),
+        )
+        for delete_route, get_name, delete_name, cancel_name, generation, cancel_args in cases:
+            with (
+                self.subTest(cancel_name=cancel_name),
+                patch.object(vault, get_name, return_value=generation),
+                patch.object(vault, delete_name, return_value=True) as delete_record,
+                patch.object(vault, cancel_name) as cancel,
+            ):
+                response = delete_route(uuid4(), self.user)
+
+            self.assertEqual(response.status_code, 204)
+            cancel.assert_called_once_with(*cancel_args)
+            delete_record.assert_called_once()
+
+    def test_filtered_video_delete_cancels_active_generation(self) -> None:
+        generation_id = uuid4()
+        row = {"id": generation_id, "status": "queued", "prompt_id": "video-prompt", "mode": "r2v", "storage_file_id": None}
+        with (
+            patch.object(vault, "list_filtered_video_generations", return_value=[row]),
+            patch.object(vault, "cancel_video_generation") as cancel,
+            patch.object(vault, "delete_video_generations", return_value=1) as delete_rows,
+        ):
+            result = vault.delete_filtered_vault_videos("", False, 1, True, self.user)
+
+        self.assertEqual(result.deleted_count, 1)
+        cancel.assert_called_once_with("r2v", "video-prompt", self.user)
+        delete_rows.assert_called_once_with([generation_id], self.user.id)
+
     def test_bulk_storage_failure_keeps_database_rows(self) -> None:
         generation_id = uuid4()
         stored = [{"storage_file_id": "file-1"}]
