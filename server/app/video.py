@@ -76,17 +76,14 @@ _VBVR_LORA = "MiniMax/VBVR_H3_attn_only.safetensors"
 _VIDEO_CHECKPOINTS = {
     "i2v": {
         "eros": _EROS_CHECKPOINT,
-        "minimax": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "dasiwa": _DASIWA_CHECKPOINT,
     },
     "fl2v": {
         "eros": _EROS_CHECKPOINT,
-        "minimax": "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "dasiwa": _DASIWA_CHECKPOINT,
     },
     "r2v": {
         "eros": _EROS_CHECKPOINT,
-        "minimax": "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "dasiwa": _DASIWA_CHECKPOINT,
     },
 }
@@ -462,9 +459,9 @@ def _sse_message(event_name: str, data: dict[str, Any]) -> str:
 def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOptions:
     available = set(_node_choices(_request_json("GET", "/object_info"), "UNETLoader", "unet_name"))
     checkpoints = [checkpoint for checkpoint in _VIDEO_CHECKPOINTS[mode].values() if checkpoint in available]
-    default_checkpoint = _VIDEO_CHECKPOINTS[mode]["minimax"]
+    default_checkpoint = _DASIWA_CHECKPOINT
     if default_checkpoint not in checkpoints:
-        raise _ComfyUIError("기본 MiniMax 영상 checkpoint를 ComfyUI에서 찾을 수 없습니다.")
+        raise _ComfyUIError("기본 Dasiwa 영상 checkpoint를 ComfyUI에서 찾을 수 없습니다.")
     return VideoGenerationOptions(mode=mode, checkpoints=checkpoints, default_checkpoint=default_checkpoint)
 
 
@@ -477,7 +474,7 @@ def _validated_video_checkpoint(mode: Literal["i2v", "fl2v", "r2v"], checkpoint:
 
 
 def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
-    model = _VIDEO_CHECKPOINT_MODELS.get(checkpoint or _VIDEO_CHECKPOINTS[mode]["minimax"])
+    model = _VIDEO_CHECKPOINT_MODELS.get(checkpoint or _DASIWA_CHECKPOINT)
     selected = _VIDEO_CHECKPOINTS.get(mode, {}).get(model or "")
     if selected is None:
         raise _ComfyUIError("영상 checkpoint 구성이 올바르지 않습니다.")

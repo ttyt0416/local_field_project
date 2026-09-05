@@ -20,6 +20,12 @@ export const imagePresetCategories: { value: ImagePresetType; label: string; gen
 ];
 export type PresetType = ImagePresetType | 'video';
 export type VideoMode = 'i2v' | 'fl2v' | 'r2v';
+export type VideoModelFamily = 'minimax' | 'ltx';
+// ponytail: LTX stays visible but disabled until its video UNET and workflow are installed.
+export const videoModelFamilyTabs: { value: VideoModelFamily; label: string; disabled?: boolean }[] = [
+	{ value: 'minimax', label: 'MINIMAX' },
+	{ value: 'ltx', label: 'LTX', disabled: true }
+];
 export type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 export type LoraSelection = { name: string; strength: number };
 

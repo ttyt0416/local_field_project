@@ -22,7 +22,7 @@
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
-	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues, type VideoGenerationOptions } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, videoModelFamilyTabs, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues, type VideoGenerationOptions, type VideoModelFamily } from '$lib/types/presets';
 
 	type AssetRef = { kind: 'image' | 'audio' | 'video'; file_id?: string; file_index?: number };
 	type SelectionTarget = 'first' | 'last' | 'images' | 'videos' | 'audios';
@@ -72,6 +72,7 @@
 
 	let ready = $state(false);
 	let mode = $state<VideoMode>('i2v');
+	let videoModelFamily = $state<VideoModelFamily>('minimax');
 	let checkpoint = $state('');
 	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '' });
 	let videoOptionsLoading = $state(false);
@@ -970,7 +971,8 @@
 							</IconOutlinedButton>
 						</div>
 					</div>
-					<Tab items={modeTabs} bind:value={mode} ariaLabel="동영상 생성 방식" onselect={selectMode} class="mt-5" />
+					<Tab items={videoModelFamilyTabs} bind:value={videoModelFamily} ariaLabel="동영상 모델 family" class="mt-5" />
+					<Tab items={modeTabs} bind:value={mode} ariaLabel="동영상 생성 방식" onselect={selectMode} class="mt-3" />
 					<p class="mt-2 text-xs text-muted-foreground">{modes.find((item) => item.value === mode)?.description}</p>
 					<div class="mt-4 space-y-2">
 						<span class="text-sm font-medium">체크포인트</span>

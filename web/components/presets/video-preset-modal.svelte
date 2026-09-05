@@ -4,9 +4,10 @@
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
 	import Select from '../inputs/select.svelte';
+	import Tab from '../tabs/tab.svelte';
 	import { apiJson } from '$lib/utils/api';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
-	import type { Preset, PresetValues, VideoGenerationOptions, VideoMode } from '$lib/types/presets';
+	import { videoModelFamilyTabs, type Preset, type PresetValues, type VideoGenerationOptions, type VideoMode, type VideoModelFamily } from '$lib/types/presets';
 
 	type PresetField = 'prompt' | 'mode' | 'checkpoint' | 'size' | 'duration' | 'fps' | 'seed';
 	type Props = {
@@ -39,6 +40,7 @@
 	let presetName = $state('');
 	let prompt = $state('');
 	let videoMode = $state<VideoMode>('i2v');
+	let videoModelFamily = $state<VideoModelFamily>('minimax');
 	let checkpoint = $state('');
 	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '' });
 	let videoOptionsLoading = $state(false);
@@ -167,7 +169,7 @@
 		<div class="space-y-3"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">저장할 설정</span><span class="text-xs text-muted-foreground">{selectedFieldCount()}개 선택</span></div><div class="grid gap-2 sm:grid-cols-2">{#each fieldOptions as field}<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted"><input type="checkbox" checked={selectedFields[field.key]} onchange={(event) => toggleField(field.key, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" /><span>{field.label}</span></label>{/each}</div></div>
 		{#if selectedFields.prompt}<label class="block space-y-2" for="video-preset-prompt"><span class="text-sm font-medium">프롬프트</span><textarea id="video-preset-prompt" bind:value={prompt} rows="4" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if selectedFields.mode}<Select id="video-preset-mode" label="생성 방식" options={videoModeOptions} bind:value={videoMode} />{/if}
-		{#if selectedFields.checkpoint}<div class="space-y-2"><span class="text-sm font-medium">체크포인트</span><button type="button" onclick={() => (checkpointModalOpen = true)} disabled={videoOptionsLoading || videoOptions.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="min-w-0 truncate">{videoOptionsLoading ? '체크포인트 목록을 불러오는 중' : checkpoint || '체크포인트를 선택해 주세요'}</span><span class="shrink-0 text-xs font-semibold text-primary">선택</span></button></div>{/if}
+		{#if selectedFields.checkpoint}<div class="space-y-2"><span class="text-sm font-medium">체크포인트</span><Tab items={videoModelFamilyTabs} bind:value={videoModelFamily} ariaLabel="동영상 모델 family" /><button type="button" onclick={() => (checkpointModalOpen = true)} disabled={videoOptionsLoading || videoOptions.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="min-w-0 truncate">{videoOptionsLoading ? '체크포인트 목록을 불러오는 중' : checkpoint || '체크포인트를 선택해 주세요'}</span><span class="shrink-0 text-xs font-semibold text-primary">선택</span></button></div>{/if}
 		{#if selectedFields.size}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-width"><span class="text-sm font-medium">가로</span><input id="video-preset-width" type="number" min="32" max="1344" step="32" bind:value={width} class={numberInputClass} /></label><label class="block space-y-2" for="video-preset-height"><span class="text-sm font-medium">세로</span><input id="video-preset-height" type="number" min="32" max="1344" step="32" bind:value={height} class={numberInputClass} /></label></div>{/if}
 		{#if selectedFields.duration}<label class="block space-y-2" for="video-preset-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-preset-duration" type="number" step="0.1" bind:value={duration} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.fps}<label class="block space-y-2" for="video-preset-fps"><span class="text-sm font-medium">FPS</span><input id="video-preset-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={numberInputClass} /></label>{/if}

@@ -17,19 +17,19 @@ class VideoContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.user = UserResponse(id=uuid4(), username="tester")
 
-    def test_video_workflows_chain_vbvr_and_mode_turbo_on_minimax_bases(self) -> None:
+    def test_video_workflows_default_to_dasiwa_and_keep_mode_turbo(self) -> None:
         workflows = Path(video.__file__).with_name("workflows")
         expected = {
             "video_i2v.json": (
-                "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                video._DASIWA_CHECKPOINT,
                 "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
             ),
             "video_fl2v.json": (
-                "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                video._DASIWA_CHECKPOINT,
                 "MiniMax/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
             ),
             "video_r2v.json": (
-                "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                video._DASIWA_CHECKPOINT,
                 "MiniMax/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
             ),
         }
@@ -47,21 +47,21 @@ class VideoContractTest(unittest.TestCase):
             self.assertEqual(sampler["inputs"]["sampler_name"], "res_multistep")
             self.assertEqual(scheduler["inputs"], {"model": [loras[1][0], 0], "scheduler": "simple", "steps": 4, "denoise": 1})
 
-    def test_video_checkpoint_options_are_mode_filtered_and_default_to_minimax(self) -> None:
+    def test_video_checkpoint_options_exclude_general_minimax_and_default_to_dasiwa(self) -> None:
         available = [
             video._EROS_CHECKPOINT,
-            video._VIDEO_CHECKPOINTS["i2v"]["minimax"],
-            video._VIDEO_CHECKPOINTS["r2v"]["minimax"],
             video._DASIWA_CHECKPOINT,
+            "MiniMaxH3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+            "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         ]
         object_info = {"UNETLoader": {"input": {"required": {"unet_name": [available]}}}}
         with patch.object(video, "_request_json", return_value=object_info):
             options = video._video_options("r2v")
             with self.assertRaises(video.HTTPException):
-                video._validated_video_checkpoint("r2v", video._VIDEO_CHECKPOINTS["i2v"]["minimax"])
+                video._validated_video_checkpoint("r2v", "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors")
 
-        self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._VIDEO_CHECKPOINTS["r2v"]["minimax"], video._DASIWA_CHECKPOINT])
-        self.assertEqual(options.default_checkpoint, video._VIDEO_CHECKPOINTS["r2v"]["minimax"])
+        self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._DASIWA_CHECKPOINT])
+        self.assertEqual(options.default_checkpoint, video._DASIWA_CHECKPOINT)
 
     def test_eros_checkpoint_removes_turbo_lora_and_uses_six_steps(self) -> None:
         request = video.VideoGenerationRequest(
@@ -81,14 +81,14 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(scheduler["inputs"]["model"], [loras[0][0], 0])
         self.assertEqual(scheduler["inputs"]["steps"], 6)
 
-    def test_continuation_resolves_minimax_profile_to_its_mode_base(self) -> None:
-        model, checkpoint = video._workflow_checkpoint("r2v", video._VIDEO_CHECKPOINTS["i2v"]["minimax"])
-        dasiwa_model, dasiwa_checkpoint = video._workflow_checkpoint("r2v", video._DASIWA_CHECKPOINT)
+    def test_continuation_defaults_to_and_keeps_dasiwa_profile(self) -> None:
+        default_model, default_checkpoint = video._workflow_checkpoint("r2v", None)
+        selected_model, selected_checkpoint = video._workflow_checkpoint("r2v", video._DASIWA_CHECKPOINT)
 
-        self.assertEqual(model, "minimax")
-        self.assertEqual(checkpoint, video._VIDEO_CHECKPOINTS["r2v"]["minimax"])
-        self.assertEqual(dasiwa_model, "dasiwa")
-        self.assertEqual(dasiwa_checkpoint, video._DASIWA_CHECKPOINT)
+        self.assertEqual(default_model, "dasiwa")
+        self.assertEqual(default_checkpoint, video._DASIWA_CHECKPOINT)
+        self.assertEqual(selected_model, "dasiwa")
+        self.assertEqual(selected_checkpoint, video._DASIWA_CHECKPOINT)
 
     def test_dasiwa_checkpoint_keeps_vbvr_and_mode_turbo_loras(self) -> None:
         requests = {
