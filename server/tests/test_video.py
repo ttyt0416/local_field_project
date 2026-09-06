@@ -603,18 +603,35 @@ class VideoContractTest(unittest.TestCase):
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt))
         self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt.replace("動き", "move", 1)))
 
-    def test_video_prompt_requires_first_structured_shot_at_zero(self) -> None:
-        with self.assertRaises(video._VLLMError):
-            video._validate_video_prompt_fields(
-                {
-                    "shots": [{"start_ms": 1, **{field: "concrete instruction" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
-                    "overall_soundscape": "quiet ambience",
-                    "non_diegetic_music": "N/A",
-                    "negative": "no subtitles",
-                },
-                video._video_prompt_pattern(["en"]),
-                duration=5,
-            )
+    def test_video_prompt_does_not_revalidate_structured_shot_order(self) -> None:
+        plan = {
+            "shots": [
+                {"start_ms": 3000, **{field: "first model shot" for field in video._VIDEO_PROMPT_SHOT_FIELDS}},
+                {"start_ms": 1000, **{field: "second model shot" for field in video._VIDEO_PROMPT_SHOT_FIELDS}},
+            ],
+            "overall_soundscape": "quiet ambience",
+            "non_diegetic_music": "N/A",
+            "negative": "no subtitles",
+        }
+        payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
+        with patch.object(video, "_request_structured_object", return_value=plan):
+            result = video._enhance_video_prompt(payload)
+        self.assertIn("[Shot 1] first model shot", result.improved_prompt.contents)
+        self.assertIn("[Shot 2] At 00:01.000, second model shot", result.improved_prompt.contents)
+
+    def test_video_prompt_schema_bounds_assembled_response_length(self) -> None:
+        for duration in (1, 5, 10):
+            schema = video._video_prompt_fields_schema(video._video_prompt_pattern(["en"]), duration)
+            shot_schema = schema["properties"]["shots"]
+            field_max_length = shot_schema["items"]["properties"]["style"]["maxLength"]
+            plan = {
+                "shots": [
+                    {"start_ms": index, **{field: "x" * field_max_length for field in video._VIDEO_PROMPT_SHOT_FIELDS}}
+                    for index in range(shot_schema["maxItems"])
+                ],
+                **{field: "x" * field_max_length for field in video._VIDEO_PROMPT_OVERALL_FIELDS},
+            }
+            self.assertLessEqual(len(video._assemble_video_prompt(plan)), 5000)
 
     def test_video_prompt_enhancement_uses_selected_languages_and_pattern(self) -> None:
         languages: list[Literal["ko", "en", "ja"]] = ["ko", "en"]
@@ -642,7 +659,7 @@ class VideoContractTest(unittest.TestCase):
         with patch.object(video, "_request_structured_object", return_value=plan) as request:
             result = video._enhance_video_prompt(payload)
 
-        expected = video._assemble_video_prompt(plan, languages)
+        expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
