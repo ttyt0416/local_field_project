@@ -1217,36 +1217,9 @@ def _request_json(method: str, path: str, payload: dict[str, Any] | None = None)
     return decoded
 
 
-def _request_action(method: str, path: str, payload: dict[str, Any] | None = None) -> None:
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    request = UrlRequest(
-        _comfy_url(path),
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method=method,
-    )
-    try:
-        with urlopen(request, timeout=_COMFYUI_TIMEOUT_SECONDS):
-            return
-    except UrlHTTPError as exc:
-        raise _ComfyUIError(f"ComfyUI 작업 요청이 실패했습니다. (HTTP {exc.code})") from exc
-    except (URLError, TimeoutError) as exc:
-        raise _ComfyUIError("ComfyUI 작업 요청에 연결할 수 없습니다.") from exc
-
-
 def cancel_comfy_generation(prompt_id: str) -> bool:
-    queue = _request_json("GET", "/queue")
-    queued_or_running = any(
-        isinstance(entry, (list, tuple)) and len(entry) > 1 and entry[1] == prompt_id
-        for queue_name in ("queue_running", "queue_pending")
-        for entry in queue.get(queue_name, [])
-        if isinstance(queue.get(queue_name), list)
-    )
-    if not queued_or_running:
-        return False
-    _request_action("POST", "/queue", {"delete": [prompt_id]})
-    _request_action("POST", "/interrupt", {"prompt_id": prompt_id})
-    return True
+    response = _request_json("POST", f"/api/jobs/{prompt_id}/cancel")
+    return response.get("cancelled") is True
 
 
 def _request_bytes(path: str) -> tuple[bytes, str | None]:

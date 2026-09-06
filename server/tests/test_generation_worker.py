@@ -7,6 +7,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from app import comfyui, generation_worker, three_d, video
+from app.configs.constants import DEFAULT_COMFYUI_URL
 from app.generation_events import GenerationEventBroker, generation_event_broker, generation_key
 
 
@@ -88,7 +89,7 @@ class GenerationWorkerTest(unittest.TestCase):
     def test_comfy_progress_websocket_uses_client_id_query(self) -> None:
         self.assertEqual(
             comfyui._comfy_websocket_url("client id"),
-            "ws://host.docker.internal:8188/ws?clientId=client+id",
+            f"{DEFAULT_COMFYUI_URL.replace('http://', 'ws://')}/ws?clientId=client+id",
         )
 
     def test_broker_pushes_events_to_a_generation_subscriber(self) -> None:

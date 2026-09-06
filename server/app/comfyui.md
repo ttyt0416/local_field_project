@@ -4,7 +4,7 @@
 
 Storage가 설정된 생성 결과는 만료 읽기 URL을 사용한다. 기존 생성 데이터나 Storage 설정이 없는 환경은 기존 Local Field 이미지 프록시를 사용해 개발 환경과 기존 데이터를 유지한다. 이미지 조회 endpoint도 Storage 파일 ID가 있으면 서명 URL로 임시 리다이렉트한다.
 
-Image·video·3D cancel endpoint는 소유권을 확인한 뒤 live Comfy queue에서 target을 확인하고, `POST /queue`의 target delete와 `POST /interrupt`의 target interrupt를 순서대로 호출한다. 따라서 pending 작업은 dequeue하고 running 작업은 interrupt하며, unknown 또는 terminal ID는 기존처럼 no-op이다. DB, SSE, 전역 job store가 모두 `cancelled` terminal 상태를 사용해 polling과 대기 promise를 종료한다.
+Image·video·3D cancel endpoint는 isolated job manager의 `POST /api/jobs/{prompt_id}/cancel`을 호출한다. pending job은 manager queue에서 제거되고, running job은 해당 worker process group만 종료한다. unknown 또는 terminal ID는 no-op이며 DB, SSE, 전역 job store는 `cancelled` terminal 상태를 사용해 polling과 대기 promise를 종료한다.
 
 Video와 3D API workflow는 direct `0` `easy cleanGpuUsed` output node로 시작한다. 각 builder는 node `0`의 `is_changed`만 request마다 바꿔 fixed user seed에서도 cleanup output cache를 재사용하지 않는다. ComfyUI는 ready output node를 우선 실행하므로 heavy model loader 전에 unused model, CUDA cache, Easy-Use cache를 비운다.
 
