@@ -16,6 +16,7 @@
 	import SearchBar from '../../../components/inputs/searchbar.svelte';
 	import Tab from '../../../components/tabs/tab.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
@@ -52,6 +53,8 @@
 
 	type VaultVideo = {
 		id: string;
+		prompt_id: string;
+		client_id: string;
 		media_type: string;
 		mode: 'i2v' | 'fl2v' | 'r2v';
 		fps: number;
@@ -167,6 +170,7 @@
 			await goto('/login');
 			return;
 		}
+		await generationJobStore.initialize();
 		try {
 			const params = new URLSearchParams({ sort, page: String(requestedPage) });
 			const query = searchQuery.trim();
@@ -491,6 +495,11 @@
 	function statusLabel(status: string) {
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패', cancelled: '취소됨' }[status] ?? status;
 	}
+
+	function activeVideoJob(video: VaultVideo) {
+		const job = generationJobStore.jobs[`video:${video.prompt_id}`];
+		return job?.status === 'queued' || job?.status === 'processing' ? job : undefined;
+	}
 </script>
 
 <svelte:head>
@@ -663,16 +672,19 @@
 				{:else}
 					<section class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
 						{#each videos as video (video.id)}
+							{@const job = activeVideoJob(video)}
 							<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
 								<div class="relative aspect-video bg-muted">
-									{#if video.video_url}<VideoMedia source={video.video_url} sourceType="server" preview={false} muted={false} class="h-full" />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">영상 준비 중</div>{/if}
+									{#if job}
+										<div class="flex h-full flex-col items-center justify-center gap-3 px-5 text-center"><LoadingSpinner size="sm" label="영상 생성 중" /><p class="text-sm font-medium text-foreground">{statusLabel(job.status)} · {Math.round(job.progress)}%</p><div class="h-2 w-full overflow-hidden rounded-full bg-muted-foreground/20"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${Math.round(job.progress)}%`}></div></div><p class="text-xs text-muted-foreground">경과 {formatElapsedSeconds(generationJobStore.elapsedSeconds(job, generationJobStore.now))}{#if job.queuePosition !== null} · 대기 {job.queuePosition}번째{/if}</p></div>
+									{:else if video.video_url}<VideoMedia source={video.video_url} sourceType="server" preview={false} muted={false} class="h-full" />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">영상 준비 중</div>{/if}
 								</div>
 								<div class="space-y-3 p-4">
 									<a href={`/vault/videos/${video.id}`} aria-label={`${video.prompt || videoModeLabel(video.mode)} 콘텐츠 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{videoModeLabel(video.mode)} · {statusLabel(video.status)}</span><span>{formatKstDateTime(video.created_at)}</span></div>
+										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{videoModeLabel(video.mode)} · {statusLabel(job?.status ?? video.status)}</span><span>{formatKstDateTime(video.created_at)}</span></div>
 										<p class="line-clamp-2 text-sm leading-5 text-foreground transition hover:text-primary">{video.prompt}</p>
 									</a>
-									<div class="flex items-center justify-between gap-3"><span class="text-xs text-muted-foreground">FPS {video.fps} · 소요 {formatElapsedSeconds(video.elapsed_seconds)} · 조회 {video.view_count}</span><div class="flex gap-2"><IconOutlinedButton ariaLabel="영상 다운로드" loading={downloadingId === video.id} disabled={!video.video_url} onclick={() => void downloadVideo(video)}><Download size={17} strokeWidth={1.9} /></IconOutlinedButton><IconOutlinedButton variant="filled" ariaLabel={video.is_favorite ? '영상 즐겨찾기 해제' : '영상 즐겨찾기 추가'} pressed={video.is_favorite} loading={videoFavoriteUpdatingId === video.id} class={video.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} onclick={() => void toggleFavoriteVideo(video)}><Heart size={17} strokeWidth={1.9} fill={video.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton><IconOutlinedButton ariaLabel="영상 콘텐츠 삭제" loading={videoDeletingId === video.id} variant="destructive" onclick={() => requestDeleteVideo(video)}><Trash2 size={17} strokeWidth={2} /></IconOutlinedButton></div></div>
+									<div class="flex items-center justify-between gap-3"><span class="text-xs text-muted-foreground">FPS {video.fps} · 소요 {formatElapsedSeconds(job ? generationJobStore.elapsedSeconds(job, generationJobStore.now) : video.elapsed_seconds)} · 조회 {video.view_count}</span><div class="flex gap-2"><IconOutlinedButton ariaLabel="영상 다운로드" loading={downloadingId === video.id} disabled={!video.video_url} onclick={() => void downloadVideo(video)}><Download size={17} strokeWidth={1.9} /></IconOutlinedButton><IconOutlinedButton variant="filled" ariaLabel={video.is_favorite ? '영상 즐겨찾기 해제' : '영상 즐겨찾기 추가'} pressed={video.is_favorite} loading={videoFavoriteUpdatingId === video.id} class={video.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} onclick={() => void toggleFavoriteVideo(video)}><Heart size={17} strokeWidth={1.9} fill={video.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton><IconOutlinedButton ariaLabel="영상 콘텐츠 삭제" loading={videoDeletingId === video.id} variant="destructive" onclick={() => requestDeleteVideo(video)}><Trash2 size={17} strokeWidth={2} /></IconOutlinedButton></div></div>
 								</div>
 							</article>
 						{/each}

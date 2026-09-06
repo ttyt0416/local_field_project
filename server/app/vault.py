@@ -8,7 +8,7 @@ from urllib.parse import quote, urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from .auth import UserResponse, current_user
 from .comfyui import _request_bytes, cancel_image_generation
@@ -51,7 +51,16 @@ from .storage import (
 )
 from .media_editing import MediaEditError, edit_video
 from .three_d import cancel_three_d
-from .video import cancel_video_generation
+from .video import (
+    VideoAsset,
+    VideoGenerationAccepted,
+    VideoGenerationRequest,
+    VideoLoraSelection,
+    _generation_aspect_ratio,
+    _rounded_megapixels,
+    cancel_video_generation,
+    create_video,
+)
 
 
 router = APIRouter(prefix="/vault", tags=["vault"])
@@ -117,6 +126,8 @@ class VaultImagePage(BaseModel):
 
 class VaultVideoSummary(BaseModel):
     id: UUID
+    prompt_id: str = ""
+    client_id: str = ""
     media_type: str
     mode: str
     fps: float
@@ -241,6 +252,10 @@ class VideoEditRequest(BaseModel):
 
 class VideoEditResponse(BaseModel):
     generation_id: UUID
+
+
+class VaultVideoUpscaleRequest(BaseModel):
+    target_megapixels: float = Field(gt=0)
 
 
 @router.get("/3d", response_model=VaultThreeDPage)
@@ -453,6 +468,57 @@ def edit_vault_video(
             pass
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
     return VideoEditResponse(generation_id=edited_id)
+
+
+@router.post("/videos/{generation_id}/upscale", response_model=VideoGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
+async def upscale_vault_video(
+    generation_id: UUID,
+    payload: VaultVideoUpscaleRequest,
+    user: UserResponse = Depends(current_user),
+) -> VideoGenerationAccepted:
+    generation = get_video_generation_by_id(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
+    if generation["status"] != "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="완료된 영상만 업스케일할 수 있습니다.")
+    storage_file_id = generation.get("storage_file_id")
+    if not isinstance(storage_file_id, str) or not storage_file_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="업스케일할 영상 파일을 찾을 수 없습니다.")
+
+    source_megapixels = _vault_video_output_megapixels(generation)
+    stored_loras = [VideoLoraSelection.model_validate(value) for value in generation.get("loras", []) if isinstance(value, dict)]
+    input_prompts = _video_prompt_list(generation.get("input_segment_prompts"))
+    improved_prompts = _video_prompt_list(generation.get("improved_segment_prompts"))
+    segment_durations = generation.get("segment_durations")
+    duration = sum(value for value in segment_durations if isinstance(value, (int, float)) and value > 0) if isinstance(segment_durations, list) else 0
+    if duration <= 0:
+        duration = float(generation.get("length") or 0) / max(float(generation.get("fps") or 24), 1)
+    try:
+        request = VideoGenerationRequest(
+            prompt=str(generation.get("prompt") or ""),
+            checkpoint=generation.get("checkpoint") or None,
+            loras=stored_loras,
+            prompt_enhancement_enabled=bool(improved_prompts),
+            improved_prompt=improved_prompts[0] if improved_prompts else None,
+            segment_prompts=input_prompts,
+            improved_segment_prompts=improved_prompts,
+            aspect_ratio=_generation_aspect_ratio(generation),
+            megapixels=source_megapixels,
+            upscale_mode="learned_3d",
+            target_megapixels=payload.target_megapixels,
+            duration=duration,
+            continuation_mode="i2v" if generation.get("continuation_mode") == "i2v" else "r2v",
+            fps=float(generation.get("fps") or 24),
+            steps=int(generation.get("steps") or 4),
+            use_pdd=False,
+            seed=generation.get("seed") if isinstance(generation.get("seed"), int) else None,
+            reference_videos=[VideoAsset(kind="video", file_id=storage_file_id)],
+            **({"sampler_name": generation["sampler_name"]} if generation.get("sampler_name") else {}),
+            **({"scheduler": generation["scheduler"]} if generation.get("scheduler") else {}),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target 메가픽셀은 현재 영상보다 커야 합니다.") from exc
+    return await create_video("r2v", request.model_dump_json(), [], user)
 
 
 @router.get("/3d/{generation_id}", response_model=VaultThreeDDetail)
@@ -882,6 +948,8 @@ def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool =
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultVideoSummary(
         id=generation["id"],
+        prompt_id=generation["prompt_id"],
+        client_id=generation["client_id"],
         media_type="video",
         mode=generation["mode"],
         fps=generation["fps"],
@@ -901,6 +969,13 @@ def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool =
 
 def _video_prompt_list(value: object) -> list[str]:
     return value if isinstance(value, list) and all(isinstance(item, str) for item in value) else []
+
+
+def _vault_video_output_megapixels(generation: dict) -> float:
+    target = generation.get("target_megapixels") if generation.get("upscale_mode") == "learned_3d" else generation.get("megapixels")
+    if isinstance(target, (int, float)) and target > 0:
+        return _rounded_megapixels(float(target))
+    return max(0.1, _rounded_megapixels(int(generation["width"]) * int(generation["height"]) / 1_000_000))
 
 
 def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultImageSummary:

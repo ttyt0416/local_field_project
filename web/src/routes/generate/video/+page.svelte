@@ -411,7 +411,7 @@
 		}, videoAspectRatioOptions[0].value);
 	}
 
-	function videoDimensions(ratio: VideoAspectRatio, requestedMegapixels: number, heightStep = 16): VideoDimensions | null {
+	function videoDimensions(ratio: VideoAspectRatio, requestedMegapixels: number, heightStep = 32): VideoDimensions | null {
 		if (!Number.isFinite(requestedMegapixels) || requestedMegapixels <= 0) return null;
 		const megapixels = roundedMegapixels(requestedMegapixels);
 		if (megapixels <= 0) return null;

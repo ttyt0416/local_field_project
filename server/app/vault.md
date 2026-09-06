@@ -6,7 +6,7 @@
 
 이미지 상세의 편집 버튼은 crop, 1.0x~3.0x 중앙 확대, 90도 단위 회전을 Canvas로 미리보고 `POST /vault/images/{generation_id}/edit`로 새 generation을 저장한다. `GET /vault/images/{generation_id}/source`는 편집용 인증 원본을 제공한다. `GET /vault/images/{generation_id}/download`와 `GET /vault/videos/{generation_id}/download`는 generation owner를 확인한 뒤 Local Field가 Storage bytes를 읽어 attachment response로 반환하므로 browser가 signed Storage URL을 직접 fetch하지 않는다. 이미지 lightbox의 확대·축소는 표시 크기만 변경한다.
 
-동영상 상세의 편집 버튼은 시작·종료 시간, crop 좌표, 90도 단위 회전을 입력받아 `POST /vault/videos/{generation_id}/edit`에서 FFmpeg로 새 H.264/AAC MP4를 저장한다. 모든 편집은 원본 generation과 Storage 파일을 보존한다.
+동영상 상세의 편집 버튼은 시작·종료 시간, crop 좌표, 90도 단위 회전을 입력받아 `POST /vault/videos/{generation_id}/edit`에서 FFmpeg로 새 H.264/AAC MP4를 저장한다. 모든 편집은 원본 generation과 Storage 파일을 보존한다. `POST /vault/videos/{generation_id}/upscale`은 완료된 owner-owned Storage MP4를 R2V reference로 재사용하고, 현재 output MP보다 큰 Target MP의 새 learned H3 latent upscale job을 queue한다. 이 route는 source를 pixel-space로 변환하지 않으며 PDD를 사용하지 않는다. Vault video summary/detail은 `prompt_id`와 `client_id`를 포함해 shared generation SSE progress를 연결한다.
 
 `DELETE /vault/images/bulk`와 단일·filtered 삭제 API는 기존 사용자 소유권·Storage 보존 규칙을 유지한다. 삭제 대상이 `queued` 또는 `processing`이면 image/video/3D의 기존 targeted Comfy cancel route를 먼저 완료한다. 취소에 실패하면 Storage와 DB를 유지한 채 delete를 실패시킨다. `DELETE /vault/images/filtered`와 `DELETE /vault/videos/filtered`는 현재 `search`·`favorites_only` 조건에 맞는 모든 page의 row를 snapshot으로 조회한다. `confirmed=true`와 화면에서 확인한 `expected_count`가 일치해야 삭제하며, 개수가 바뀌면 `409`로 중단한다.
 

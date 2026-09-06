@@ -118,7 +118,7 @@ _VIDEO_ASPECT_RATIOS: dict[VideoAspectRatio, tuple[int, int]] = {
     "9:16": (9, 16),
 }
 _VIDEO_WIDTH_STEP = 32
-_VIDEO_HEIGHT_STEP = 16
+_VIDEO_HEIGHT_STEP = 32
 _DEFAULT_VIDEO_SAMPLER = "res_multistep"
 _DEFAULT_VIDEO_SCHEDULER = "simple"
 _LEARNED_UPSCALE_MODE = "learned_3d"
@@ -1399,15 +1399,19 @@ def _generation_target_megapixels(generation: dict[str, Any]) -> float | None:
 
 
 def _keep_generation_dimensions(request: VideoGenerationRequest, generation: dict[str, Any]) -> VideoGenerationRequest:
-    request._execution_dimensions = (
+    base_dimensions = (
         int(generation.get("base_width") or generation["width"]),
         int(generation.get("base_height") or generation["height"]),
     )
+    if base_dimensions[0] % _VIDEO_WIDTH_STEP == 0 and base_dimensions[1] % _VIDEO_HEIGHT_STEP == 0:
+        request._execution_dimensions = base_dimensions
     if request.upscale_enabled:
-        request._target_execution_dimensions = (
+        target_dimensions = (
             int(generation.get("target_width") or generation["width"]),
             int(generation.get("target_height") or generation["height"]),
         )
+        if target_dimensions[0] % _VIDEO_WIDTH_STEP == 0 and target_dimensions[1] % _VIDEO_HEIGHT_STEP == 0:
+            request._target_execution_dimensions = target_dimensions
     return request
 
 

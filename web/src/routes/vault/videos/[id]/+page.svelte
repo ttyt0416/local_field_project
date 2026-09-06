@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Crop, Download, Heart, Save, Trash2, Video } from '@lucide/svelte';
+	import { ArrowLeft, Crop, Download, Heart, Save, Sparkles, Trash2, Video } from '@lucide/svelte';
 	import VideoMedia from '../../../../../components/media/video.svelte';
 	import VideoEditor from '../../../../../components/media/video-editor.svelte';
 	import LoadingSpinner from '../../../../../components/loadings/loading-spinner.svelte';
@@ -14,6 +14,7 @@
 	import Typography from '../../../../../components/typography/typography.svelte';
 	import VideoPresetModal from '../../../../../components/presets/video-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
@@ -21,6 +22,8 @@
 
 	type VaultVideoDetail = {
 		id: string;
+		prompt_id: string;
+		client_id: string;
 		media_type: string;
 		mode: 'i2v' | 'fl2v' | 'r2v';
 		fps: number;
@@ -59,6 +62,16 @@
 		file_size_bytes: number | null;
 	};
 
+	type VideoGenerationAccepted = {
+		prompt_id: string;
+		client_id: string;
+		generation_id: string;
+		mode: 'i2v' | 'fl2v' | 'r2v';
+		segment_count: number;
+		created_at: string;
+		elapsed_seconds: number;
+	};
+
 	let ready = $state(false);
 	let generation = $state<VaultVideoDetail | null>(null);
 	let error = $state('');
@@ -70,6 +83,15 @@
 	let editError = $state('');
 	let presetOpen = $state(false);
 	let presetSuccess = $state('');
+	let upscaleModalOpen = $state(false);
+	let upscaling = $state(false);
+	let targetMegapixels = $state(0.1);
+	let videoJobKey = $state('');
+	let videoJob = $derived(videoJobKey ? generationJobStore.jobs[videoJobKey] : undefined);
+	let videoStatus = $derived(videoJob?.status ?? generation?.status ?? '');
+	let videoProgress = $derived(videoJob?.progress ?? 0);
+	let videoElapsedSeconds = $derived(videoJob ? generationJobStore.elapsedSeconds(videoJob, generationJobStore.now) : generation?.elapsed_seconds ?? 0);
+	let videoActive = $derived(videoStatus === 'queued' || videoStatus === 'processing');
 
 	onMount(() => {
 		void loadDetail();
@@ -88,12 +110,33 @@
 			return;
 		}
 		try {
+			await generationJobStore.initialize();
 			generation = await apiJson<VaultVideoDetail>(`vault/videos/${generationId}`);
+			trackVideoJob(generation);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '동영상 상세 정보를 불러오지 못했습니다.';
 		} finally {
 			ready = true;
 		}
+	}
+
+	function trackVideoJob(video: VaultVideoDetail) {
+		if ((video.status !== 'queued' && video.status !== 'processing') || !video.prompt_id || !video.client_id) {
+			videoJobKey = '';
+			return;
+		}
+		videoJobKey = `video:${video.prompt_id}`;
+		if (generationJobStore.jobs[videoJobKey]) return;
+		generationJobStore.track({
+			kind: 'video',
+			promptId: video.prompt_id,
+			clientId: video.client_id,
+			generationId: video.id,
+			mode: video.mode,
+			status: video.status === 'processing' ? 'processing' : 'queued',
+			createdAt: Date.parse(video.created_at),
+			elapsedSeconds: video.elapsed_seconds
+		});
 	}
 
 	async function toggleFavorite() {
@@ -138,6 +181,40 @@
 		}
 	}
 
+	function outputMegapixels(video: VaultVideoDetail) {
+		const value = video.target_megapixels ?? video.megapixels ?? video.width * video.height / 1_000_000;
+		return Math.round(value * 10) / 10;
+	}
+
+	function openUpscaleModal() {
+		if (!generation || videoStatus !== 'completed') return;
+		targetMegapixels = Math.round((outputMegapixels(generation) + 0.1) * 10) / 10;
+		upscaleModalOpen = true;
+	}
+
+	async function upscaleVideo() {
+		if (!generation || upscaling) return;
+		const sourceMegapixels = outputMegapixels(generation);
+		if (!(Number(targetMegapixels) > sourceMegapixels)) {
+			error = 'Target 메가픽셀은 현재 영상보다 커야 합니다.';
+			return;
+		}
+		upscaling = true;
+		try {
+			const accepted = await apiJson<VideoGenerationAccepted>(`vault/videos/${generation.id}/upscale`, {
+				method: 'POST',
+				json: { target_megapixels: Number(targetMegapixels) }
+			});
+			upscaleModalOpen = false;
+			await goto(`/vault/videos/${accepted.generation_id}`);
+			await loadDetail();
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '영상 업스케일을 시작하지 못했습니다.';
+		} finally {
+			upscaling = false;
+		}
+	}
+
 	function presetValues(): PresetValues {
 		if (!generation) return {};
 		return {
@@ -162,7 +239,7 @@
 	}
 
 	function statusLabel(status: string) {
-		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패' }[status] ?? status;
+		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패', cancelled: '취소됨' }[status] ?? status;
 	}
 </script>
 
@@ -191,7 +268,9 @@
 			<div class="grid min-w-0 max-w-full gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
 				<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="relative overflow-hidden rounded-xl bg-black">
-						{#if generation.video_url}
+						{#if videoActive}
+							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 px-5 text-center sm:min-h-[36rem]"><LoadingSpinner size="lg" label="영상 생성 중" /><p class="text-sm font-medium text-foreground">{statusLabel(videoStatus)} · {Math.round(videoProgress)}%</p><div class="h-2 w-full max-w-md overflow-hidden rounded-full bg-muted-foreground/20"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${Math.round(videoProgress)}%`}></div></div><p class="text-sm text-muted-foreground">경과 {formatElapsedSeconds(videoElapsedSeconds)}{#if videoJob?.queuePosition !== null && videoJob?.queuePosition !== undefined} · 대기 {videoJob.queuePosition}번째{/if}</p></div>
+						{:else if generation.video_url}
 							<VideoMedia source={generation.video_url} sourceType="server" preview={false} muted={false} class="min-h-[24rem] sm:min-h-[36rem]" />
 						{:else}
 							<div class="flex min-h-[24rem] items-center justify-center bg-muted text-sm text-muted-foreground">영상 결과가 아직 없습니다.</div>
@@ -208,7 +287,7 @@
 					<dl class="mt-5 space-y-4 text-sm">
 						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.media_type}</dd></div>
 						<div><dt class="text-muted-foreground">생성 방식</dt><dd class="mt-1 font-medium">{generation.mode.toUpperCase()}</dd></div>
-						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
+						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(videoStatus)}</dd></div>
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
 						<div><dt class="text-muted-foreground">Steps</dt><dd class="mt-1 font-medium">{generation.steps}</dd></div>
 						{#if generation.upscale_mode === 'learned_3d'}
@@ -248,6 +327,7 @@
 
 			<section class="flex flex-wrap justify-end gap-3">
 				<OutlinedButton onclick={() => (presetOpen = true)}><Save size={16} strokeWidth={1.9} /><span>프리셋 저장</span></OutlinedButton>
+				<OutlinedButton disabled={videoStatus !== 'completed' || !generation.video_url} onclick={openUpscaleModal}><Sparkles size={16} strokeWidth={1.9} /><span>동영상 업스케일</span></OutlinedButton>
 				<OutlinedButton disabled={!generation.video_url} onclick={() => (videoEditorOpen = true)}><Crop size={16} strokeWidth={1.9} /><span>동영상 편집</span></OutlinedButton>
 				<PrimaryButton loading={deleting} disabled={deleting} variant="destructive" onclick={() => (deleteModalOpen = true)}><Trash2 size={16} strokeWidth={2} /><span>콘텐츠 삭제</span></PrimaryButton>
 			</section>
@@ -260,6 +340,13 @@
 <Modal bind:open={deleteModalOpen} title="영상을 삭제하시겠습니까?" description="삭제한 영상과 파일은 복구할 수 없습니다." closeOnBackdrop={!deleting}>
 	<p class="text-sm leading-6 text-muted-foreground">이 영상과 파일 스토리지의 원본을 삭제합니다.</p>
 	{#snippet footer()}<OutlinedButton disabled={deleting} onclick={() => (deleteModalOpen = false)}>취소</OutlinedButton><PrimaryButton loading={deleting} variant="destructive" onclick={() => void deleteVideo()}><Trash2 size={16} strokeWidth={2} /><span>삭제</span></PrimaryButton>{/snippet}
+</Modal>
+
+<Modal bind:open={upscaleModalOpen} title="동영상 업스케일" description="원본을 R2V 참조로 재생성합니다." closeOnBackdrop={!upscaling}>
+	{#if generation}
+		<label class="block space-y-2" for="vault-video-target-megapixels"><span class="text-sm font-medium">Target 메가픽셀</span><input id="vault-video-target-megapixels" type="number" min={outputMegapixels(generation) + 0.1} step="0.1" bind:value={targetMegapixels} disabled={upscaling} class="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" /><span class="block text-xs text-muted-foreground">현재 {outputMegapixels(generation).toFixed(1)} MP보다 크게 지정해 주세요.</span></label>
+	{/if}
+	{#snippet footer()}<OutlinedButton disabled={upscaling} onclick={() => (upscaleModalOpen = false)}>취소</OutlinedButton><PrimaryButton loading={upscaling} disabled={upscaling} onclick={() => void upscaleVideo()}><Sparkles size={16} strokeWidth={1.9} /><span>업스케일 시작</span></PrimaryButton>{/snippet}
 </Modal>
 
 {#if generation}

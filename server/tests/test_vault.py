@@ -1,7 +1,9 @@
+import asyncio
+import json
 import unittest
 from datetime import datetime, timezone
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -196,6 +198,48 @@ class VaultRouteTest(unittest.TestCase):
         self.assertEqual(result.scheduler, "simple")
         self.assertTrue(result.use_pdd)
         self.assertEqual(result.checkpoint, "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors")
+
+    def test_video_upscale_requeues_completed_source_as_r2v_learned_upscale(self) -> None:
+        generation_id = uuid4()
+        accepted = vault.VideoGenerationAccepted(
+            prompt_id="upscale-prompt",
+            client_id="upscale-client",
+            generation_id=str(uuid4()),
+            mode="r2v",
+            status="queued",
+            segment_count=1,
+            created_at=datetime.now(timezone.utc),
+        )
+        stored = {
+            "status": "completed",
+            "storage_file_id": "v" * 32,
+            "prompt": "global style",
+            "checkpoint": "checkpoint.safetensors",
+            "loras": [{"name": "MiniMax/style.safetensors", "strength": 0.7}],
+            "input_segment_prompts": ["move"],
+            "improved_segment_prompts": [],
+            "aspect_ratio": "2:3",
+            "megapixels": 0.2,
+            "width": 384,
+            "height": 576,
+            "segment_durations": [5.0],
+            "continuation_mode": "r2v",
+            "fps": 24,
+            "steps": 4,
+            "seed": 7,
+        }
+        with (
+            patch.object(vault, "get_video_generation_by_id", return_value=stored),
+            patch.object(vault, "create_video", new_callable=AsyncMock, return_value=accepted) as create,
+        ):
+            result = asyncio.run(vault.upscale_vault_video(generation_id, vault.VaultVideoUpscaleRequest(target_megapixels=0.4), self.user))
+
+        self.assertEqual(result, accepted)
+        self.assertEqual(create.call_args.args[0], "r2v")
+        request = json.loads(create.call_args.args[1])
+        self.assertEqual(request["reference_videos"], [{"kind": "video", "file_id": "v" * 32, "file_index": None}])
+        self.assertEqual((request["megapixels"], request["target_megapixels"]), (0.2, 0.4))
+        self.assertFalse(request["use_pdd"])
 
     def test_image_download_reads_owned_storage_as_attachment(self) -> None:
         generation_id = uuid4()

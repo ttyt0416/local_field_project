@@ -320,14 +320,14 @@ class VideoContractTest(unittest.TestCase):
         request = video.VideoGenerationRequest(prompt="move", aspect_ratio="2:3", megapixels=0.24, first_frame=video.VideoAsset(kind="image", file_index=0))
 
         self.assertEqual(request.megapixels, 0.2)
-        self.assertEqual((request.width, request.height), (352, 528))
+        self.assertEqual((request.width, request.height), (384, 576))
         self.assertEqual(round(request.width * request.height / 1_000_000, 1), 0.2)
         self.assertFalse({"width", "height"} & video.VideoGenerationRequest.model_json_schema()["properties"].keys())
         resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
         with patch.object(video, "_upload_to_comfy", return_value="image.png"):
             workflow, _ = video._build_prompt("i2v", request, resolved)
         generator = next(node for node in workflow.values() if node["class_type"] == "MiniMaxH3ImageToVideo")
-        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (352, 528))
+        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (384, 576))
         with self.assertRaises(ValidationError):
             video.VideoGenerationRequest(prompt="move", megapixels=0.04)
         with self.assertRaises(ValidationError):
@@ -353,7 +353,7 @@ class VideoContractTest(unittest.TestCase):
         concat_id, concat = next((node_id, node) for node_id, node in workflow.items() if node["class_type"] == "LTXVConcatAVLatent")
         decode = next(node for node in workflow.values() if node["class_type"] == "VAEDecode")
 
-        self.assertEqual((request.width, request.height), (352, 528))
+        self.assertEqual((request.width, request.height), (384, 576))
         self.assertEqual((request.output_width, request.output_height), (512, 768))
         self.assertNotEqual(request.effective_upscale_scale, 1.5)
         self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (request.width, request.height))
@@ -374,6 +374,13 @@ class VideoContractTest(unittest.TestCase):
             video.VideoGenerationRequest(prompt="move", megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.4, use_pdd=True)
         with self.assertRaises(ValidationError):
             video.VideoGenerationRequest(prompt="move", target_megapixels=0.4)
+
+    def test_legacy_16_grid_dimensions_are_not_reused_for_h3_continuation(self) -> None:
+        request = video.VideoGenerationRequest(prompt="move", aspect_ratio="2:3", megapixels=0.2)
+
+        video._keep_generation_dimensions(request, {"width": 352, "height": 528})
+
+        self.assertEqual((request.width, request.height), (384, 576))
 
     def test_learned_upscale_requires_live_model_and_node(self) -> None:
         request = video.VideoGenerationRequest(prompt="move", megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.4)
@@ -397,7 +404,7 @@ class VideoContractTest(unittest.TestCase):
             workflow, _ = video._build_prompt("r2v", request, resolved)
 
         generator = next(node for node in workflow.values() if "width" in node["inputs"] and "height" in node["inputs"])
-        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (352, 528))
+        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (384, 576))
 
     def test_fps_validation_rejects_values_outside_supported_range(self) -> None:
         with self.assertRaises(ValidationError):
