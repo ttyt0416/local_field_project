@@ -120,7 +120,7 @@ class PromptEnhancementTest(unittest.TestCase):
         }
         with patch("app.comfyui._request_vllm_json", return_value=response):
             with self.assertLogs("app.comfyui", level="WARNING") as logs:
-                with self.assertRaisesRegex(_VLLMError, "길이 제한"):
+                with self.assertRaisesRegex(_VLLMError, "길이 제한") as raised:
                     _request_structured_object(
                         system_prompt="system",
                         user_prompt="user",
@@ -131,6 +131,7 @@ class PromptEnhancementTest(unittest.TestCase):
                     )
 
         line = logs.output[-1]
+        self.assertEqual(raised.exception.provider_response, response)
         self.assertIn("name=video_prompt_shots", line)
         self.assertIn("completion_tokens=1024", line)
         self.assertIn("json_complete=False", line)

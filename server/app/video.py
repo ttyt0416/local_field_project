@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from starlette.responses import StreamingResponse
 
@@ -400,11 +400,13 @@ def video_options(
 @router.post("/enhance-prompt", response_model=VideoPromptEnhancementResponse)
 def enhance_video_prompt(
     payload: VideoPromptEnhancementRequest,
+    request: Request,
     _: UserResponse = Depends(current_user),
 ) -> VideoPromptEnhancementResponse:
     try:
         return _enhance_video_prompt(payload)
     except _VLLMError as exc:
+        request.state.provider_response = exc.provider_response
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 

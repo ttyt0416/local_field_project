@@ -97,6 +97,9 @@ async def audit_api_requests(request: Request, call_next: Any):
         client_ip = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
         user_id = getattr(request.state, "user_id", None)
+        provider_response = getattr(request.state, "provider_response", None)
+        if not isinstance(provider_response, dict):
+            provider_response = None
         status_code = response.status_code if response is not None else 500
 
         if raised_error is not None:
@@ -109,6 +112,7 @@ async def audit_api_requests(request: Request, call_next: Any):
                 client_ip=client_ip,
                 user_agent=user_agent,
                 user_id=user_id,
+                provider_response=provider_response,
             )
         elif status_code >= 400:
             record_api_error(
@@ -120,6 +124,7 @@ async def audit_api_requests(request: Request, call_next: Any):
                 client_ip=client_ip,
                 user_agent=user_agent,
                 user_id=user_id,
+                provider_response=provider_response,
             )
 
         record_api_call(

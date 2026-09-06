@@ -662,12 +662,14 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         status_code SMALLINT NOT NULL,
         error_type VARCHAR(128) NOT NULL,
         error_message TEXT NOT NULL,
+        provider_response JSONB,
         occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         client_ip TEXT,
         user_agent TEXT,
         user_id UUID REFERENCES users(id) ON DELETE SET NULL
     )
     """,
+    "ALTER TABLE api_error_logs ADD COLUMN IF NOT EXISTS provider_response JSONB",
 )
 
 
@@ -2221,12 +2223,13 @@ def record_api_error(
     client_ip: str | None,
     user_agent: str | None,
     user_id: Any = None,
+    provider_response: dict[str, Any] | None = None,
 ) -> None:
     _record(
         """
         INSERT INTO api_error_logs
-            (method, path, status_code, error_type, error_message, client_ip, user_agent, user_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (method, path, status_code, error_type, error_message, provider_response, client_ip, user_agent, user_id)
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
         """,
         (
             method,
@@ -2234,6 +2237,7 @@ def record_api_error(
             status_code,
             error_type,
             error_message[:1000],
+            json.dumps(provider_response, ensure_ascii=False) if provider_response is not None else None,
             client_ip,
             user_agent,
             user_id,

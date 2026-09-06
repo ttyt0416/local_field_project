@@ -11,6 +11,7 @@ from app import video
 from app.auth import UserResponse
 from app.comfyui import cancel_comfy_generation
 from pydantic import ValidationError
+from starlette.requests import Request
 
 
 class VideoContractTest(unittest.TestCase):
@@ -774,6 +775,17 @@ class VideoContractTest(unittest.TestCase):
 
         with patch.object(video, "_request_structured_object", return_value=plan), self.assertRaisesRegex(video._VLLMError, "필수 shot field"):
             video._enhance_video_prompt(payload)
+
+    def test_video_prompt_error_passes_provider_response_to_audit(self) -> None:
+        payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
+        request = Request({"type": "http", "headers": []})
+        provider_response = {"choices": [{"finish_reason": "length", "message": {"content": "partial response"}}]}
+        with patch.object(video, "_enhance_video_prompt", side_effect=video._VLLMError("length", provider_response=provider_response)):
+            with self.assertRaises(video.HTTPException) as raised:
+                video.enhance_video_prompt(payload, request, self.user)
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(request.state.provider_response, provider_response)
 
     def test_video_prompt_fields_use_fixed_328_character_limit_without_assembled_cap(self) -> None:
         for duration in (1, 5, 10):

@@ -18,4 +18,4 @@ lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하
 
 이미지 width와 height는 기존 64~2048 product cap 없이 Comfy `EmptyLatentImage` native contract인 16~16384 범위의 8 pixel multiple을 사용한다.
 
-Structured vLLM response가 `finish_reason=length`로 끝나면 server는 raw output and user prompt 없이 response schema name, configured token cap, completion token count, raw character count, JSON completion, trailing whitespace count, last schema field, parsed shot count를 warning log 한 줄로 남긴다.
+Structured vLLM response가 `finish_reason=length`로 끝나면 server는 raw output and user prompt 없이 response schema name, configured token cap, completion token count, raw character count, JSON completion, trailing whitespace count, last schema field, parsed shot count를 warning log 한 줄로 남긴다. `_VLLMError`는 decoded provider response를 caller에 전달하며 VIDEO prompt route는 이를 Error DB에 저장한다.

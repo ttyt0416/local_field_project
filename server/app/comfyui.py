@@ -1351,7 +1351,7 @@ def _request_structured_object(
     )
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise _VLLMError("vLLM이 구조화된 프롬프트 결과를 반환하지 않았습니다.")
+        raise _VLLMError("vLLM이 구조화된 프롬프트 결과를 반환하지 않았습니다.", provider_response=response)
     choice = choices[0]
     if choice.get("finish_reason") == "length":
         message = choice.get("message")
@@ -1383,18 +1383,18 @@ def _request_structured_object(
             last_field,
             shot_count,
         )
-        raise _VLLMError("vLLM 프롬프트 결과가 길이 제한으로 중단되었습니다.")
+        raise _VLLMError("vLLM 프롬프트 결과가 길이 제한으로 중단되었습니다.", provider_response=response)
     message = choice.get("message")
     raw_content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(raw_content, str):
-        raise _VLLMError("vLLM 구조화 응답 형식이 올바르지 않습니다.")
+        raise _VLLMError("vLLM 구조화 응답 형식이 올바르지 않습니다.", provider_response=response)
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content.strip(), flags=re.IGNORECASE)
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise _VLLMError("vLLM 구조화 응답을 JSON으로 읽을 수 없습니다.") from exc
+        raise _VLLMError("vLLM 구조화 응답을 JSON으로 읽을 수 없습니다.", provider_response=response) from exc
     if not isinstance(parsed, dict):
-        raise _VLLMError("vLLM 구조화 응답이 JSON 객체가 아닙니다.")
+        raise _VLLMError("vLLM 구조화 응답이 JSON 객체가 아닙니다.", provider_response=response)
     return parsed
 
 
@@ -1430,4 +1430,6 @@ class _ComfyUIError(RuntimeError):
 
 
 class _VLLMError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, provider_response: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.provider_response = provider_response
