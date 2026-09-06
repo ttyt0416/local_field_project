@@ -1074,7 +1074,7 @@ def _normalize_video_reference_markers(contents: str) -> str:
 def _assemble_video_prompt(fields: dict[str, Any]) -> str:
     rendered_shots = []
     for index, shot in enumerate(fields["shots"], start=1):
-        timestamp = " At 00:00:00," if index == 1 else f" At {shot['start_ms'] // 60000:02d}:{shot['start_ms'] // 1000 % 60:02d}.{shot['start_ms'] % 1000:03d},"
+        timestamp = "" if index == 1 else f" At {shot['start_ms'] // 60000:02d}:{shot['start_ms'] // 1000 % 60:02d}.{shot['start_ms'] % 1000:03d},"
         shot_fields = (field for field in _VIDEO_PROMPT_SHOT_FIELDS if index != 1 or field != "timeline")
         rendered_shots.append(f"[Shot {index}]{timestamp} {' '.join(shot[field] for field in shot_fields)}")
     integrated_description = "\n".join(rendered_shots)
@@ -1109,7 +1109,7 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
             languages=", ".join(_VIDEO_PROMPT_LANGUAGE_NAMES[language] for language in languages),
         ),
         max_tokens=_VIDEO_PROMPT_MAX_TOKENS,
-        temperature=0.3,
+        temperature=0.8,
         timeout_seconds=_VIDEO_PROMPT_TIMEOUT_SECONDS,
         schema=_video_prompt_fields_schema(languages, payload.duration),
         name="video_prompt_shots",

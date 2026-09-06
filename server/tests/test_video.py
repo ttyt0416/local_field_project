@@ -760,7 +760,8 @@ class VideoContractTest(unittest.TestCase):
         payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
         with patch.object(video, "_request_structured_object", return_value=plan):
             result = video._enhance_video_prompt(payload)
-        self.assertIn("[Shot 1] At 00:00:00, first style first camera first audio first text", result.improved_prompt.contents)
+        self.assertIn("[Shot 1] first style first camera first audio first text", result.improved_prompt.contents)
+        self.assertNotIn("At 00:00:00", result.improved_prompt.contents)
         self.assertNotIn("first timeline", result.improved_prompt.contents)
         self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera second audio second text", result.improved_prompt.contents)
         self.assertNotIn("negative:", result.improved_prompt.contents)
@@ -856,7 +857,7 @@ class VideoContractTest(unittest.TestCase):
 
         expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
-        self.assertEqual(request.call_args.kwargs["temperature"], 0.3)
+        self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
         self.assertEqual(video._VIDEO_PROMPT_MAX_TOKENS, 1024)
         self.assertEqual(request.call_args.kwargs["max_tokens"], video._VIDEO_PROMPT_MAX_TOKENS)
         self.assertEqual(request.call_args.kwargs["timeout_seconds"], video._VIDEO_PROMPT_TIMEOUT_SECONDS)
@@ -873,6 +874,32 @@ class VideoContractTest(unittest.TestCase):
         )
         self.assertNotIn("negative", schema["properties"])
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
+
+    def test_explicit_shots_are_preserved_by_prompt_without_schema_count_enforcement(self) -> None:
+        plan = {
+            "shots": [{"start_ms": 0, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+            "overall_soundscape": "quiet ambience",
+            "non_diegetic_music": "N/A",
+        }
+        payload = video.VideoPromptEnhancementRequest(
+            prompt="샷 1: 인물이 선다.\n샷 2: 인물이 걷는다.",
+            mode="i2v",
+            duration=5,
+            prompt_output_languages=["en"],
+        )
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
+            video._enhance_video_prompt(payload)
+
+        system_prompt = request.call_args.kwargs["system_prompt"]
+        shots = request.call_args.kwargs["schema"]["properties"]["shots"]
+        self.assertIn("Follow every specific detail in the user's request as closely as possible", system_prompt)
+        self.assertIn("follow each scene or shot description as closely as possible", system_prompt)
+        self.assertIn("physically plausible motion, gravity, contact, momentum, object interaction, and cause and effect", system_prompt)
+        self.assertIn("describe each character's expression and visible action in every shot where that character appears", system_prompt)
+        self.assertIn("preserve every defined shot as a separate shots item in the same order", system_prompt)
+        self.assertIn("including each requested action", system_prompt)
+        self.assertEqual(shots["minItems"], 1)
+        self.assertEqual(shots["maxItems"], 5)
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
         plan = {
