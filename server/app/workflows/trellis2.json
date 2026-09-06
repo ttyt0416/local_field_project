@@ -1,10 +1,4 @@
 {
-  "0": {
-    "class_type": "easy cleanGpuUsed",
-    "inputs": {
-      "anything": "workflow_start"
-    }
-  },
   "108": {
     "class_type": "ModelSamplingSD3",
     "inputs": {

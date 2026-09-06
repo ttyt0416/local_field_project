@@ -105,7 +105,7 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(prompt["30"]["inputs"]["samples"], ["19", 0])
         self.assertEqual(prompt["31"]["inputs"]["samples"], ["19", 1])
 
-    def test_video_workflows_start_with_direct_cleanup(self) -> None:
+    def test_video_workflows_do_not_clean_vram_automatically(self) -> None:
         workflows = Path(video.__file__).with_name("workflows")
         for filename in (
             "video_i2v.json",
@@ -116,15 +116,15 @@ class VideoContractTest(unittest.TestCase):
             "video_ltx_r2v.json",
         ):
             workflow = json.loads((workflows / filename).read_text())
-            self.assertEqual(workflow["0"]["class_type"], "easy cleanGpuUsed")
-            self.assertEqual(workflow["0"]["inputs"], {"anything": "workflow_start"})
+            self.assertNotIn("0", workflow)
 
         resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
         request = video.VideoGenerationRequest(prompt="move", seed=1, first_frame=video.VideoAsset(kind="image", file_index=0))
         with patch.object(video, "_upload_to_comfy", return_value="image.png"):
             first, _ = video._build_prompt("i2v", request, resolved)
             second, _ = video._build_prompt("i2v", request, resolved)
-        self.assertNotEqual(first["0"]["is_changed"], second["0"]["is_changed"])
+        self.assertNotIn("0", first)
+        self.assertNotIn("0", second)
 
     def test_minimax_loras_are_allowlisted_and_injected_in_selection_order(self) -> None:
         options = video.VideoGenerationOptions(
@@ -318,8 +318,8 @@ class VideoContractTest(unittest.TestCase):
             "prompt_id": "root-prompt",
             "client_id": "client-1",
             "segment_index": 0,
-            "segment_durations": [10.0, 3.0],
-            "segment_prompts": ["opening", "continuation"],
+            "segment_durations": [10.0, 10.0, 3.0],
+            "segment_prompts": ["opening", "continuation", "final"],
             "continuation_mode": "r2v",
             "reference_image_file_ids": ["a" * 32],
             "width": 768,
@@ -335,7 +335,7 @@ class VideoContractTest(unittest.TestCase):
 
         with (
             patch.object(video, "_build_prompt", side_effect=build),
-            patch.object(video, "_request_json", return_value={"prompt_id": "r2v-prompt"}),
+            patch.object(video, "_request_json", return_value={"prompt_id": "r2v-prompt"}) as submit,
             patch.object(video, "storage_download_file", return_value=(b"selected-reference", "image/png")),
         ):
             prompt_id = video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
@@ -343,9 +343,10 @@ class VideoContractTest(unittest.TestCase):
         request = cast(video.VideoGenerationRequest, captured["request"])
         resolved = cast(dict[str, video._ResolvedAsset], captured["resolved"])
         self.assertEqual(prompt_id, "r2v-prompt")
+        self.assertTrue(submit.call_args.args[2]["local_field_vram_cleanup_after"])
         self.assertEqual(captured["mode"], "r2v")
         self.assertEqual(captured["effective_prompt"], "continuation")
-        self.assertEqual(request.duration, 3.0)
+        self.assertEqual(request.duration, 10.0)
         self.assertEqual(
             request.reference_images,
             [video.VideoAsset(kind="image", file_id="f" * 32), video.VideoAsset(kind="image", file_id="a" * 32)],
@@ -374,11 +375,12 @@ class VideoContractTest(unittest.TestCase):
 
         with (
             patch.object(video, "_build_prompt", side_effect=build),
-            patch.object(video, "_request_json", return_value={"prompt_id": "i2v-prompt"}),
+            patch.object(video, "_request_json", return_value={"prompt_id": "i2v-prompt"}) as submit,
         ):
             video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
 
         request = cast(video.VideoGenerationRequest, captured["request"])
+        self.assertNotIn("local_field_vram_cleanup_after", submit.call_args.args[2])
         self.assertEqual(captured["mode"], "i2v")
         self.assertEqual(request.first_frame, video.VideoAsset(kind="image", file_id="f" * 32))
         self.assertEqual(request.reference_images, [])

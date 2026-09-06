@@ -294,7 +294,10 @@ async def create_video(
         initial_request = request.model_copy(update={"duration": segment_durations[0]})
         prompt, seed = _build_prompt(mode, initial_request, resolved, effective_prompt=effective_prompts[0])
         client_id = str(uuid.uuid4())
-        response = _request_json("POST", "/prompt", {"prompt": prompt, "client_id": client_id})
+        prompt_payload: dict[str, Any] = {"prompt": prompt, "client_id": client_id}
+        if len(segment_durations) > 1:
+            prompt_payload["local_field_vram_cleanup_after"] = True
+        response = _request_json("POST", "/prompt", prompt_payload)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except (json.JSONDecodeError, ValidationError) as exc:
@@ -1101,7 +1104,6 @@ def _build_prompt(
     except (OSError, json.JSONDecodeError) as exc:
         raise _ComfyUIError(f"{mode} 영상 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
-    prompt["0"]["is_changed"] = uuid.uuid4().hex
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     effective_prompt = effective_prompt if effective_prompt is not None else _effective_video_prompt(mode, request)
     if model == "ltx":
@@ -1443,7 +1445,10 @@ def _queue_video_continuation(
     else:
         raise _ComfyUIError("다음 영상 구간 연결 방식이 올바르지 않습니다.")
     prompt, _ = _build_prompt(workflow_mode, request, resolved, effective_prompt=prompts[next_index])
-    response = _request_json("POST", "/prompt", {"prompt": prompt, "client_id": generation["client_id"]})
+    prompt_payload: dict[str, Any] = {"prompt": prompt, "client_id": generation["client_id"]}
+    if next_index + 1 < len(durations):
+        prompt_payload["local_field_vram_cleanup_after"] = True
+    response = _request_json("POST", "/prompt", prompt_payload)
     next_prompt_id = response.get("prompt_id")
     if not isinstance(next_prompt_id, str) or not next_prompt_id:
         raise _ComfyUIError("ComfyUI가 다음 영상 작업 ID를 반환하지 않았습니다.")

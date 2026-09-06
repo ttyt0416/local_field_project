@@ -372,7 +372,6 @@ def _build_prompt(request: ThreeDGenerationRequest, comfy_filename: str) -> tupl
     except (OSError, json.JSONDecodeError) as exc:
         raise _ComfyUIError("TRELLIS.2 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
-    prompt["0"]["is_changed"] = uuid.uuid4().hex
     preset = _PRESETS[request.preset]
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     prompt["122"]["inputs"]["image"] = comfy_filename
