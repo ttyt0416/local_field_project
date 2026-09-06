@@ -17,3 +17,5 @@ lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하
 `POST /generation/image/i2i`는 multipart `payload`와 이미지 한 개를 받는다. local file은 submit 시에만 Storage·`media_assets`에 저장하고 기존 `file_id`는 ownership을 확인해 재사용한다. model 선택을 먼저 검증한 뒤 Comfy input에 올리고 `LoadImage → ImageScale → VAEEncode → KSampler`로 연결하며 `denoise`는 `0..1` 범위다. Krea2 R2I는 generic I2I graph로 대체하지 않으며, official `krea2_style_reference.safetensors` LoRA와 dedicated reference workflow가 설치되기 전에는 422로 거절한다.
 
 이미지 width와 height는 기존 64~2048 product cap 없이 Comfy `EmptyLatentImage` native contract인 16~16384 범위의 8 pixel multiple을 사용한다.
+
+Structured vLLM response가 `finish_reason=length`로 끝나면 server는 raw output and user prompt 없이 response schema name, configured token cap, completion token count, raw character count, JSON completion, trailing whitespace count, last schema field, parsed shot count를 warning log 한 줄로 남긴다.

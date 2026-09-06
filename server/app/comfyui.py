@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 import re
 import secrets
@@ -47,6 +48,8 @@ from .storage import (
     read_url as storage_read_url,
     upload_file as storage_upload_file,
 )
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
@@ -1351,6 +1354,35 @@ def _request_structured_object(
         raise _VLLMError("vLLM이 구조화된 프롬프트 결과를 반환하지 않았습니다.")
     choice = choices[0]
     if choice.get("finish_reason") == "length":
+        message = choice.get("message")
+        raw_content = message.get("content") if isinstance(message, dict) else None
+        content = raw_content if isinstance(raw_content, str) else ""
+        try:
+            parsed_content = json.loads(content.strip())
+        except json.JSONDecodeError:
+            parsed_content = None
+        properties = schema.get("properties")
+        known_fields = set(properties) if isinstance(properties, dict) else set()
+        shots_schema = properties.get("shots") if isinstance(properties, dict) else None
+        shot_properties = shots_schema.get("items", {}).get("properties") if isinstance(shots_schema, dict) and isinstance(shots_schema.get("items"), dict) else None
+        if isinstance(shot_properties, dict):
+            known_fields.update(shot_properties)
+        json_keys = re.findall(r'"([^"\\]+)"\s*:', content)
+        last_field = next((key for key in reversed(json_keys) if key in known_fields), None)
+        usage = response.get("usage")
+        completion_tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
+        shot_count = len(parsed_content.get("shots", [])) if isinstance(parsed_content, dict) and isinstance(parsed_content.get("shots"), list) else None
+        logger.warning(
+            "vllm_structured_length name=%s max_tokens=%s completion_tokens=%s raw_characters=%s json_complete=%s trailing_whitespace_characters=%s last_field=%s shot_count=%s",
+            name,
+            max_tokens,
+            completion_tokens,
+            len(content),
+            isinstance(parsed_content, dict),
+            len(content) - len(content.rstrip()),
+            last_field,
+            shot_count,
+        )
         raise _VLLMError("vLLM 프롬프트 결과가 길이 제한으로 중단되었습니다.")
     message = choice.get("message")
     raw_content = message.get("content") if isinstance(message, dict) else None

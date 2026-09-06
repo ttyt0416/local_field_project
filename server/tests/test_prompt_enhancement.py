@@ -10,6 +10,8 @@ from app.comfyui import (
     _effective_positive_prompt,
     _enhance_prompt,
     _request_structured_content,
+    _request_structured_object,
+    _VLLMError,
 )
 from app.prompts import IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT, IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT
 
@@ -101,6 +103,39 @@ class PromptEnhancementTest(unittest.TestCase):
 
         contents = request.call_args.args[0]["response_format"]["json_schema"]["schema"]["properties"]["contents"]
         self.assertEqual(contents["pattern"], r"^[A-Za-z0-9 ,'-]+$")
+
+    def test_structured_length_logs_safe_video_metadata(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "shots": {
+                    "type": "array",
+                    "items": {"type": "object", "properties": {"timeline": {"type": "string"}}},
+                }
+            },
+        }
+        response = {
+            "usage": {"completion_tokens": 1024},
+            "choices": [{"finish_reason": "length", "message": {"content": '{"shots":[{"timeline":"private action'}}],
+        }
+        with patch("app.comfyui._request_vllm_json", return_value=response):
+            with self.assertLogs("app.comfyui", level="WARNING") as logs:
+                with self.assertRaisesRegex(_VLLMError, "길이 제한"):
+                    _request_structured_object(
+                        system_prompt="system",
+                        user_prompt="user",
+                        max_tokens=1024,
+                        temperature=0.3,
+                        schema=schema,
+                        name="video_prompt_shots",
+                    )
+
+        line = logs.output[-1]
+        self.assertIn("name=video_prompt_shots", line)
+        self.assertIn("completion_tokens=1024", line)
+        self.assertIn("json_complete=False", line)
+        self.assertIn("last_field=timeline", line)
+        self.assertNotIn("private action", line)
 
 
 if __name__ == "__main__":
