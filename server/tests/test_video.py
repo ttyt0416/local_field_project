@@ -118,7 +118,7 @@ class VideoContractTest(unittest.TestCase):
                         "min_tokens": 4096,
                         "int8_qk": True,
                         "sink_conditioning": "exact_kv",
-                        "morton": True,
+                        "morton": False,
                         "morton_curve": "2d_frame",
                         "int8_pv": True,
                         "verbose": False,

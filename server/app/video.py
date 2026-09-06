@@ -614,7 +614,8 @@ def _inject_video_loras(
                 "min_tokens": 4096,
                 "int8_qk": True,
                 "sink_conditioning": "exact_kv",
-                "morton": True,
+                # ponytail: keep H3 Morton off until its CUDA async-free path has an isolated-worker regression test.
+                "morton": False,
                 "morton_curve": "2d_frame",
                 "int8_pv": True,
                 "verbose": False,
