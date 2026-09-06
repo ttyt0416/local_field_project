@@ -611,13 +611,13 @@ class VideoContractTest(unittest.TestCase):
             ],
             "overall_soundscape": "quiet ambience",
             "non_diegetic_music": "N/A",
-            "negative": "no subtitles",
         }
         payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
         with patch.object(video, "_request_structured_object", return_value=plan):
             result = video._enhance_video_prompt(payload)
         self.assertIn("[Shot 1] first model shot", result.improved_prompt.contents)
         self.assertIn("[Shot 2] At 00:01.000, second model shot", result.improved_prompt.contents)
+        self.assertNotIn("negative:", result.improved_prompt.contents)
 
     def test_video_prompt_schema_bounds_assembled_response_length(self) -> None:
         for duration in (1, 5, 10):
@@ -648,7 +648,6 @@ class VideoContractTest(unittest.TestCase):
             ],
             "overall_soundscape": "quiet ambience",
             "non_diegetic_music": "N/A",
-            "negative": "no subtitles",
         }
         payload = video.VideoPromptEnhancementRequest(
             prompt="사과가 움직인다",
@@ -664,7 +663,7 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["temperature"], 0.3)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
         schema = request.call_args.kwargs["schema"]
-        self.assertEqual(set(schema["required"]), {"shots", "overall_soundscape", "non_diegetic_music", "negative"})
+        self.assertEqual(set(schema["required"]), {"shots", "overall_soundscape", "non_diegetic_music"})
         self.assertEqual(schema["additionalProperties"], False)
         shots = schema["properties"]["shots"]
         self.assertEqual(shots["items"]["required"], ["start_ms", *video._VIDEO_PROMPT_SHOT_FIELDS])
@@ -673,7 +672,7 @@ class VideoContractTest(unittest.TestCase):
             shots["items"]["properties"]["style"]["pattern"],
             video._video_prompt_pattern(languages, shots["items"]["properties"]["style"]["maxLength"]),
         )
-        self.assertEqual(schema["properties"]["negative"], {"type": "string", "enum": ["N/A"]})
+        self.assertNotIn("negative", schema["properties"])
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
@@ -681,7 +680,6 @@ class VideoContractTest(unittest.TestCase):
             "shots": [{"start_ms": 0, **{field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
             "overall_soundscape": "quiet room tone",
             "non_diegetic_music": "N/A",
-            "negative": "no flashbacks",
         }
         payload = video.VideoPromptEnhancementRequest(
             prompt="continue the scene",
@@ -700,7 +698,7 @@ class VideoContractTest(unittest.TestCase):
         user_prompt = request.call_args.kwargs["user_prompt"]
         self.assertIn("The global style and background apply to every sequence segment", system_prompt)
         self.assertIn("never repeat its timeline actions", system_prompt)
-        self.assertIn("Set negative to the exact string N/A", system_prompt)
+        self.assertNotIn("negative", system_prompt)
         self.assertIn("start_ms is 0; later start_ms values are increasing cut times in the supplied local segment", system_prompt)
         self.assertIn("<global_style_and_background>\ncontinue the scene\n</global_style_and_background>", user_prompt)
         self.assertIn("<current_segment_instruction>\nThe character leaves the room.\n</current_segment_instruction>", user_prompt)

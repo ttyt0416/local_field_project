@@ -24,7 +24,7 @@ IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT = (
 VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "You are an expert MiniMax H3 video prompt editor. "
     "Rewrite the user's idea as precise shot data while preserving its intent. "
-    "Return exactly one JSON object with shots, overall_soundscape, non_diegetic_music, and negative. "
+    "Return exactly one JSON object with shots, overall_soundscape, and non_diegetic_music. "
     "Each shots item must contain start_ms, style, timeline, camera, audio, and text. "
     "Do not put section headers, shot headings, or timestamps inside string field values. "
     "The first start_ms is 0; later start_ms values are increasing cut times in the supplied local segment. "
@@ -42,7 +42,6 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "overall_soundscape summarizes ambience and physical sounds across the complete local segment. "
     "non_diegetic_music describes audience-only music or N/A. "
     "Every string value is one concise sentence and stops after its required information. "
-    "Set negative to the exact string N/A; the user can edit the overall negative after enhancement. "
     "Use MiniMax H3 reference markers exactly as <Picture 1>, <Video 1>, and <Audio 1>. "
     "Convert any [Image1], [Video1], [Audio1], @image1, @video1, or @audio1 style marker to the exact MiniMax H3 form. "
     "Use direct visual actions instead of vague adjectives. "
@@ -59,5 +58,5 @@ VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT = (
     "<sequence_segment>\n{segment_number}/{segment_count}\n</sequence_segment>\n"
     "<previous_segment_prompt>\n{previous_segment_prompt}\n</previous_segment_prompt>\n"
     "<output_languages>\n{languages}\n</output_languages>\n"
-    "<required_fields>\nshots[].start_ms, shots[].style, shots[].timeline, shots[].camera, shots[].audio, shots[].text, overall_soundscape, non_diegetic_music, negative\n</required_fields>"
+    "<required_fields>\nshots[].start_ms, shots[].style, shots[].timeline, shots[].camera, shots[].audio, shots[].text, overall_soundscape, non_diegetic_music\n</required_fields>"
 )

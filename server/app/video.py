@@ -106,8 +106,8 @@ _VIDEO_PROMPT_LANGUAGE_CHARS = {
 }
 _VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
 _VIDEO_PROMPT_SHOT_FIELDS = ("style", "timeline", "camera", "audio", "text")
-_VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music", "negative")
-_VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|negative|Shot|At|N/A|Picture|Video|Audio|Subject"
+_VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music")
+_VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|Shot|At|N/A|Picture|Video|Audio|Subject"
 
 
 class VideoAsset(BaseModel):
@@ -807,9 +807,7 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float) -> di
             **{
                 field: {"type": "string", "minLength": 1, "maxLength": field_max_length, "pattern": pattern}
                 for field in _VIDEO_PROMPT_OVERALL_FIELDS
-                if field != "negative"
             },
-            "negative": {"type": "string", "enum": ["N/A"]},
         },
         "required": ["shots", *_VIDEO_PROMPT_OVERALL_FIELDS],
         "additionalProperties": False,
