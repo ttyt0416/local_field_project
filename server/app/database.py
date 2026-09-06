@@ -506,8 +506,12 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         active_prompt_id VARCHAR(128),
         mode VARCHAR(8) NOT NULL,
         checkpoint VARCHAR(255) NOT NULL DEFAULT '',
+        aspect_ratio VARCHAR(8),
+        megapixels DOUBLE PRECISION,
         loras JSONB NOT NULL DEFAULT '[]'::jsonb,
         steps INTEGER NOT NULL DEFAULT 4,
+        sampler_name VARCHAR(64),
+        scheduler VARCHAR(64),
         use_pdd BOOLEAN NOT NULL DEFAULT FALSE,
         upscale BOOLEAN NOT NULL DEFAULT TRUE,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
@@ -542,6 +546,10 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS aspect_ratio VARCHAR(8)",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS megapixels DOUBLE PRECISION",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS sampler_name VARCHAR(64)",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS scheduler VARCHAR(64)",
     """
     CREATE TABLE IF NOT EXISTS music_generations (
         id UUID PRIMARY KEY,
@@ -1347,7 +1355,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, steps, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
+    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, loras, steps, sampler_name, scheduler, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations, continuation_mode, reference_image_file_ids, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
@@ -1366,6 +1374,10 @@ def create_video_generation(
     fps: float,
     seed: int,
     input_file_ids: list[str],
+    aspect_ratio: str | None = None,
+    megapixels: float | None = None,
+    sampler_name: str | None = None,
+    scheduler: str | None = None,
     active_prompt_id: str | None = None,
     segment_prompts: list[str] | None = None,
     input_segment_prompts: list[str] | None = None,
@@ -1383,10 +1395,10 @@ def create_video_generation(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, steps, use_pdd, upscale, prompt, width, height, length, fps, seed,
+                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, loras, steps, sampler_name, scheduler, use_pdd, upscale, prompt, width, height, length, fps, seed,
                  input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations,
                  continuation_mode, reference_image_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1397,8 +1409,12 @@ def create_video_generation(
                 active_prompt_id or prompt_id,
                 mode,
                 checkpoint,
+                aspect_ratio,
+                megapixels,
                 json.dumps(loras or []),
                 steps,
+                sampler_name,
+                scheduler,
                 use_pdd,
                 upscale,
                 prompt,

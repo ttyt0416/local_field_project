@@ -33,6 +33,7 @@ export type PresetValues = {
 	checkpoint?: string;
 	loras?: LoraSelection[];
 	aspect_ratio?: AspectRatio;
+	megapixels?: number;
 	width?: number;
 	height?: number;
 	denoise?: number;
@@ -74,5 +75,9 @@ export type VideoGenerationOptions = {
 	checkpoints: string[];
 	default_checkpoint: string;
 	loras: string[];
+	samplers: string[];
+	schedulers: string[];
+	default_sampler: string;
+	default_scheduler: string;
 	pdd_available: boolean;
 };

@@ -40,6 +40,8 @@ class VideoContractTest(unittest.TestCase):
         ]
         object_info = {
             "UNETLoader": {"input": {"required": {"unet_name": [available]}}},
+            "KSamplerSelect": {"input": {"required": {"sampler_name": [["res_multistep", "euler"]]}}},
+            "BasicScheduler": {"input": {"required": {"scheduler": [["simple", "normal"]]}}},
             "LoraLoaderModelOnly": {
                 "input": {"required": {"lora_name": [["MiniMax/allowed.safetensors", "image/ignored.safetensors"]]}}
             },
@@ -52,6 +54,8 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._DASIWA_CHECKPOINT])
         self.assertEqual(options.default_checkpoint, video._DASIWA_CHECKPOINT)
         self.assertEqual(options.loras, ["MiniMax/allowed.safetensors"])
+        self.assertEqual(options.samplers, ["euler", "res_multistep"])
+        self.assertEqual(options.schedulers, ["normal", "simple"])
         self.assertFalse(options.pdd_available)
 
 
@@ -164,6 +168,22 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(cache["inputs"]["model"], [sol_id, 0])
         self.assertEqual(scheduler["inputs"]["model"], [cache_id, 0])
         self.assertEqual(scheduler["inputs"]["steps"], 6)
+
+    def test_video_sampling_is_written_to_comfy_nodes(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            sampler_name="euler",
+            scheduler="normal",
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            prompt, _ = video._build_prompt("i2v", request, resolved)
+
+        sampler = next(node for node in prompt.values() if node["class_type"] == "KSamplerSelect")
+        scheduler = next(node for node in prompt.values() if node["class_type"] == "BasicScheduler")
+        self.assertEqual(sampler["inputs"]["sampler_name"], "euler")
+        self.assertEqual(scheduler["inputs"]["scheduler"], "normal")
 
     def test_pdd_uses_its_sigma_schedule_and_disables_easycache(self) -> None:
         request = video.VideoGenerationRequest(
@@ -279,19 +299,36 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(generator["inputs"]["length"], video._frame_length(3, 30))
         self.assertEqual(create_video["inputs"]["fps"], 30)
 
-    def test_video_dimensions_allow_native_maximum_and_reject_invalid_alignment(self) -> None:
-        request = video.VideoGenerationRequest(prompt="move", width=4096, height=16384, first_frame=video.VideoAsset(kind="image", file_index=0))
+    def test_video_dimensions_are_calculated_from_ratio_and_one_decimal_megapixels(self) -> None:
+        request = video.VideoGenerationRequest(prompt="move", aspect_ratio="2:3", megapixels=0.24, first_frame=video.VideoAsset(kind="image", file_index=0))
 
-        self.assertEqual((request.width, request.height), (4096, 16384))
+        self.assertEqual(request.megapixels, 0.2)
+        self.assertEqual((request.width, request.height), (352, 528))
+        self.assertEqual(round(request.width * request.height / 1_000_000, 1), 0.2)
+        self.assertFalse({"width", "height"} & video.VideoGenerationRequest.model_json_schema()["properties"].keys())
         resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
         with patch.object(video, "_upload_to_comfy", return_value="image.png"):
             workflow, _ = video._build_prompt("i2v", request, resolved)
         generator = next(node for node in workflow.values() if node["class_type"] == "MiniMaxH3ImageToVideo")
-        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (4096, 16384))
+        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (352, 528))
         with self.assertRaises(ValidationError):
-            video.VideoGenerationRequest(prompt="move", width=0)
+            video.VideoGenerationRequest(prompt="move", megapixels=0.04)
         with self.assertRaises(ValidationError):
-            video.VideoGenerationRequest(prompt="move", width=33)
+            video.VideoGenerationRequest.model_validate({"prompt": "move", "width": 352, "height": 528})
+
+    def test_reference_media_never_sets_output_dimensions(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="move <Picture 1>",
+            aspect_ratio="2:3",
+            megapixels=0.2,
+            reference_images=[video.VideoAsset(kind="image", file_index=0)],
+        )
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="large-source.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="large-source.png"):
+            workflow, _ = video._build_prompt("r2v", request, resolved)
+
+        generator = next(node for node in workflow.values() if "width" in node["inputs"] and "height" in node["inputs"])
+        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (352, 528))
 
     def test_fps_validation_rejects_values_outside_supported_range(self) -> None:
         with self.assertRaises(ValidationError):

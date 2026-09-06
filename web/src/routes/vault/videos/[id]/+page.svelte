@@ -24,10 +24,14 @@
 		media_type: string;
 		mode: 'i2v' | 'fl2v' | 'r2v';
 		fps: number;
+		aspect_ratio: '2:3' | '3:2' | '1:1' | '16:9' | '9:16' | null;
+		megapixels: number | null;
 		width: number;
 		height: number;
 		seed: number;
 		steps: number;
+		sampler_name: string | null;
+		scheduler: string | null;
 		use_pdd: boolean;
 		checkpoint: string | null;
 		loras: { name: string; strength: number }[];
@@ -132,11 +136,11 @@
 			mode: generation.mode,
 			...(generation.checkpoint ? { checkpoint: generation.checkpoint } : {}),
 			loras: generation.loras,
-			width: generation.width,
-			height: generation.height,
+			...(generation.aspect_ratio && generation.megapixels ? { aspect_ratio: generation.aspect_ratio, megapixels: generation.megapixels } : {}),
 			duration: generation.duration_seconds ?? 0,
 			fps: generation.fps,
 			steps: generation.steps,
+		...(generation.sampler_name && generation.scheduler ? { sampler_name: generation.sampler_name, scheduler: generation.scheduler } : {}),
 			use_pdd: generation.use_pdd,
 			seed: String(generation.seed),
 			random_seed: false
@@ -197,7 +201,9 @@
 						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
 						<div><dt class="text-muted-foreground">Steps</dt><dd class="mt-1 font-medium">{generation.steps}</dd></div>
+						<div><dt class="text-muted-foreground">비율 / 메가픽셀</dt><dd class="mt-1 font-medium">{generation.aspect_ratio ?? '기록 없음'} / {generation.megapixels?.toFixed(1) ?? '기록 없음'} MP</dd></div>
 						<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
+						<div><dt class="text-muted-foreground">샘플러 / 스케줄러</dt><dd class="mt-1 break-all font-medium">{generation.use_pdd ? 'PDD: euler / PDD schedule' : generation.sampler_name && generation.scheduler ? `${generation.sampler_name} / ${generation.scheduler}` : '기록 없음'}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 						<div><dt class="text-muted-foreground">Checkpoint</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint ?? '기록 없음'}</dd></div>
 

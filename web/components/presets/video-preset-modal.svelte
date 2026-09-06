@@ -9,7 +9,8 @@
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 	import { type LoraSelection, type Preset, type PresetValues, type VideoGenerationOptions, type VideoMode } from '$lib/types/presets';
 
-	type PresetField = 'prompt' | 'mode' | 'checkpoint' | 'loras' | 'size' | 'duration' | 'fps' | 'steps' | 'pdd' | 'seed';
+	type PresetField = 'prompt' | 'mode' | 'checkpoint' | 'loras' | 'resolution' | 'duration' | 'fps' | 'steps' | 'sampling' | 'pdd' | 'seed';
+	type VideoAspectRatio = '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 	type Props = {
 		open?: boolean;
 		preset: Preset | null;
@@ -25,10 +26,11 @@
 		{ key: 'mode', label: '생성 방식' },
 		{ key: 'checkpoint', label: 'checkpoint' },
 		{ key: 'loras', label: 'LoRA' },
-		{ key: 'size', label: '영상 크기' },
+		{ key: 'resolution', label: '비율·메가픽셀' },
 		{ key: 'duration', label: '길이(초)' },
 		{ key: 'fps', label: 'FPS' },
 		{ key: 'steps', label: 'Steps' },
+		{ key: 'sampling', label: '샘플러 / 스케줄러' },
 		{ key: 'pdd', label: 'PDD 사용' },
 		{ key: 'seed', label: 'Seed' }
 	];
@@ -37,14 +39,15 @@
 		{ value: 'fl2v', label: 'FL2V' },
 		{ value: 'r2v', label: 'R2V' }
 	];
-	const allFields: Record<PresetField, boolean> = { prompt: true, mode: true, checkpoint: true, loras: true, size: true, duration: true, fps: true, steps: true, pdd: true, seed: true };
+	const allFields: Record<PresetField, boolean> = { prompt: true, mode: true, checkpoint: true, loras: true, resolution: true, duration: true, fps: true, steps: true, sampling: true, pdd: true, seed: true };
+	const videoAspectRatioOptions: { value: VideoAspectRatio; label: string }[] = [{ value: '2:3', label: '2:3' }, { value: '3:2', label: '3:2' }, { value: '1:1', label: '1:1' }, { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }];
 
 	let editingId = $state<string | null>(null);
 	let presetName = $state('');
 	let prompt = $state('');
 	let videoMode = $state<VideoMode>('i2v');
 	let checkpoint = $state('');
-	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', loras: [], pdd_available: false });
+	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false });
 	let videoOptionsLoading = $state(false);
 	let videoOptionsRequestId = 0;
 	let checkpointModalOpen = $state(false);
@@ -52,12 +55,15 @@
 	let loraModalOpen = $state(false);
 	let loraFolder = $state('');
 	let loras = $state<LoraSelection[]>([]);
-	let width = $state(1344);
-	let height = $state(768);
+	let aspectRatio = $state<VideoAspectRatio>('16:9');
+	let megapixels = $state(1.0);
 	let duration = $state(5);
 	let fps = $state(24);
 	let steps = $state(4);
 	let usePdd = $state(false);
+	let samplerName = $state('');
+	let scheduler = $state('');
+	let samplingOpen = $state(false);
 
 	let seed = $state('');
 	let randomSeed = $state(true);
@@ -74,7 +80,7 @@
 		if (!open) return;
 		const values = preset?.values ?? initialValues;
 		const fields = new Set(preset?.saved_fields ?? Object.keys(allFields));
-		const hasSize = fields.has('size') || fields.has('width') || fields.has('height');
+		const hasResolution = fields.has('resolution') || fields.has('aspect_ratio') || fields.has('megapixels') || fields.has('width') || fields.has('height');
 		const hasSeed = fields.has('seed') || fields.has('random_seed');
 		editingId = preset?.id ?? null;
 		presetName = preset?.name ?? '';
@@ -82,12 +88,14 @@
 		videoMode = values.mode ?? 'i2v';
 		checkpoint = values.checkpoint ?? '';
 		loras = values.loras ?? [];
-		width = values.width ?? 1344;
-		height = values.height ?? 768;
+		aspectRatio = values.aspect_ratio && values.aspect_ratio !== 'custom' ? values.aspect_ratio : '16:9';
+		megapixels = values.megapixels ?? (values.width && values.height ? Math.floor(values.width * values.height / 100_000 + 0.5) / 10 : 1.0);
 		duration = values.duration ?? 5;
 		fps = values.fps ?? 24;
 		steps = values.steps ?? 4;
 		usePdd = values.use_pdd ?? false;
+		samplerName = values.sampler_name ?? '';
+		scheduler = values.scheduler ?? '';
 
 		seed = values.seed ?? '';
 		randomSeed = values.random_seed ?? !values.seed;
@@ -96,10 +104,11 @@
 			mode: fields.has('mode') || fields.has('checkpoint'),
 			checkpoint: fields.has('checkpoint'),
 			loras: fields.has('loras'),
-			size: hasSize,
+			resolution: hasResolution,
 			duration: fields.has('duration'),
 			fps: fields.has('fps'),
 			steps: fields.has('steps'),
+			sampling: fields.has('sampler_name') || fields.has('scheduler') || fields.has('sampling'),
 			pdd: fields.has('use_pdd'),
 			seed: hasSeed
 		};
@@ -124,11 +133,15 @@
 			checkpointFolder = '';
 			loraFolder = '';
 			loras = loras.filter((lora) => options.loras.includes(lora.name));
+			samplerName = options.samplers.includes(samplerName) ? samplerName : options.default_sampler;
+			scheduler = options.schedulers.includes(scheduler) ? scheduler : options.default_scheduler;
 		} catch (reason) {
 			if (requestId !== videoOptionsRequestId) return;
-			videoOptions = { mode, checkpoints: [], default_checkpoint: '', loras: [], pdd_available: false };
+			videoOptions = { mode, checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false };
 			checkpoint = '';
 			loras = [];
+			samplerName = '';
+			scheduler = '';
 			error = reason instanceof Error ? reason.message : '동영상 checkpoint 목록을 불러오지 못했습니다.';
 		} finally {
 			if (requestId === videoOptionsRequestId) videoOptionsLoading = false;
@@ -161,13 +174,17 @@
 		if (selectedFields.mode) values.mode = videoMode;
 		if (selectedFields.checkpoint) values.checkpoint = checkpoint;
 		if (selectedFields.loras) values.loras = loras.map(({ name, strength }) => ({ name, strength }));
-		if (selectedFields.size) {
-			values.width = width;
-			values.height = height;
+		if (selectedFields.resolution) {
+			values.aspect_ratio = aspectRatio;
+			values.megapixels = megapixels;
 		}
 		if (selectedFields.duration) values.duration = duration;
 		if (selectedFields.fps) values.fps = fps;
 		if (selectedFields.steps) values.steps = steps;
+		if (selectedFields.sampling) {
+			values.sampler_name = samplerName;
+			values.scheduler = scheduler;
+		}
 		if (selectedFields.pdd) values.use_pdd = usePdd;
 
 		if (selectedFields.seed) {
@@ -208,15 +225,21 @@
 		{#if selectedFields.mode}<Select id="video-preset-mode" label="생성 방식" options={videoModeOptions} bind:value={videoMode} />{/if}
 		{#if selectedFields.checkpoint}<div class="space-y-2"><span class="text-sm font-medium">체크포인트</span><button type="button" onclick={() => (checkpointModalOpen = true)} disabled={videoOptionsLoading || videoOptions.checkpoints.length === 0} class="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-input bg-background px-3 py-2 text-left text-sm transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="min-w-0 truncate">{videoOptionsLoading ? '체크포인트 목록을 불러오는 중' : checkpoint || '체크포인트를 선택해 주세요'}</span><span class="shrink-0 text-xs font-semibold text-primary">선택</span></button></div>{/if}
 		{#if selectedFields.loras}<div class="space-y-3"><div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length})</span></span><button type="button" onclick={() => (loraModalOpen = true)} disabled={videoOptionsLoading || videoOptions.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button></div>{#if loras.length === 0}<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>{:else}<div class="space-y-3">{#each loras as lora (lora.name)}<div class="rounded-lg border border-border p-3"><p class="break-all text-sm font-medium">{lora.name}</p><label class="mt-3 block space-y-2" for={`video-preset-lora-strength-${lora.name}`}><span class="text-sm font-medium">Strength</span><input id={`video-preset-lora-strength-${lora.name}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} /></label></div>{/each}</div>{/if}</div>{/if}
-		{#if selectedFields.size}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-width"><span class="text-sm font-medium">가로</span><input id="video-preset-width" type="number" min="32" max="16384" step="32" bind:value={width} class={numberInputClass} /></label><label class="block space-y-2" for="video-preset-height"><span class="text-sm font-medium">세로</span><input id="video-preset-height" type="number" min="32" max="16384" step="32" bind:value={height} class={numberInputClass} /></label></div>{/if}
+		{#if selectedFields.resolution}<div class="grid gap-4 sm:grid-cols-2"><Select id="video-preset-aspect-ratio" label="영상 비율" options={videoAspectRatioOptions} bind:value={aspectRatio} /><label class="block space-y-2" for="video-preset-megapixels"><span class="text-sm font-medium">메가픽셀</span><input id="video-preset-megapixels" type="number" min="0.1" step="0.1" bind:value={megapixels} class={numberInputClass} /></label></div>{/if}
 		{#if selectedFields.duration}<label class="block space-y-2" for="video-preset-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-preset-duration" type="number" step="0.1" bind:value={duration} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.fps}<label class="block space-y-2" for="video-preset-fps"><span class="text-sm font-medium">FPS</span><input id="video-preset-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.steps}<label class="block space-y-2" for="video-preset-steps"><span class="text-sm font-medium">Steps</span><input id="video-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} /></label>{/if}
+		{#if selectedFields.sampling}<button type="button" onclick={() => (samplingOpen = true)} disabled={videoOptionsLoading || !samplerName || !scheduler} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName} / {scheduler}</span></button>{/if}
 		{#if selectedFields.pdd}<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="video-preset-use-pdd"><input id="video-preset-use-pdd" type="checkbox" bind:checked={usePdd} class="size-4 accent-primary" /><span>PDD 사용</span></label>{/if}
 		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-seed"><span class="text-sm font-medium">Seed</span><input id="video-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="video-preset-random-seed"><input id="video-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>
 	{#snippet footer()}<OutlinedButton disabled={saving} onclick={() => (open = false)}>취소</OutlinedButton><PrimaryButton loading={saving} disabled={!presetName.trim() || !selectedFieldCount()} onclick={() => void save()}>{editingId ? '수정' : '저장'}</PrimaryButton>{/snippet}
+</Modal>
+
+<Modal bind:open={samplingOpen} title="샘플러 / 스케줄러" description="현재 ComfyUI에서 지원하는 값을 선택하세요.">
+	<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-sampler"><span class="text-sm font-medium">샘플러</span><select id="video-preset-sampler" bind:value={samplerName} class={numberInputClass}>{#each videoOptions.samplers as option}<option value={option}>{option}</option>{/each}</select></label><label class="block space-y-2" for="video-preset-scheduler"><span class="text-sm font-medium">스케줄러</span><select id="video-preset-scheduler" bind:value={scheduler} class={numberInputClass}>{#each videoOptions.schedulers as option}<option value={option}>{option}</option>{/each}</select></label></div>
+	{#snippet footer()}<PrimaryButton onclick={() => (samplingOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 </Modal>
 
 <Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="전체 또는 하위 folder에서 하나를 선택하세요.">

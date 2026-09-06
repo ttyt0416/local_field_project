@@ -143,10 +143,14 @@ class VaultVideoPage(BaseModel):
 
 
 class VaultVideoDetail(VaultVideoSummary):
+    aspect_ratio: str | None
+    megapixels: float | None
     width: int
     height: int
     seed: int
     steps: int
+    sampler_name: str | None
+    scheduler: str | None
     use_pdd: bool
     checkpoint: str | None
     loras: list[VaultLora]
@@ -502,10 +506,14 @@ def vault_video_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
     return VaultVideoDetail(
         **_video_summary(generation, user.id, include_file_size=True).model_dump(),
+        aspect_ratio=generation.get("aspect_ratio"),
+        megapixels=generation.get("megapixels"),
         width=generation["width"],
         height=generation["height"],
         seed=generation["seed"],
         steps=int(generation.get("steps") or 4),
+        sampler_name=generation.get("sampler_name"),
+        scheduler=generation.get("scheduler"),
         use_pdd=bool(generation.get("use_pdd")),
         checkpoint=generation.get("checkpoint") or None,
         loras=_loras(generation),

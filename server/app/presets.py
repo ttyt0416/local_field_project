@@ -36,6 +36,7 @@ class PresetValues(BaseModel):
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
     loras: list[PresetLora] | None = None
     aspect_ratio: PresetAspectRatio | None = None
+    megapixels: float | None = Field(default=None, gt=0)
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
     denoise: float | None = Field(default=None, ge=0, le=1)

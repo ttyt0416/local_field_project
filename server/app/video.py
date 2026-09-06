@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime
 import json
 import math
@@ -19,7 +20,7 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
 from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
@@ -108,6 +109,18 @@ _VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese
 _VIDEO_PROMPT_SHOT_FIELDS = ("style", "timeline", "camera", "audio", "text")
 _VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music")
 _VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|Shot|At|N/A|Picture|Video|Audio|Subject"
+VideoAspectRatio = Literal["2:3", "3:2", "1:1", "16:9", "9:16"]
+_VIDEO_ASPECT_RATIOS: dict[VideoAspectRatio, tuple[int, int]] = {
+    "2:3": (2, 3),
+    "3:2": (3, 2),
+    "1:1": (1, 1),
+    "16:9": (16, 9),
+    "9:16": (9, 16),
+}
+_VIDEO_WIDTH_STEP = 32
+_VIDEO_HEIGHT_STEP = 16
+_DEFAULT_VIDEO_SAMPLER = "res_multistep"
+_DEFAULT_VIDEO_SCHEDULER = "simple"
 
 
 class VideoAsset(BaseModel):
@@ -122,6 +135,8 @@ class VideoLoraSelection(BaseModel):
 
 
 class VideoGenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str = Field(min_length=1, max_length=5000)
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
     loras: list[VideoLoraSelection] = Field(default_factory=list)
@@ -130,8 +145,8 @@ class VideoGenerationRequest(BaseModel):
     segment_prompts: list[str] = Field(default_factory=list, max_length=360)
     improved_segment_prompts: list[str] = Field(default_factory=list, max_length=360)
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
-    width: int = Field(default=1344, ge=32, le=16384, multiple_of=32)
-    height: int = Field(default=768, ge=32, le=16384, multiple_of=32)
+    aspect_ratio: VideoAspectRatio = "16:9"
+    megapixels: float = Field(default=1.0, gt=0)
     duration: float = Field(default=5)
     continuation_mode: Literal["r2v", "i2v"] = "r2v"
     fps: float = Field(default=24, ge=1, le=120)
@@ -143,6 +158,28 @@ class VideoGenerationRequest(BaseModel):
     reference_images: list[VideoAsset] = Field(default_factory=list, max_length=9)
     reference_videos: list[VideoAsset] = Field(default_factory=list, max_length=3)
     reference_audios: list[VideoAsset] = Field(default_factory=list, max_length=3)
+    sampler_name: str = Field(default=_DEFAULT_VIDEO_SAMPLER, min_length=1, max_length=64)
+    scheduler: str = Field(default=_DEFAULT_VIDEO_SCHEDULER, min_length=1, max_length=64)
+    _execution_dimensions: tuple[int, int] | None = PrivateAttr(default=None)
+
+    @field_validator("megapixels")
+    @classmethod
+    def normalize_megapixels(cls, value: float) -> float:
+        try:
+            normalized = Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("메가픽셀은 유한한 숫자여야 합니다.") from exc
+        if normalized <= 0:
+            raise ValueError("메가픽셀은 한 자리 반올림 후 0.1 이상이어야 합니다.")
+        return float(normalized)
+
+    @property
+    def width(self) -> int:
+        return (self._execution_dimensions or _video_dimensions(self.aspect_ratio, self.megapixels))[0]
+
+    @property
+    def height(self) -> int:
+        return (self._execution_dimensions or _video_dimensions(self.aspect_ratio, self.megapixels))[1]
 
     @field_validator("prompt_output_languages")
     @classmethod
@@ -150,6 +187,34 @@ class VideoGenerationRequest(BaseModel):
         if len(value) != len(set(value)):
             raise ValueError("동영상 프롬프트 출력 언어는 중복 선택할 수 없습니다.")
         return value
+
+
+def _rounded_megapixels(value: float) -> float:
+    return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def _video_dimensions(aspect_ratio: VideoAspectRatio, megapixels: float) -> tuple[int, int]:
+    ratio_width, ratio_height = _VIDEO_ASPECT_RATIOS[aspect_ratio]
+    ratio = ratio_width / ratio_height
+    target_pixels = megapixels * 1_000_000
+    ideal_width = math.sqrt(target_pixels * ratio)
+    ideal_height = math.sqrt(target_pixels / ratio)
+    center_width = max(_VIDEO_WIDTH_STEP, round(ideal_width / _VIDEO_WIDTH_STEP) * _VIDEO_WIDTH_STEP)
+    center_height = max(_VIDEO_HEIGHT_STEP, round(ideal_height / _VIDEO_HEIGHT_STEP) * _VIDEO_HEIGHT_STEP)
+    # ponytail: search 64 native steps around the ideal; expand only if real high-MP requests need a wider grid.
+    candidates: list[tuple[tuple[float, float, float, float], int, int]] = []
+    for width in range(max(_VIDEO_WIDTH_STEP, center_width - _VIDEO_WIDTH_STEP * 64), center_width + _VIDEO_WIDTH_STEP * 65, _VIDEO_WIDTH_STEP):
+        for height in range(max(_VIDEO_HEIGHT_STEP, center_height - _VIDEO_HEIGHT_STEP * 64), center_height + _VIDEO_HEIGHT_STEP * 65, _VIDEO_HEIGHT_STEP):
+            actual_megapixels = width * height / 1_000_000
+            score = (
+                abs(_rounded_megapixels(actual_megapixels) - megapixels),
+                abs(math.log((width / height) / ratio)),
+                abs(actual_megapixels - megapixels),
+                abs(width - ideal_width) + abs(height - ideal_height),
+            )
+            candidates.append((score, width, height))
+    _, width, height = min(candidates)
+    return width, height
 
 
 class VideoPromptEnhancementRequest(BaseModel):
@@ -188,6 +253,10 @@ class VideoGenerationOptions(BaseModel):
     checkpoints: list[str]
     default_checkpoint: str
     loras: list[str]
+    samplers: list[str] = Field(default_factory=list)
+    schedulers: list[str] = Field(default_factory=list)
+    default_sampler: str = _DEFAULT_VIDEO_SAMPLER
+    default_scheduler: str = _DEFAULT_VIDEO_SCHEDULER
     pdd_available: bool = False
 
 
@@ -263,6 +332,7 @@ async def create_video(
         request = VideoGenerationRequest.model_validate_json(payload)
         request = request.model_copy(update={"checkpoint": _validated_video_checkpoint(mode, request.checkpoint)})
         _validate_video_loras(mode, request)
+        _validate_video_sampling(mode, request)
         _validate_video_pdd(mode, request)
         _validate_request(mode, request, files)
         steps = _effective_video_steps(request)
@@ -299,6 +369,10 @@ async def create_video(
         steps=steps,
         use_pdd=request.use_pdd,
         upscale=True,
+        aspect_ratio=request.aspect_ratio,
+        megapixels=request.megapixels,
+        sampler_name=request.sampler_name,
+        scheduler=request.scheduler,
         width=request.width,
         height=request.height,
         length=_video_frame_length(request),
@@ -491,6 +565,10 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
         for name in _node_choices(object_info, "LoraLoaderModelOnly", "lora_name")
         if name.startswith(_MINIMAX_LORA_PREFIX)
     ]
+    samplers = _node_choices(object_info, "KSamplerSelect", "sampler_name")
+    schedulers = _node_choices(object_info, "BasicScheduler", "scheduler")
+    if not samplers or not schedulers:
+        raise _ComfyUIError("ComfyUI에서 영상 sampler 또는 scheduler 목록을 찾을 수 없습니다.")
     pdd_files = (
         set(_node_choices(object_info, "MiniMaxH3PDDAccApply", "pdd_file"))
         if "MiniMaxH3PDDAccApply" in object_info
@@ -501,6 +579,10 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
         checkpoints=checkpoints,
         default_checkpoint=default_checkpoint,
         loras=loras,
+        samplers=samplers,
+        schedulers=schedulers,
+        default_sampler=_DEFAULT_VIDEO_SAMPLER if _DEFAULT_VIDEO_SAMPLER in samplers else samplers[0],
+        default_scheduler=_DEFAULT_VIDEO_SCHEDULER if _DEFAULT_VIDEO_SCHEDULER in schedulers else schedulers[0],
         pdd_available=_PDD_FILES["ref2va"] in pdd_files,
     )
 
@@ -522,6 +604,14 @@ def _validate_video_loras(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGen
     options = _video_options(mode)
     if any(name not in options.loras for name in names):
         raise HTTPException(status_code=422, detail="선택한 영상 checkpoint에서 사용할 수 없는 LoRA입니다.")
+
+
+def _validate_video_sampling(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGenerationRequest) -> None:
+    options = _video_options(mode)
+    if request.sampler_name not in options.samplers:
+        raise HTTPException(status_code=422, detail="선택한 영상 sampler를 찾을 수 없습니다.")
+    if request.scheduler not in options.schedulers:
+        raise HTTPException(status_code=422, detail="선택한 영상 scheduler를 찾을 수 없습니다.")
 
 
 def _pdd_file(checkpoint: str | None) -> str:
@@ -557,11 +647,17 @@ def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
     return model or "", selected
 
 
-def _configure_video_steps(prompt: dict[str, dict[str, Any]], steps: int) -> None:
+def _configure_video_sampling(
+    prompt: dict[str, dict[str, Any]], *, steps: int, sampler_name: str, scheduler: str
+) -> None:
     for node in prompt.values():
         inputs = node.get("inputs")
-        if isinstance(inputs, dict) and node.get("class_type") == "BasicScheduler":
-            inputs["steps"] = steps
+        if not isinstance(inputs, dict):
+            continue
+        if node.get("class_type") == "KSamplerSelect":
+            inputs["sampler_name"] = sampler_name
+        if node.get("class_type") == "BasicScheduler":
+            inputs.update(steps=steps, scheduler=scheduler)
 
 
 def _inject_video_loras(
@@ -1049,7 +1145,7 @@ def _build_prompt(
             if node.get("class_type") == "CreateVideo":
                 inputs["fps"] = request.fps
     steps = _effective_video_steps(request)
-    _configure_video_steps(prompt, steps)
+    _configure_video_sampling(prompt, steps=steps, sampler_name=request.sampler_name, scheduler=request.scheduler)
     _inject_video_loras(
         prompt,
         request.loras,
@@ -1154,6 +1250,27 @@ def _stored_video_loras(generation: dict[str, Any]) -> list[VideoLoraSelection]:
     if not isinstance(stored, list):
         return []
     return [VideoLoraSelection.model_validate(value) for value in stored if isinstance(value, dict)]
+
+
+def _generation_aspect_ratio(generation: dict[str, Any]) -> VideoAspectRatio:
+    stored = generation.get("aspect_ratio")
+    if stored in _VIDEO_ASPECT_RATIOS:
+        return stored
+    width = max(1, int(generation.get("width") or 1))
+    height = max(1, int(generation.get("height") or 1))
+    return min(_VIDEO_ASPECT_RATIOS, key=lambda value: abs(math.log((width / height) / (_VIDEO_ASPECT_RATIOS[value][0] / _VIDEO_ASPECT_RATIOS[value][1]))))
+
+
+def _generation_megapixels(generation: dict[str, Any]) -> float:
+    stored = generation.get("megapixels")
+    if isinstance(stored, (int, float)) and stored > 0:
+        return _rounded_megapixels(float(stored))
+    return max(0.1, _rounded_megapixels(int(generation["width"]) * int(generation["height"]) / 1_000_000))
+
+
+def _keep_generation_dimensions(request: VideoGenerationRequest, generation: dict[str, Any]) -> VideoGenerationRequest:
+    request._execution_dimensions = (int(generation["width"]), int(generation["height"]))
+    return request
 
 
 def _video_sequence_fields(generation: dict[str, Any]) -> dict[str, int]:
@@ -1350,8 +1467,10 @@ def _queue_video_continuation(
             loras=_stored_video_loras(generation),
             steps=int(generation.get("steps") or 4),
             use_pdd=bool(generation.get("use_pdd")),
-            width=int(generation["width"]),
-            height=int(generation["height"]),
+            aspect_ratio=_generation_aspect_ratio(generation),
+            megapixels=_generation_megapixels(generation),
+            sampler_name=str(generation.get("sampler_name") or _DEFAULT_VIDEO_SAMPLER),
+            scheduler=str(generation.get("scheduler") or _DEFAULT_VIDEO_SCHEDULER),
             duration=durations[next_index],
             fps=float(generation["fps"]),
             seed=int(generation["seed"]),
@@ -1365,8 +1484,10 @@ def _queue_video_continuation(
             loras=_stored_video_loras(generation),
             steps=int(generation.get("steps") or 4),
             use_pdd=bool(generation.get("use_pdd")),
-            width=int(generation["width"]),
-            height=int(generation["height"]),
+            aspect_ratio=_generation_aspect_ratio(generation),
+            megapixels=_generation_megapixels(generation),
+            sampler_name=str(generation.get("sampler_name") or _DEFAULT_VIDEO_SAMPLER),
+            scheduler=str(generation.get("scheduler") or _DEFAULT_VIDEO_SCHEDULER),
             duration=durations[next_index],
             fps=float(generation["fps"]),
             seed=int(generation["seed"]),
@@ -1375,6 +1496,7 @@ def _queue_video_continuation(
         workflow_mode = "i2v"
     else:
         raise _ComfyUIError("다음 영상 구간 연결 방식이 올바르지 않습니다.")
+    request = _keep_generation_dimensions(request, generation)
     prompt, _ = _build_prompt(workflow_mode, request, resolved, effective_prompt=prompts[next_index])
     prompt_payload: dict[str, Any] = {"prompt": prompt, "client_id": generation["client_id"]}
     if next_index + 1 < len(durations):

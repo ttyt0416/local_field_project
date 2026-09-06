@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ArrowLeftRight, AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Save, Sparkles, Video, X } from '@lucide/svelte';
+	import { AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Save, Sparkles, Video, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -18,7 +18,7 @@
 	import VideoMedia from '../../../../components/media/video.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { videoGenerationStore, type VideoLibraryAsset, type VideoMode } from '$lib/stores/video-generation.svelte';
-	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
+	import { apiForm, apiJson } from '$lib/utils/api';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
@@ -39,11 +39,18 @@
 	type StoredSource = 'uploaded' | 'generated';
 	type VideoPromptLanguage = 'ko' | 'en' | 'ja';
 	type ContinuationMode = 'r2v' | 'i2v';
-	type MediaDimensions = { width: number; height: number };
-	type MediaDimensionState = MediaDimensions | 'failed';
-	const minimaxDimensionMin = 32;
-	const minimaxDimensionMax = 16384;
-	const minimaxDimensionStep = 32;
+	type VideoAspectRatio = '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
+	type VideoDimensions = { width: number; height: number; megapixels: number };
+	const videoAspectRatioOptions: { value: VideoAspectRatio; label: string }[] = [
+		{ value: '2:3', label: '2:3' },
+		{ value: '3:2', label: '3:2' },
+		{ value: '1:1', label: '1:1' },
+		{ value: '16:9', label: '16:9' },
+		{ value: '9:16', label: '9:16' }
+	];
+	const videoAspectRatios: Record<VideoAspectRatio, readonly [number, number]> = {
+		'2:3': [2, 3], '3:2': [3, 2], '1:1': [1, 1], '16:9': [16, 9], '9:16': [9, 16]
+	};
 
 	const modes: { value: VideoMode; label: string; description: string }[] = [
 		{ value: 'i2v', label: 'I2V', description: '시작 이미지에서 영상 생성' },
@@ -74,7 +81,7 @@
 	let ready = $state(false);
 	let mode = $state<VideoMode>('i2v');
 	let checkpoint = $state('');
-	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', loras: [], pdd_available: false });
+	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false });
 	let videoOptionsLoading = $state(false);
 	let videoOptionsRequestId = 0;
 	let checkpointModalOpen = $state(false);
@@ -89,8 +96,11 @@
 	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
 	let enhancingPrompt = $state(false);
 	let enhancingSegmentIndex = $state<number | null>(null);
-	let width = $state(1344);
-	let height = $state(768);
+	let aspectRatio = $state<VideoAspectRatio>('16:9');
+	let megapixels = $state(1.0);
+	let samplerName = $state('');
+	let scheduler = $state('');
+	let samplingModalOpen = $state(false);
 	let duration = $state(5);
 	let continuationMode = $state<ContinuationMode>('r2v');
 	let fps = $state(24);
@@ -143,10 +153,7 @@
 	let storedAssetSource = $state<StoredSource>('uploaded');
 	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
 	let storedImagePreset = $derived(imagePresetCategories.find((category) => category.value === storedImagePresetType) ?? imagePresetCategories[0]);
-	let mediaDimensions = $state<Record<string, MediaDimensionState>>({});
-	let sizeApplying = $state('');
-	let mediaDimensionRequestId = 0;
-	const mediaDimensionRequests = new Map<string, number>();
+
 	let storedRequestId = 0;
 	let selectionKind = $derived(
 		selectionTarget === 'videos' ? 'video' : selectionTarget === 'audios' ? 'audio' : 'image'
@@ -168,6 +175,7 @@
 	let filteredCheckpoints = $derived(filterModelFolder(videoOptions.checkpoints, checkpointFolder));
 	let loraFolders = $derived(modelFolders(videoOptions.loras));
 	let visibleLoras = $derived(filterModelFolder(videoOptions.loras, loraFolder));
+	let calculatedDimensions = $derived(videoDimensions(aspectRatio, Number(megapixels)));
 
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
 	let isPromptEnhancing = $derived(enhancingPrompt || enhancingSegmentIndex !== null);
@@ -238,14 +246,6 @@
 		selectedReferenceImages = pending.referenceImages;
 		selectedReferenceVideos = pending.referenceVideos;
 		selectedReferenceAudios = pending.referenceAudios;
-		if (selectedFirst?.url) rememberMediaDimensions('first', selectedFirst.url, 'image');
-		if (selectedLast?.url) rememberMediaDimensions('last', selectedLast.url, 'image');
-		selectedReferenceImages.forEach((asset) => {
-			if (asset.url) rememberMediaDimensions(`reference-image-${asset.file_id}`, asset.url, 'image');
-		});
-		selectedReferenceVideos.forEach((asset) => {
-			if (asset.url) rememberMediaDimensions(`reference-video-${asset.file_id}`, asset.url, 'video');
-		});
 	}
 
 	async function loadVideoOptions(nextMode: VideoMode) {
@@ -259,11 +259,15 @@
 			checkpointFolder = '';
 			loraFolder = '';
 			loras = loras.filter((lora) => options.loras.includes(lora.name));
+			samplerName = options.samplers.includes(samplerName) ? samplerName : options.default_sampler;
+			scheduler = options.schedulers.includes(scheduler) ? scheduler : options.default_scheduler;
 		} catch (reason) {
 			if (!active || requestId !== videoOptionsRequestId) return;
-			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '', loras: [], pdd_available: false };
+			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false };
 			checkpoint = '';
 			loras = [];
+			samplerName = '';
+			scheduler = '';
 			error = reason instanceof Error ? reason.message : '동영상 checkpoint 목록을 불러오지 못했습니다.';
 		} finally {
 			if (requestId === videoOptionsRequestId) videoOptionsLoading = false;
@@ -294,8 +298,6 @@
 		selectedReferenceImages = [];
 		selectedReferenceVideos = [];
 		selectedReferenceAudios = [];
-		mediaDimensionRequests.clear();
-		mediaDimensions = {};
 		void loadVideoOptions(next);
 	}
 
@@ -376,76 +378,51 @@
 		if (next !== continuationMode) resetImprovedPrompts();
 	}
 
-	async function readMediaDimensions(source: Blob | string, kind: 'image' | 'video') {
-		let objectUrl = '';
-		try {
-			if (source instanceof Blob) objectUrl = URL.createObjectURL(source);
-			else if (!/^(https?:)?\/\//.test(source)) objectUrl = URL.createObjectURL(await apiBlob(source));
-			const url = objectUrl || (typeof source === 'string' ? source : '');
-			const element = kind === 'video' ? document.createElement('video') : new Image();
-			return await new Promise<{ width: number; height: number }>((resolve, reject) => {
-				const succeed = (width: number, height: number) => {
-					if (width > 0 && height > 0) resolve({ width, height });
-					else reject(new Error('invalid dimensions'));
-				};
-				element.onerror = () => reject(new Error('media metadata unavailable'));
-				if (kind === 'video') {
-					const video = element as HTMLVideoElement;
-					video.preload = 'metadata';
-					video.onloadedmetadata = () => succeed(video.videoWidth, video.videoHeight);
-				} else {
-					const image = element as HTMLImageElement;
-					image.onload = () => succeed(image.naturalWidth, image.naturalHeight);
+	function roundedMegapixels(value: number) {
+		return Math.floor(value * 10 + 0.5 + Number.EPSILON) / 10;
+	}
+
+	function isBetterScore(candidate: number[], current: number[]) {
+		for (let index = 0; index < candidate.length; index += 1) {
+			if (candidate[index] !== current[index]) return candidate[index] < current[index];
+		}
+		return false;
+	}
+
+	function nearestVideoAspectRatio(width: number, height: number): VideoAspectRatio {
+		return videoAspectRatioOptions.reduce((closest, option) => {
+			const [ratioWidth, ratioHeight] = videoAspectRatios[option.value];
+			const [closestWidth, closestHeight] = videoAspectRatios[closest];
+			return Math.abs(Math.log(width / height / (ratioWidth / ratioHeight))) < Math.abs(Math.log(width / height / (closestWidth / closestHeight)))
+				? option.value
+				: closest;
+		}, videoAspectRatioOptions[0].value);
+	}
+
+	function videoDimensions(ratio: VideoAspectRatio, requestedMegapixels: number): VideoDimensions | null {
+		if (!Number.isFinite(requestedMegapixels) || requestedMegapixels <= 0) return null;
+		const megapixels = roundedMegapixels(requestedMegapixels);
+		if (megapixels <= 0) return null;
+		const [ratioWidth, ratioHeight] = videoAspectRatios[ratio];
+		const targetPixels = megapixels * 1_000_000;
+		const idealWidth = Math.sqrt(targetPixels * ratioWidth / ratioHeight);
+		const idealHeight = Math.sqrt(targetPixels * ratioHeight / ratioWidth);
+		const centerWidth = Math.max(32, Math.round(idealWidth / 32) * 32);
+		const centerHeight = Math.max(16, Math.round(idealHeight / 16) * 16);
+		// ponytail: mirror the server's 64-step local grid; expand only with a real high-MP need.
+		let best: VideoDimensions | null = null;
+		let bestScore: number[] | null = null;
+		for (let width = Math.max(32, centerWidth - 32 * 64); width <= centerWidth + 32 * 64; width += 32) {
+			for (let height = Math.max(16, centerHeight - 16 * 64); height <= centerHeight + 16 * 64; height += 16) {
+				const actualMegapixels = width * height / 1_000_000;
+				const score = [Math.abs(roundedMegapixels(actualMegapixels) - megapixels), Math.abs(Math.log((width / height) / (ratioWidth / ratioHeight))), Math.abs(actualMegapixels - megapixels), Math.abs(width - idealWidth) + Math.abs(height - idealHeight)];
+				if (!bestScore || isBetterScore(score, bestScore)) {
+					best = { width, height, megapixels: actualMegapixels };
+					bestScore = score;
 				}
-				element.src = url;
-			});
-		} finally {
-			if (objectUrl) URL.revokeObjectURL(objectUrl);
+			}
 		}
-	}
-
-	async function applyMediaSize(key: string, source: Blob | string | null, kind: 'image' | 'video') {
-		if (!source || sizeApplying) return;
-		sizeApplying = key;
-		error = '';
-		try {
-			const cached = mediaDimensions[key];
-			const dimensions = cached && cached !== 'failed' ? cached : await readMediaDimensions(source, kind);
-			const fitted = fitMiniMaxDimensions(dimensions);
-			width = fitted.width;
-			height = fitted.height;
-			mediaDimensions = { ...mediaDimensions, [key]: dimensions };
-		} catch {
-			error = '선택한 콘텐츠의 크기를 읽지 못했습니다.';
-		} finally {
-			sizeApplying = '';
-		}
-	}
-
-	function rememberMediaDimensions(key: string, source: Blob | string | null, kind: 'image' | 'video') {
-		if (!source) return;
-		const requestId = ++mediaDimensionRequestId;
-		mediaDimensionRequests.set(key, requestId);
-		removeMediaDimension(key, false);
-		void readMediaDimensions(source, kind)
-			.then((dimensions) => {
-				if (mediaDimensionRequests.get(key) === requestId) mediaDimensions = { ...mediaDimensions, [key]: dimensions };
-			})
-			.catch(() => {
-				if (mediaDimensionRequests.get(key) === requestId) mediaDimensions = { ...mediaDimensions, [key]: 'failed' };
-			});
-	}
-
-	function mediaDimensionLabel(key: string) {
-		const dimensions = mediaDimensions[key];
-		if (!dimensions) return '원본 크기 확인 중';
-		if (dimensions === 'failed') return '원본 크기 확인 실패';
-		return `원본 ${dimensions.width} × ${dimensions.height}`;
-	}
-
-	function fitMiniMaxDimensions(dimensions: MediaDimensions): MediaDimensions {
-		const fit = (value: number) => Math.max(minimaxDimensionMin, Math.min(minimaxDimensionMax, Math.round(value / minimaxDimensionStep) * minimaxDimensionStep));
-		return { width: fit(dimensions.width), height: fit(dimensions.height) };
+		return best;
 	}
 
 	function openSelection(target: SelectionTarget) {
@@ -563,17 +540,13 @@
 		if (selectionTarget === 'first') {
 			firstFile = files[0];
 			selectedFirst = null;
-			rememberMediaDimensions('first', files[0], 'image');
 		} else if (selectionTarget === 'last') {
 			lastFile = files[0];
 			selectedLast = null;
-			rememberMediaDimensions('last', files[0], 'image');
 		} else if (selectionTarget === 'images') {
 			referenceImageFiles = [...referenceImageFiles, ...files].slice(0, selectionMax);
-			referenceImageFiles.forEach((file, index) => rememberMediaDimensions(`reference-image-file-${index}`, file, 'image'));
 		} else if (selectionTarget === 'videos') {
 			referenceVideoFiles = [...referenceVideoFiles, ...files].slice(0, selectionMax);
-			referenceVideoFiles.forEach((file, index) => rememberMediaDimensions(`reference-video-file-${index}`, file, 'video'));
 		} else {
 			referenceAudioFiles = [...referenceAudioFiles, ...files].slice(0, selectionMax);
 		}
@@ -581,49 +554,32 @@
 		selectionOpen = false;
 	}
 
-	function removeMediaDimension(key: string, cancelRequest = true) {
-		if (cancelRequest) mediaDimensionRequests.delete(key);
-		const next = { ...mediaDimensions };
-		delete next[key];
-		mediaDimensions = next;
-	}
-
 	function removeFirstSelection() {
 		firstFile = null;
 		selectedFirst = null;
-		removeMediaDimension('first');
 	}
 
 	function removeLastSelection() {
 		lastFile = null;
 		selectedLast = null;
-		removeMediaDimension('last');
 	}
 
 	function removeReferenceImage(index: number) {
 		if (index < selectedReferenceImages.length) {
-			const asset = selectedReferenceImages[index];
 			selectedReferenceImages = selectedReferenceImages.filter((_, currentIndex) => currentIndex !== index);
-			removeMediaDimension(`reference-image-${asset.file_id}`);
 			return;
 		}
 		const fileIndex = index - selectedReferenceImages.length;
-		referenceImageFiles.forEach((_, currentIndex) => removeMediaDimension(`reference-image-file-${currentIndex}`));
 		referenceImageFiles = referenceImageFiles.filter((_, currentIndex) => currentIndex !== fileIndex);
-		referenceImageFiles.forEach((file, currentIndex) => rememberMediaDimensions(`reference-image-file-${currentIndex}`, file, 'image'));
 	}
 
 	function removeReferenceVideo(index: number) {
 		if (index < selectedReferenceVideos.length) {
-			const asset = selectedReferenceVideos[index];
 			selectedReferenceVideos = selectedReferenceVideos.filter((_, currentIndex) => currentIndex !== index);
-			removeMediaDimension(`reference-video-${asset.file_id}`);
 			return;
 		}
 		const fileIndex = index - selectedReferenceVideos.length;
-		referenceVideoFiles.forEach((_, currentIndex) => removeMediaDimension(`reference-video-file-${currentIndex}`));
 		referenceVideoFiles = referenceVideoFiles.filter((_, currentIndex) => currentIndex !== fileIndex);
-		referenceVideoFiles.forEach((file, currentIndex) => rememberMediaDimensions(`reference-video-file-${currentIndex}`, file, 'video'));
 	}
 
 	function removeReferenceAudio(index: number) {
@@ -662,27 +618,19 @@
 		if (selectionTarget === 'first') {
 			selectedFirst = assetsToUse[0] ?? null;
 			firstFile = null;
-			if (selectedFirst?.url) rememberMediaDimensions('first', selectedFirst.url, 'image');
 		} else if (selectionTarget === 'last') {
 			selectedLast = assetsToUse[0] ?? null;
 			lastFile = null;
-			if (selectedLast?.url) rememberMediaDimensions('last', selectedLast.url, 'image');
 		} else if (selectionTarget === 'images') {
 			selectedReferenceImages = [
 				...selectedReferenceImages,
 				...assetsToUse.filter((asset) => !selectedReferenceImages.some((item) => item.file_id === asset.file_id))
 			].slice(0, selectionMax);
-			assetsToUse.forEach((asset) => {
-				if (asset.url) rememberMediaDimensions(`reference-image-${asset.file_id}`, asset.url, 'image');
-			});
 		} else if (selectionTarget === 'videos') {
 			selectedReferenceVideos = [
 				...selectedReferenceVideos,
 				...assetsToUse.filter((asset) => !selectedReferenceVideos.some((item) => item.file_id === asset.file_id))
 			].slice(0, selectionMax);
-			assetsToUse.forEach((asset) => {
-				if (asset.url) rememberMediaDimensions(`reference-video-${asset.file_id}`, asset.url, 'video');
-			});
 		} else {
 			selectedReferenceAudios = [
 				...selectedReferenceAudios,
@@ -808,6 +756,18 @@
 			error = 'PDD Steps는 4, 6 또는 8만 사용할 수 있습니다.';
 			return;
 		}
+		if (!calculatedDimensions) {
+			error = '메가픽셀은 한 자리 반올림 후 0.1 이상이어야 합니다.';
+			return;
+		}
+		if (!samplerName || !videoOptions.samplers.includes(samplerName)) {
+			error = '샘플러를 선택해 주세요.';
+			return;
+		}
+		if (!scheduler || !videoOptions.schedulers.includes(scheduler)) {
+			error = '스케줄러를 선택해 주세요.';
+			return;
+		}
 		const form = new FormData();
 		const newFiles: File[] = [];
 		try {
@@ -820,8 +780,10 @@
 				improved_prompt: promptEnhancementEnabled ? improvedSegmentPrompts[0].trim() : null,
 				improved_segment_prompts: promptEnhancementEnabled ? improvedSegmentPrompts.map((value) => value.trim()) : [],
 				prompt_output_languages: promptOutputLanguages,
-				width: Number(width),
-				height: Number(height),
+				aspect_ratio: aspectRatio,
+				megapixels: Number(megapixels),
+				sampler_name: samplerName,
+				scheduler,
 				duration: Number(duration),
 				continuation_mode: continuationMode,
 				fps: Number(fps),
@@ -913,8 +875,10 @@
 			mode,
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
-			width: Number(width),
-			height: Number(height),
+			aspect_ratio: aspectRatio,
+			megapixels: Number(megapixels),
+			sampler_name: samplerName,
+			scheduler,
 			duration: Number(duration),
 			fps: Number(fps),
 			steps: Number(steps),
@@ -950,12 +914,16 @@
 			: videoOptions.default_checkpoint;
 		if (presetCheckpoint) selectVideoCheckpoint(presetCheckpoint);
 		if (values.loras !== undefined) loras = values.loras.filter((lora) => videoOptions.loras.includes(lora.name));
-		if (values.width !== undefined) width = values.width;
-		if (values.height !== undefined) height = values.height;
+		if (values.aspect_ratio && values.aspect_ratio in videoAspectRatios) aspectRatio = values.aspect_ratio as VideoAspectRatio;
+		else if (values.width !== undefined && values.height !== undefined) aspectRatio = nearestVideoAspectRatio(values.width, values.height);
+		if (values.megapixels !== undefined) megapixels = values.megapixels;
+		else if (values.width !== undefined && values.height !== undefined) megapixels = roundedMegapixels(values.width * values.height / 1_000_000);
 		if (values.duration !== undefined) duration = values.duration;
 		if (values.fps !== undefined) fps = values.fps;
 		if (values.steps !== undefined) steps = values.steps;
 		if (values.use_pdd !== undefined) usePdd = values.use_pdd;
+		if (values.sampler_name && videoOptions.samplers.includes(values.sampler_name)) samplerName = values.sampler_name;
+		if (values.scheduler && videoOptions.schedulers.includes(values.scheduler)) scheduler = values.scheduler;
 
 		if (values.random_seed !== undefined) randomSeed = values.random_seed;
 		if (values.seed !== undefined) {
@@ -973,20 +941,28 @@
 			mode: '생성 방식',
 			checkpoint: 'checkpoint',
 			loras: 'LoRA',
-			size: '영상 크기',
-			width: '영상 크기',
-			height: '영상 크기',
+			resolution: '비율·메가픽셀',
+			sampling: '샘플러 / 스케줄러',
+			aspect_ratio: '비율·메가픽셀',
+			megapixels: '비율·메가픽셀',
 			duration: '길이',
 			fps: 'FPS',
 			steps: 'Steps',
 			use_pdd: 'PDD 사용',
+			sampler_name: '샘플러 / 스케줄러',
+			scheduler: '샘플러 / 스케줄러',
 
 			seed: 'Seed',
 			random_seed: 'Seed'
 		};
-		if (fields.has('width') || fields.has('height')) fields.add('size');
+		if (fields.has('aspect_ratio') || fields.has('megapixels') || fields.has('width') || fields.has('height')) fields.add('resolution');
+		fields.delete('aspect_ratio');
+		fields.delete('megapixels');
 		fields.delete('width');
 		fields.delete('height');
+		if (fields.has('sampler_name') || fields.has('scheduler')) fields.add('sampling');
+		fields.delete('sampler_name');
+		fields.delete('scheduler');
 
 		return [...fields].map((field) => labels[field] ?? field).join(', ');
 	}
@@ -994,9 +970,6 @@
 		success = `'${preset.name}' 프리셋을 저장했습니다.`;
 	}
 
-	function swapDimensions() {
-		[width, height] = [height, width];
-	}
 </script>
 
 <svelte:head>
@@ -1082,6 +1055,10 @@
 							<input id="video-use-pdd" type="checkbox" checked={usePdd} onchange={(event) => setUsePdd((event.currentTarget as HTMLInputElement).checked)} disabled={generating || videoOptionsLoading || !videoOptions.pdd_available} class="size-4 accent-primary" />
 							<span>PDD 사용</span>
 						</label>
+						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={generating || videoOptionsLoading || usePdd || !samplerName || !scheduler} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
+							<span class="text-sm font-medium">샘플러 / 스케줄러</span>
+							<span class="min-w-0 truncate text-xs text-muted-foreground">{usePdd ? 'PDD: euler / PDD schedule' : `${samplerName} / ${scheduler}`}</span>
+						</button>
 
 					<form class="mt-5 min-w-0 max-w-full space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
@@ -1152,8 +1129,7 @@
 											{:else if selectedFirst?.url}
 												<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 시작 이미지" class="h-48" />
 											{/if}
-											<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">시작 이미지 · {mediaDimensionLabel('first')}</p>
-											<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>이 사이즈 사용</OutlinedButton>
+
 										</div>
 									</div>
 								{/if}
@@ -1173,8 +1149,7 @@
 												{:else if selectedFirst?.url}
 													<ImageMedia source={selectedFirst.url} sourceType={imageSourceType(selectedFirst.url)} alt="선택한 첫 프레임" class="h-48" />
 												{/if}
-												<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">첫 프레임 · {mediaDimensionLabel('first')}</p>
-												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'first'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'first'} onclick={() => void applyMediaSize('first', firstFile ?? selectedFirst?.url ?? null, 'image')}>이 사이즈 사용</OutlinedButton>
+
 											</div>
 										{/if}
 									</div>
@@ -1190,8 +1165,7 @@
 												{:else if selectedLast?.url}
 													<ImageMedia source={selectedLast.url} sourceType={imageSourceType(selectedLast.url)} alt="선택한 마지막 프레임" class="h-48" />
 												{/if}
-												<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">마지막 프레임 · {mediaDimensionLabel('last')}</p>
-												<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === 'last'} disabled={generating || Boolean(sizeApplying) && sizeApplying !== 'last'} onclick={() => void applyMediaSize('last', lastFile ?? selectedLast?.url ?? null, 'image')}>이 사이즈 사용</OutlinedButton>
+
 											</div>
 										{/if}
 									</div>
@@ -1213,8 +1187,7 @@
 													{:else}
 														<div class="flex min-h-32 items-center justify-center"><ImageIcon size={30} class="text-primary" /></div>
 													{/if}
-													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 이미지 {index + 1} · {mediaDimensionLabel(`reference-image-${asset.file_id}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-${asset.file_id}`} disabled={generating || !asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-image-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-image-${asset.file_id}`, asset.url, 'image')}>이 사이즈 사용</OutlinedButton>
+
 												</div>
 											{/each}
 											{#each referenceImageFiles as file, index}
@@ -1223,8 +1196,7 @@
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-48" />
-													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 이미지 {selectedReferenceImages.length + index + 1} · {mediaDimensionLabel(`reference-image-file-${index}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-image-file-${index}`} disabled={generating || Boolean(sizeApplying) && sizeApplying !== `reference-image-file-${index}`} onclick={() => void applyMediaSize(`reference-image-file-${index}`, file, 'image')}>이 사이즈 사용</OutlinedButton>
+
 												</div>
 											{/each}
 										</div>
@@ -1245,8 +1217,7 @@
 													{:else}
 														<div class="flex min-h-32 items-center justify-center"><Video size={30} class="text-primary" /></div>
 													{/if}
-													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 동영상 {index + 1} · {mediaDimensionLabel(`reference-video-${asset.file_id}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-${asset.file_id}`} disabled={generating || !asset.url || Boolean(sizeApplying) && sizeApplying !== `reference-video-${asset.file_id}`} onclick={() => void applyMediaSize(`reference-video-${asset.file_id}`, asset.url, 'video')}>이 사이즈 사용</OutlinedButton>
+
 												</div>
 											{/each}
 											{#each referenceVideoFiles as file, index}
@@ -1255,8 +1226,7 @@
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<VideoMedia source={file} preview={false} muted={true} class="h-48 [&>video]:h-full" />
-													<p class="border-t border-border px-3 py-2 text-xs font-medium" aria-live="polite">참조 동영상 {selectedReferenceVideos.length + index + 1} · {mediaDimensionLabel(`reference-video-file-${index}`)}</p>
-													<OutlinedButton class="w-full rounded-none border-0 border-t px-3 text-xs" loading={sizeApplying === `reference-video-file-${index}`} disabled={generating || Boolean(sizeApplying) && sizeApplying !== `reference-video-file-${index}`} onclick={() => void applyMediaSize(`reference-video-file-${index}`, file, 'video')}>이 사이즈 사용</OutlinedButton>
+
 												</div>
 											{/each}
 										</div>
@@ -1292,8 +1262,8 @@
 							</div>
 						{/if}
 
-						<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">영상 크기</span><IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min={minimaxDimensionMin} max={minimaxDimensionMax} step={minimaxDimensionStep} bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min={minimaxDimensionMin} max={minimaxDimensionMax} step={minimaxDimensionStep} bind:value={height} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-aspect-ratio"><span class="text-sm font-medium">영상 비율</span><select id="video-aspect-ratio" bind:value={aspectRatio} class={inputClass}>{#each videoAspectRatioOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></label><label class="block space-y-2" for="video-megapixels"><span class="text-sm font-medium">메가픽셀</span><input id="video-megapixels" type="number" min="0.1" step="0.1" bind:value={megapixels} class={inputClass} /></label></div>
+						{#if calculatedDimensions}<p class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">계산된 출력: {calculatedDimensions.width} × {calculatedDimensions.height} · {calculatedDimensions.megapixels.toFixed(1)} MP</p>{/if}
 						<div class="grid gap-4 sm:grid-cols-3"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label><label class="block space-y-2" for="video-steps"><span class="text-sm font-medium">Steps</span><input id="video-steps" type="number" min={usePdd ? 4 : 1} max={usePdd ? 8 : 100} step={usePdd ? 2 : 1} bind:value={steps} class={inputClass} /></label></div>
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
@@ -1335,6 +1305,14 @@
 			</div>
 		</div>
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
+	</Modal>
+
+	<Modal bind:open={samplingModalOpen} title="샘플러 / 스케줄러" description="현재 ComfyUI에서 지원하는 값을 선택하세요.">
+		<div class="grid gap-4 sm:grid-cols-2">
+			<label class="block space-y-2" for="video-sampler"><span class="text-sm font-medium">샘플러</span><select id="video-sampler" bind:value={samplerName} class={inputClass}>{#each videoOptions.samplers as option}<option value={option}>{option}</option>{/each}</select></label>
+			<label class="block space-y-2" for="video-scheduler"><span class="text-sm font-medium">스케줄러</span><select id="video-scheduler" bind:value={scheduler} class={inputClass}>{#each videoOptions.schedulers as option}<option value={option}>{option}</option>{/each}</select></label>
+		</div>
+		{#snippet footer()}<PrimaryButton onclick={() => (samplingModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 	</Modal>
 
 	<Modal bind:open={videoPresetLoadOpen} title="VIDEO GEN 프리셋 불러오기" description="저장된 동영상 설정을 선택해 적용합니다." closeOnBackdrop={!videoPresetsLoading}>

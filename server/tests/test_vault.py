@@ -155,10 +155,14 @@ class VaultRouteTest(unittest.TestCase):
             file_size_bytes=None,
         )
         stored = {
+            "aspect_ratio": "16:9",
+            "megapixels": 1.0,
             "width": 1344,
             "height": 768,
             "seed": 7,
             "steps": 8,
+            "sampler_name": "res_multistep",
+            "scheduler": "simple",
             "use_pdd": True,
             "checkpoint": "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors",
             "input_segment_prompts": ["input 1", "input 2"],
@@ -173,6 +177,10 @@ class VaultRouteTest(unittest.TestCase):
         self.assertEqual(result.input_segment_prompts, ["input 1", "input 2"])
         self.assertEqual(result.improved_segment_prompts, ["improved 1", "improved 2"])
         self.assertEqual(result.steps, 8)
+        self.assertEqual(result.aspect_ratio, "16:9")
+        self.assertEqual(result.megapixels, 1.0)
+        self.assertEqual(result.sampler_name, "res_multistep")
+        self.assertEqual(result.scheduler, "simple")
         self.assertTrue(result.use_pdd)
         self.assertEqual(result.checkpoint, "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors")
 
