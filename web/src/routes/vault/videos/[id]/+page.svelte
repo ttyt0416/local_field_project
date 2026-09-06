@@ -27,9 +27,10 @@
 		width: number;
 		height: number;
 		seed: number;
+		steps: number;
+		use_pdd: boolean;
 		checkpoint: string | null;
 		loras: { name: string; strength: number }[];
-		upscale: boolean;
 		status: string;
 		prompt: string;
 		input_segment_prompts: string[];
@@ -130,13 +131,13 @@
 			prompt: generation.prompt,
 			mode: generation.mode,
 			...(generation.checkpoint ? { checkpoint: generation.checkpoint } : {}),
-			video_model_family: generation.checkpoint?.startsWith('LTX/') ? 'ltx' : 'minimax',
 			loras: generation.loras,
-			upscale: generation.upscale,
 			width: generation.width,
 			height: generation.height,
 			duration: generation.duration_seconds ?? 0,
 			fps: generation.fps,
+			steps: generation.steps,
+			use_pdd: generation.use_pdd,
 			seed: String(generation.seed),
 			random_seed: false
 		};
@@ -195,10 +196,11 @@
 						<div><dt class="text-muted-foreground">생성 방식</dt><dd class="mt-1 font-medium">{generation.mode.toUpperCase()}</dd></div>
 						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
+						<div><dt class="text-muted-foreground">Steps</dt><dd class="mt-1 font-medium">{generation.steps}</dd></div>
 						<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 						<div><dt class="text-muted-foreground">Checkpoint</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint ?? '기록 없음'}</dd></div>
-						{#if generation.checkpoint?.startsWith('LTX/') && generation.mode === 'i2v'}<div><dt class="text-muted-foreground">업스케일</dt><dd class="mt-1 font-medium">{generation.upscale ? '사용' : '사용 안 함'}</dd></div>{/if}
+
 						{#if generation.loras.length > 0}<div><dt class="text-muted-foreground">LoRA</dt><dd class="mt-1 space-y-1">{#each generation.loras as lora (lora.name)}<p class="break-all font-medium">{lora.name} · {lora.strength}</p>{/each}</dd></div>{/if}
 						<div><dt class="text-muted-foreground">재생 시간</dt><dd class="mt-1 font-medium">{formatElapsedSeconds(generation.duration_seconds ?? 0)}</dd></div>
 						<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>

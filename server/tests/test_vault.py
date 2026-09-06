@@ -158,6 +158,8 @@ class VaultRouteTest(unittest.TestCase):
             "width": 1344,
             "height": 768,
             "seed": 7,
+            "steps": 8,
+            "use_pdd": True,
             "checkpoint": "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors",
             "input_segment_prompts": ["input 1", "input 2"],
             "improved_segment_prompts": ["improved 1", "improved 2"],
@@ -170,6 +172,8 @@ class VaultRouteTest(unittest.TestCase):
 
         self.assertEqual(result.input_segment_prompts, ["input 1", "input 2"])
         self.assertEqual(result.improved_segment_prompts, ["improved 1", "improved 2"])
+        self.assertEqual(result.steps, 8)
+        self.assertTrue(result.use_pdd)
         self.assertEqual(result.checkpoint, "MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors")
 
     def test_image_download_reads_owned_storage_as_attachment(self) -> None:

@@ -20,11 +20,6 @@ export const imagePresetCategories: { value: ImagePresetType; label: string; gen
 ];
 export type PresetType = ImagePresetType | 'video';
 export type VideoMode = 'i2v' | 'fl2v' | 'r2v';
-export type VideoModelFamily = 'minimax' | 'ltx';
-export const videoModelFamilyTabs: { value: VideoModelFamily; label: string; disabled?: boolean }[] = [
-	{ value: 'minimax', label: 'MINIMAX' },
-	{ value: 'ltx', label: 'LTX' }
-];
 export type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 export type LoraSelection = { name: string; strength: number };
 
@@ -43,13 +38,12 @@ export type PresetValues = {
 	denoise?: number;
 	cfg?: number;
 	steps?: number;
+	use_pdd?: boolean;
 	sampler_name?: string;
 	scheduler?: string;
 	mode?: VideoMode;
-	video_model_family?: VideoModelFamily;
 	duration?: number;
 	fps?: number;
-	upscale?: boolean;
 	seed?: string;
 	random_seed?: boolean;
 };
@@ -79,7 +73,6 @@ export type VideoGenerationOptions = {
 	mode: VideoMode;
 	checkpoints: string[];
 	default_checkpoint: string;
-	checkpoint_families: Record<string, VideoModelFamily>;
 	loras: string[];
-	lora_families: Record<string, VideoModelFamily>;
+	pdd_available: boolean;
 };

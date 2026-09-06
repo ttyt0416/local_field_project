@@ -171,6 +171,8 @@ class VideoGenerationStatusTest(unittest.TestCase):
                 improved_segment_prompts=["improved 1", "improved 2"],
                 continuation_mode="i2v",
                 reference_image_file_ids=["a" * 32],
+                steps=8,
+                use_pdd=True,
             )
 
         self.assertEqual(result, (generation_id, created_at))
@@ -178,11 +180,13 @@ class VideoGenerationStatusTest(unittest.TestCase):
         self.assertIn("input_segment_prompts, improved_segment_prompts", query)
         self.assertEqual(parameters[6], "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors")
         self.assertEqual(json.loads(str(parameters[7])), [])
-        self.assertTrue(parameters[8])
-        self.assertEqual(json.loads(str(parameters[17])), ["input 1", "input 2"])
-        self.assertEqual(json.loads(str(parameters[18])), ["improved 1", "improved 2"])
-        self.assertEqual(parameters[20], "i2v")
-        self.assertEqual(json.loads(str(parameters[21])), ["a" * 32])
+        self.assertEqual(parameters[8], 8)
+        self.assertTrue(parameters[9])
+        self.assertTrue(parameters[10])
+        self.assertEqual(json.loads(str(parameters[19])), ["input 1", "input 2"])
+        self.assertEqual(json.loads(str(parameters[20])), ["improved 1", "improved 2"])
+        self.assertEqual(parameters[22], "i2v")
+        self.assertEqual(json.loads(str(parameters[23])), ["a" * 32])
 
     def test_nullable_media_metadata_is_typed_and_preserved(self) -> None:
         connection = FakeConnection()

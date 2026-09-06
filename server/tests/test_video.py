@@ -41,7 +41,7 @@ class VideoContractTest(unittest.TestCase):
         object_info = {
             "UNETLoader": {"input": {"required": {"unet_name": [available]}}},
             "LoraLoaderModelOnly": {
-                "input": {"required": {"lora_name": [["MiniMax/allowed.safetensors", "LTX/unavailable.safetensors", "image/ignored.safetensors"]]}}
+                "input": {"required": {"lora_name": [["MiniMax/allowed.safetensors", "image/ignored.safetensors"]]}}
             },
         }
         with patch.object(video, "_request_json", return_value=object_info):
@@ -52,58 +52,8 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(options.checkpoints, [video._EROS_CHECKPOINT, video._DASIWA_CHECKPOINT])
         self.assertEqual(options.default_checkpoint, video._DASIWA_CHECKPOINT)
         self.assertEqual(options.loras, ["MiniMax/allowed.safetensors"])
-        self.assertEqual(options.lora_families, {"MiniMax/allowed.safetensors": "minimax"})
+        self.assertFalse(options.pdd_available)
 
-    def test_ltx_loras_are_allowlisted_and_injected_in_selection_order(self) -> None:
-        options = video.VideoGenerationOptions(
-            mode="i2v",
-            checkpoints=[video._LTX_CHECKPOINT],
-            default_checkpoint=video._LTX_CHECKPOINT,
-            checkpoint_families={video._LTX_CHECKPOINT: "ltx"},
-            loras=["LTX/first.safetensors", "LTX/second.safetensors"],
-            lora_families={"LTX/first.safetensors": "ltx", "LTX/second.safetensors": "ltx"},
-        )
-        request = video.VideoGenerationRequest(
-            prompt="move",
-            checkpoint=video._LTX_CHECKPOINT,
-            loras=[
-                video.VideoLoraSelection(name="LTX/first.safetensors", strength=0.7),
-                video.VideoLoraSelection(name="LTX/second.safetensors", strength=1.2),
-            ],
-            first_frame=video.VideoAsset(kind="image", file_index=0),
-        )
-        with patch.object(video, "_video_options", return_value=options), patch.object(video, "_upload_to_comfy", return_value="image.png"):
-            video._validate_video_loras("i2v", request)
-            prompt, _ = video._build_prompt("i2v", request, {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")})
-
-        loras = [(node_id, node) for node_id, node in prompt.items() if node["class_type"] == "LoraLoaderModelOnly"]
-        self.assertEqual([node["inputs"]["lora_name"] for _, node in loras], ["LTX/first.safetensors", "LTX/second.safetensors"])
-        self.assertEqual(loras[0][1]["inputs"]["model"], ["1", 0])
-        self.assertEqual(loras[1][1]["inputs"]["model"], [loras[0][0], 0])
-        self.assertTrue(any(node.get("inputs", {}).get("model") == [loras[1][0], 0] for node in prompt.values()))
-
-    def test_ltx_i2v_can_bypass_the_upscale_pass(self) -> None:
-        request = video.VideoGenerationRequest(
-            prompt="move",
-            checkpoint=video._LTX_CHECKPOINT,
-            upscale=False,
-            first_frame=video.VideoAsset(kind="image", file_index=0),
-        )
-        resolved = {
-            "index:0": video._ResolvedAsset(
-                file_id="a" * 32,
-                filename="image.png",
-                content=b"i",
-                media_type="image/png",
-                kind="image",
-            )
-        }
-        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
-            prompt, _ = video._build_prompt("i2v", request, resolved)
-
-        self.assertTrue(all(str(node_id) not in prompt for node_id in range(20, 30)))
-        self.assertEqual(prompt["30"]["inputs"]["samples"], ["19", 0])
-        self.assertEqual(prompt["31"]["inputs"]["samples"], ["19", 1])
 
     def test_video_workflows_do_not_clean_vram_automatically(self) -> None:
         workflows = Path(video.__file__).with_name("workflows")
@@ -111,9 +61,7 @@ class VideoContractTest(unittest.TestCase):
             "video_i2v.json",
             "video_fl2v.json",
             "video_r2v.json",
-            "video_ltx_i2v.json",
-            "video_ltx_fl2v.json",
-            "video_ltx_r2v.json",
+
         ):
             workflow = json.loads((workflows / filename).read_text())
             self.assertNotIn("0", workflow)
@@ -131,9 +79,7 @@ class VideoContractTest(unittest.TestCase):
             mode="i2v",
             checkpoints=[video._DASIWA_CHECKPOINT],
             default_checkpoint=video._DASIWA_CHECKPOINT,
-            checkpoint_families={video._DASIWA_CHECKPOINT: "minimax"},
             loras=["MiniMax/first.safetensors", "MiniMax/second.safetensors"],
-            lora_families={"MiniMax/first.safetensors": "minimax", "MiniMax/second.safetensors": "minimax"},
         )
         lora_selection = [
             video.VideoLoraSelection(name="MiniMax/first.safetensors", strength=0.7),
@@ -154,27 +100,46 @@ class VideoContractTest(unittest.TestCase):
                 prompt, _ = video._build_prompt(mode, request, resolved)
                 loras = [(node_id, node) for node_id, node in prompt.items() if node["class_type"] == "LoraLoaderModelOnly"]
                 scheduler = next(node for node in prompt.values() if node["class_type"] == "BasicScheduler")
+                guider = next(node for node in prompt.values() if node["class_type"] == "BasicGuider")
+                sage_id, sage = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "PathchSageAttentionKJ")
+                sol_id, sol = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "SolAttnPatch")
+                cache_id, cache = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "EasyCache")
                 self.assertEqual([node["inputs"]["lora_name"] for _, node in loras], ["MiniMax/first.safetensors", "MiniMax/second.safetensors"])
                 self.assertEqual(loras[0][1]["inputs"]["model"], ["1", 0])
                 self.assertEqual(loras[1][1]["inputs"]["model"], [loras[0][0], 0])
-                self.assertEqual(scheduler["inputs"]["model"], [loras[1][0], 0])
+                self.assertEqual(sage["inputs"], {"model": [loras[1][0], 0], "sage_attention": "auto", "allow_compile": False})
+                self.assertEqual(
+                    sol["inputs"],
+                    {
+                        "model": [sage_id, 0],
+                        "tau": 1.2,
+                        "start_percent": 0.2,
+                        "end_percent": 0.8,
+                        "min_tokens": 4096,
+                        "int8_qk": True,
+                        "sink_conditioning": "exact_kv",
+                        "morton": True,
+                        "morton_curve": "2d_frame",
+                        "int8_pv": True,
+                        "verbose": False,
+                        "use_tma": False,
+                        "dense_blocks": "",
+                    },
+                )
+                self.assertEqual(cache["inputs"], {"model": [sol_id, 0], "reuse_threshold": 0.3, "start_percent": 0.2, "end_percent": 0.9, "verbose": False})
+                self.assertEqual(scheduler["inputs"]["model"], [cache_id, 0])
+                self.assertEqual(guider["inputs"]["model"], [cache_id, 0])
 
-    def test_video_lora_rejects_cross_family_and_unknown_artifacts(self) -> None:
+    def test_video_lora_rejects_unknown_artifacts(self) -> None:
         options = video.VideoGenerationOptions(
             mode="i2v",
-            checkpoints=[video._DASIWA_CHECKPOINT, video._LTX_CHECKPOINT],
+            checkpoints=[video._DASIWA_CHECKPOINT],
             default_checkpoint=video._DASIWA_CHECKPOINT,
-            checkpoint_families={video._DASIWA_CHECKPOINT: "minimax", video._LTX_CHECKPOINT: "ltx"},
-            loras=["MiniMax/allowed.safetensors", "LTX/allowed.safetensors"],
-            lora_families={"MiniMax/allowed.safetensors": "minimax", "LTX/allowed.safetensors": "ltx"},
+            loras=["MiniMax/allowed.safetensors"],
         )
         with patch.object(video, "_video_options", return_value=options):
             with self.assertRaises(video.HTTPException):
-                video._validate_video_loras("i2v", video.VideoGenerationRequest(prompt="move", checkpoint=video._DASIWA_CHECKPOINT, loras=[video.VideoLoraSelection(name="LTX/allowed.safetensors")]))
-            with self.assertRaises(video.HTTPException):
-                video._validate_video_loras("i2v", video.VideoGenerationRequest(prompt="move", checkpoint=video._LTX_CHECKPOINT, loras=[video.VideoLoraSelection(name="MiniMax/allowed.safetensors")]))
-            with self.assertRaises(video.HTTPException):
-                video._validate_video_loras("i2v", video.VideoGenerationRequest(prompt="move", checkpoint=video._LTX_CHECKPOINT, loras=[video.VideoLoraSelection(name="LTX/unknown.safetensors")]))
+                video._validate_video_loras("i2v", video.VideoGenerationRequest(prompt="move", checkpoint=video._DASIWA_CHECKPOINT, loras=[video.VideoLoraSelection(name="MiniMax/unknown.safetensors")]))
 
     def test_eros_checkpoint_uses_six_steps_without_default_loras(self) -> None:
         request = video.VideoGenerationRequest(
@@ -189,10 +154,54 @@ class VideoContractTest(unittest.TestCase):
         unet = next(node for node in prompt.values() if node["class_type"] == "UNETLoader")
         loras = [(node_id, node) for node_id, node in prompt.items() if node["class_type"] == "LoraLoaderModelOnly"]
         scheduler = next(node for node in prompt.values() if node["class_type"] == "BasicScheduler")
+        sage_id, sage = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "PathchSageAttentionKJ")
+        sol_id, sol = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "SolAttnPatch")
+        cache_id, cache = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "EasyCache")
         self.assertEqual(unet["inputs"]["unet_name"], video._EROS_CHECKPOINT)
         self.assertEqual(loras, [])
-        self.assertEqual(scheduler["inputs"]["model"], ["1", 0])
+        self.assertEqual(sage["inputs"]["model"], ["1", 0])
+        self.assertEqual(sol["inputs"]["model"], [sage_id, 0])
+        self.assertEqual(cache["inputs"]["model"], [sol_id, 0])
+        self.assertEqual(scheduler["inputs"]["model"], [cache_id, 0])
         self.assertEqual(scheduler["inputs"]["steps"], 6)
+
+    def test_pdd_uses_its_sigma_schedule_and_disables_easycache(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            checkpoint=video._DASIWA_CHECKPOINT,
+            steps=6,
+            use_pdd=True,
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            prompt, _ = video._build_prompt("i2v", request, resolved)
+
+        pdd_id, pdd = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "MiniMaxH3PDDAccApply")
+        sampler = next(node for node in prompt.values() if node["class_type"] == "KSamplerSelect")
+        sample = next(node for node in prompt.values() if node["class_type"] == "SamplerCustomAdvanced")
+        scheduler = next(node for node in prompt.values() if node["class_type"] == "BasicScheduler")
+        self.assertEqual(pdd["inputs"]["pdd_file"], video._PDD_FILES["ref2va"])
+        self.assertEqual(pdd["inputs"]["nfe"], "6")
+        self.assertEqual(pdd["inputs"]["on_off_grid"], "error")
+        self.assertEqual(pdd["inputs"]["partition_check"], "error")
+        self.assertEqual(sampler["inputs"]["sampler_name"], "euler")
+        self.assertEqual(sample["inputs"]["sigmas"], [pdd_id, 1])
+        self.assertEqual(scheduler["inputs"]["steps"], 6)
+        self.assertFalse(any(node["class_type"] == "EasyCache" for node in prompt.values()))
+
+    def test_pdd_rejects_unsupported_steps_and_requires_live_artifacts(self) -> None:
+        options = video.VideoGenerationOptions(
+            mode="i2v",
+            checkpoints=[video._DASIWA_CHECKPOINT],
+            default_checkpoint=video._DASIWA_CHECKPOINT,
+            loras=[],
+            pdd_available=True,
+        )
+        with patch.object(video, "_video_options", return_value=options):
+            video._validate_video_pdd("i2v", video.VideoGenerationRequest(prompt="move", use_pdd=True, steps=8))
+            with self.assertRaises(video.HTTPException):
+                video._validate_video_pdd("i2v", video.VideoGenerationRequest(prompt="move", use_pdd=True, steps=5))
 
     def test_continuation_defaults_to_and_keeps_dasiwa_profile(self) -> None:
         default_model, default_checkpoint = video._workflow_checkpoint("r2v", None)

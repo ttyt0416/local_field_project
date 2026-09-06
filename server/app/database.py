@@ -345,6 +345,21 @@ _MIGRATION_STATEMENTS: tuple[str, ...] = (
             ) THEN
                 ALTER TABLE video_generations ADD COLUMN loras JSONB NOT NULL DEFAULT '[]'::jsonb;
             END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'steps'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN steps INTEGER NOT NULL DEFAULT 4;
+                UPDATE video_generations
+                SET steps = 6
+                WHERE checkpoint = 'MiniMaxH3/10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'video_generations' AND column_name = 'use_pdd'
+            ) THEN
+                ALTER TABLE video_generations ADD COLUMN use_pdd BOOLEAN NOT NULL DEFAULT FALSE;
+            END IF;
             UPDATE video_generations
             SET active_prompt_id = prompt_id
             WHERE active_prompt_id IS NULL AND status IN ('queued', 'processing');
@@ -492,6 +507,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         mode VARCHAR(8) NOT NULL,
         checkpoint VARCHAR(255) NOT NULL DEFAULT '',
         loras JSONB NOT NULL DEFAULT '[]'::jsonb,
+        steps INTEGER NOT NULL DEFAULT 4,
+        use_pdd BOOLEAN NOT NULL DEFAULT FALSE,
         upscale BOOLEAN NOT NULL DEFAULT TRUE,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
         prompt TEXT NOT NULL,
@@ -1330,7 +1347,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, upscale, status, prompt, width, height, length, fps, seed, "
+    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, steps, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations, continuation_mode, reference_image_file_ids, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
@@ -1357,6 +1374,8 @@ def create_video_generation(
     continuation_mode: str = "r2v",
     reference_image_file_ids: list[str] | None = None,
     loras: list[dict[str, Any]] | None = None,
+    steps: int = 4,
+    use_pdd: bool = False,
     upscale: bool = True,
 ) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
@@ -1364,10 +1383,10 @@ def create_video_generation(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, upscale, prompt, width, height, length, fps, seed,
+                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, loras, steps, use_pdd, upscale, prompt, width, height, length, fps, seed,
                  input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations,
                  continuation_mode, reference_image_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1379,6 +1398,8 @@ def create_video_generation(
                 mode,
                 checkpoint,
                 json.dumps(loras or []),
+                steps,
+                use_pdd,
                 upscale,
                 prompt,
                 width,
@@ -1502,10 +1523,10 @@ def create_video_edit(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, mode, status, prompt, loras, upscale, width, height, length,
+                (id, user_id, prompt_id, client_id, mode, status, prompt, loras, steps, use_pdd, upscale, width, height, length,
                  fps, seed, input_file_ids, storage_file_id, filename, subfolder, video_type,
                  completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes)
-            SELECT %s, user_id, %s, %s, mode, 'completed', prompt, loras, upscale, %s, %s, %s,
+            SELECT %s, user_id, %s, %s, mode, 'completed', prompt, loras, steps, use_pdd, upscale, %s, %s, %s,
                    fps, seed, input_file_ids, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s
             FROM video_generations

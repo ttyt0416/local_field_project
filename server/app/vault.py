@@ -146,6 +146,8 @@ class VaultVideoDetail(VaultVideoSummary):
     width: int
     height: int
     seed: int
+    steps: int
+    use_pdd: bool
     checkpoint: str | None
     loras: list[VaultLora]
     upscale: bool
@@ -503,6 +505,8 @@ def vault_video_detail(
         width=generation["width"],
         height=generation["height"],
         seed=generation["seed"],
+        steps=int(generation.get("steps") or 4),
+        use_pdd=bool(generation.get("use_pdd")),
         checkpoint=generation.get("checkpoint") or None,
         loras=_loras(generation),
         upscale=generation.get("upscale") is not False,
