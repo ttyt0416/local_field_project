@@ -4,7 +4,9 @@
 
 Storage가 설정된 생성 결과는 만료 읽기 URL을 사용한다. 기존 생성 데이터나 Storage 설정이 없는 환경은 기존 Local Field 이미지 프록시를 사용해 개발 환경과 기존 데이터를 유지한다. 이미지 조회 endpoint도 Storage 파일 ID가 있으면 서명 URL로 임시 리다이렉트한다.
 
-`POST /generation/image/{prompt_id}/cancel`은 소유권을 확인한 뒤 ComfyUI `POST /api/jobs/{prompt_id}/cancel`을 호출한다. ComfyUI가 실행 중 작업은 interrupt하고 pending 작업은 해당 ID만 dequeue하며, race 없이 target job만 취소한다. DB, SSE, 전역 job store가 모두 `cancelled` terminal 상태를 사용해 polling과 대기 promise를 종료한다.
+Image·video·3D cancel endpoint는 소유권을 확인한 뒤 live Comfy queue에서 target을 확인하고, `POST /queue`의 target delete와 `POST /interrupt`의 target interrupt를 순서대로 호출한다. 따라서 pending 작업은 dequeue하고 running 작업은 interrupt하며, unknown 또는 terminal ID는 기존처럼 no-op이다. DB, SSE, 전역 job store가 모두 `cancelled` terminal 상태를 사용해 polling과 대기 promise를 종료한다.
+
+Video와 3D prompt builder는 request마다 unique `easy cleanGpuUsed` output node를 추가한다. ComfyUI는 ready output node를 우선 실행하므로 heavy model loader 전에 unused model, CUDA cache, Easy-Use cache를 비운다. node ID를 request마다 바꿔 같은 workflow의 다음 실행에서도 cleanup output cache를 재사용하지 않는다.
 
 lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하지 않는다. 생성 seed는 PostgreSQL `BIGINT`에 저장 가능한 signed 64-bit 범위로 제한한다. 공통 Comfy model option reader는 legacy list schema와 ComfyUI V3 `COMBO` `{ options: [...] }` schema를 모두 처리한다. 따라서 live node가 V3 combo를 반환해도 image/video/3D readiness 및 LTX core gate가 model filename을 누락하지 않는다.
 

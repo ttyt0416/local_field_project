@@ -21,6 +21,7 @@ from .comfyui import (
     _queue_position,
     _request_bytes,
     _request_json,
+    add_workflow_start_cleanup,
     cancel_comfy_generation,
     generation_node,
     generation_progress,
@@ -372,6 +373,7 @@ def _build_prompt(request: ThreeDGenerationRequest, comfy_filename: str) -> tupl
     except (OSError, json.JSONDecodeError) as exc:
         raise _ComfyUIError("TRELLIS.2 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
+    add_workflow_start_cleanup(prompt)
     preset = _PRESETS[request.preset]
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     prompt["122"]["inputs"]["image"] = comfy_filename

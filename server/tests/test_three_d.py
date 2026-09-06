@@ -28,6 +28,14 @@ class ThreeDWorkflowTest(unittest.TestCase):
         self.assertEqual(prompt["186"]["inputs"]["target_face_count"], 700_000)
         self.assertEqual(prompt["288"]["inputs"]["value"], 4096)
         self.assertTrue(prompt["900"]["inputs"]["filename_prefix"].startswith("LocalField_3D_"))
+        cleanups = [
+            (node_id, node)
+            for node_id, node in prompt.items()
+            if node["class_type"] == "easy cleanGpuUsed"
+        ]
+        self.assertEqual(len(cleanups), 1)
+        self.assertTrue(cleanups[0][0].startswith("workflow-start-cleanup-"))
+        self.assertEqual(cleanups[0][1]["inputs"], {"anything": "workflow_start"})
         self.assertEqual(
             {node["inputs"]["seed"] for node in prompt.values() if node["class_type"] == "KSampler"},
             {123},

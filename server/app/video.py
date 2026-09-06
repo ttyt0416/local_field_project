@@ -28,6 +28,7 @@ from .comfyui import (
     PromptEnhancementResponse,
     _ComfyUIError,
     _VLLMError,
+    add_workflow_start_cleanup,
     cancel_comfy_generation,
     _queue_position,
     _comfy_url,
@@ -1101,6 +1102,7 @@ def _build_prompt(
     except (OSError, json.JSONDecodeError) as exc:
         raise _ComfyUIError(f"{mode} 영상 workflow를 읽을 수 없습니다.") from exc
     prompt = copy.deepcopy(prompt)
+    add_workflow_start_cleanup(prompt)
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     effective_prompt = effective_prompt if effective_prompt is not None else _effective_video_prompt(mode, request)
     if model == "ltx":

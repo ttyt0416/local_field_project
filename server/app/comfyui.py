@@ -1235,11 +1235,25 @@ def _request_action(method: str, path: str, payload: dict[str, Any] | None = Non
 
 
 def cancel_comfy_generation(prompt_id: str) -> bool:
-    response = _request_json("POST", f"/api/jobs/{prompt_id}/cancel")
-    cancelled = response.get("cancelled")
-    if not isinstance(cancelled, bool):
-        raise _ComfyUIError("ComfyUI 취소 응답 형식이 올바르지 않습니다.")
-    return cancelled
+    queue = _request_json("GET", "/queue")
+    queued_or_running = any(
+        isinstance(entry, (list, tuple)) and len(entry) > 1 and entry[1] == prompt_id
+        for queue_name in ("queue_running", "queue_pending")
+        for entry in queue.get(queue_name, [])
+        if isinstance(queue.get(queue_name), list)
+    )
+    if not queued_or_running:
+        return False
+    _request_action("POST", "/queue", {"delete": [prompt_id]})
+    _request_action("POST", "/interrupt", {"prompt_id": prompt_id})
+    return True
+
+
+def add_workflow_start_cleanup(prompt: dict[str, Any]) -> None:
+    prompt[f"workflow-start-cleanup-{uuid.uuid4().hex}"] = {
+        "class_type": "easy cleanGpuUsed",
+        "inputs": {"anything": "workflow_start"},
+    }
 
 
 def _request_bytes(path: str) -> tuple[bytes, str | None]:

@@ -4,7 +4,7 @@ import re
 import unittest
 from pathlib import Path
 from typing import Literal, cast
-from unittest.mock import patch
+from unittest.mock import call, patch
 from uuid import uuid4
 
 from app import video
@@ -105,6 +105,38 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(prompt["30"]["inputs"]["samples"], ["19", 0])
         self.assertEqual(prompt["31"]["inputs"]["samples"], ["19", 1])
 
+    def test_video_workflows_add_a_unique_start_cleanup(self) -> None:
+        resolved = {
+            "index:0": video._ResolvedAsset(
+                file_id="a" * 32,
+                filename="image.png",
+                content=b"i",
+                media_type="image/png",
+                kind="image",
+            )
+        }
+        requests = (
+            video.VideoGenerationRequest(prompt="move", first_frame=video.VideoAsset(kind="image", file_index=0)),
+            video.VideoGenerationRequest(
+                prompt="move",
+                checkpoint=video._LTX_CHECKPOINT,
+                first_frame=video.VideoAsset(kind="image", file_index=0),
+            ),
+        )
+
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            prompts = [video._build_prompt("i2v", request, resolved)[0] for request in requests]
+
+        cleanups = [
+            (node_id, node)
+            for prompt in prompts
+            for node_id, node in prompt.items()
+            if node["class_type"] == "easy cleanGpuUsed"
+        ]
+        self.assertEqual(len(cleanups), 2)
+        self.assertNotEqual(cleanups[0][0], cleanups[1][0])
+        self.assertTrue(all(node["inputs"] == {"anything": "workflow_start"} for _, node in cleanups))
+
     def test_minimax_loras_are_allowlisted_and_injected_in_selection_order(self) -> None:
         options = video.VideoGenerationOptions(
             mode="i2v",
@@ -189,14 +221,29 @@ class VideoContractTest(unittest.TestCase):
             "<Picture 1> <Video 2> <Audio 3>",
         )
 
-    def test_cancel_comfy_prompt_uses_targeted_job_cancel(self) -> None:
-        with patch("app.comfyui._request_json", return_value={"cancelled": True}) as request_json:
-            self.assertTrue(cancel_comfy_generation("prompt-1"))
-        request_json.assert_called_once_with("POST", "/api/jobs/prompt-1/cancel")
+    def test_cancel_comfy_prompt_interrupts_and_removes_target(self) -> None:
+        for queue in (
+            {"queue_running": [[1, "prompt-1"]], "queue_pending": []},
+            {"queue_running": [], "queue_pending": [[1, "prompt-1"]]},
+        ):
+            with self.subTest(queue=queue), patch("app.comfyui._request_json", return_value=queue) as request_json, patch(
+                "app.comfyui._request_action"
+            ) as request_action:
+                self.assertTrue(cancel_comfy_generation("prompt-1"))
+            request_json.assert_called_once_with("GET", "/queue")
+            request_action.assert_has_calls(
+                [
+                    call("POST", "/queue", {"delete": ["prompt-1"]}),
+                    call("POST", "/interrupt", {"prompt_id": "prompt-1"}),
+                ]
+            )
 
     def test_cancel_comfy_prompt_preserves_comfy_noop(self) -> None:
-        with patch("app.comfyui._request_json", return_value={"cancelled": False}):
+        with patch("app.comfyui._request_json", return_value={"queue_running": [], "queue_pending": []}), patch(
+            "app.comfyui._request_action"
+        ) as request_action:
             self.assertFalse(cancel_comfy_generation("prompt-2"))
+        request_action.assert_not_called()
 
         requests = {
             "i2v": video.VideoGenerationRequest(
