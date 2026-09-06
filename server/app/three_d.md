@@ -4,7 +4,7 @@
 
 요청은 multipart `payload` JSON과 선택적인 `files` 한 개다. `source.file_index=0`이면 submit 시에만 새 이미지를 Storage와 `media_assets`에 저장한다. `source.file_id`이면 현재 사용자의 기존 이미지 ownership을 확인하고 재사용한다. `seed`, `remove_background`, `padding`을 지원하며 stage sampler·CFG는 workflow 상수로 유지한다. Seed는 브라우저 JSON number 반올림을 막기 위해 `0..2^53-1` 범위다.
 
-각 TRELLIS.2 prompt는 request 시작 시 unique `easy cleanGpuUsed` output node를 추가한다. ComfyUI가 ready output node를 먼저 실행하므로 이전 job의 unused model과 CUDA cache를 model loader보다 먼저 비운다.
+TRELLIS.2 static workflow는 direct `0` `easy cleanGpuUsed` output node로 시작한다. `three_d.py`는 request마다 node `0`의 `is_changed`만 갱신하므로 fixed seed도 cleanup cache를 재사용하지 않고, ComfyUI가 model loader보다 먼저 이전 job의 unused model과 CUDA cache를 비운다.
 
 `GET /generation/3d/options`는 static workflow의 node type과 필요한 INT8 TRELLIS.2, DINOv3 vision, shape/texture VAE, BiRefNet filename이 live ComfyUI `/object_info`에 노출되는지 확인한다. classic combo와 Comfy `COMBO.options` schema를 모두 처리한다.
 

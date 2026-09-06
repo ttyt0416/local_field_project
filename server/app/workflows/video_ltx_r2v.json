@@ -1,4 +1,5 @@
 {
+  "0": {"class_type": "easy cleanGpuUsed", "inputs": {"anything": "workflow_start"}},
   "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "LTX/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors", "weight_dtype": "default"}},
   "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "LTX/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors", "type": "ltxv", "device": "default"}},
   "3": {"class_type": "VAELoader", "inputs": {"vae_name": "LTX/ltx-2.5-video-vae-bf16.safetensors"}},

@@ -1249,13 +1249,6 @@ def cancel_comfy_generation(prompt_id: str) -> bool:
     return True
 
 
-def add_workflow_start_cleanup(prompt: dict[str, Any]) -> None:
-    prompt[f"workflow-start-cleanup-{uuid.uuid4().hex}"] = {
-        "class_type": "easy cleanGpuUsed",
-        "inputs": {"anything": "workflow_start"},
-    }
-
-
 def _request_bytes(path: str) -> tuple[bytes, str | None]:
     request = UrlRequest(_comfy_url(path), method="GET")
     try:

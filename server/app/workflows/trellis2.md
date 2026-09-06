@@ -1,6 +1,8 @@
 # TRELLIS.2 ComfyUI API workflow
 
-`trellis2.json`은 Comfy-Org official Pixal3D + TRELLIS.2 UI template에서 TRELLIS.2 dependency branch만 추출한 38-node API graph다. Pixal3D, note, preview output은 제거하고 최종 textured mesh를 core `SaveGLB` 하나에 연결한다.
+`trellis2.json`은 Comfy-Org official Pixal3D + TRELLIS.2 UI template에서 TRELLIS.2 dependency branch만 추출한 39-node API graph다. Pixal3D, note, preview output은 제거하고 최종 textured mesh를 core `SaveGLB` 하나에 연결한다.
+
+`0`은 direct `easy cleanGpuUsed` start output node다. `three_d.py`가 request마다 `is_changed`를 갱신해 fixed seed 재실행도 cleanup을 실행한다.
 
 Runtime binding node:
 

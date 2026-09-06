@@ -1,4 +1,10 @@
 {
+  "0": {
+    "class_type": "easy cleanGpuUsed",
+    "inputs": {
+      "anything": "workflow_start"
+    }
+  },
   "1": {
     "class_type": "UNETLoader",
     "inputs": {

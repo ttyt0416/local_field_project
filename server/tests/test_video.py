@@ -105,37 +105,26 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(prompt["30"]["inputs"]["samples"], ["19", 0])
         self.assertEqual(prompt["31"]["inputs"]["samples"], ["19", 1])
 
-    def test_video_workflows_add_a_unique_start_cleanup(self) -> None:
-        resolved = {
-            "index:0": video._ResolvedAsset(
-                file_id="a" * 32,
-                filename="image.png",
-                content=b"i",
-                media_type="image/png",
-                kind="image",
-            )
-        }
-        requests = (
-            video.VideoGenerationRequest(prompt="move", first_frame=video.VideoAsset(kind="image", file_index=0)),
-            video.VideoGenerationRequest(
-                prompt="move",
-                checkpoint=video._LTX_CHECKPOINT,
-                first_frame=video.VideoAsset(kind="image", file_index=0),
-            ),
-        )
+    def test_video_workflows_start_with_direct_cleanup(self) -> None:
+        workflows = Path(video.__file__).with_name("workflows")
+        for filename in (
+            "video_i2v.json",
+            "video_fl2v.json",
+            "video_r2v.json",
+            "video_ltx_i2v.json",
+            "video_ltx_fl2v.json",
+            "video_ltx_r2v.json",
+        ):
+            workflow = json.loads((workflows / filename).read_text())
+            self.assertEqual(workflow["0"]["class_type"], "easy cleanGpuUsed")
+            self.assertEqual(workflow["0"]["inputs"], {"anything": "workflow_start"})
 
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        request = video.VideoGenerationRequest(prompt="move", seed=1, first_frame=video.VideoAsset(kind="image", file_index=0))
         with patch.object(video, "_upload_to_comfy", return_value="image.png"):
-            prompts = [video._build_prompt("i2v", request, resolved)[0] for request in requests]
-
-        cleanups = [
-            (node_id, node)
-            for prompt in prompts
-            for node_id, node in prompt.items()
-            if node["class_type"] == "easy cleanGpuUsed"
-        ]
-        self.assertEqual(len(cleanups), 2)
-        self.assertNotEqual(cleanups[0][0], cleanups[1][0])
-        self.assertTrue(all(node["inputs"] == {"anything": "workflow_start"} for _, node in cleanups))
+            first, _ = video._build_prompt("i2v", request, resolved)
+            second, _ = video._build_prompt("i2v", request, resolved)
+        self.assertNotEqual(first["0"]["is_changed"], second["0"]["is_changed"])
 
     def test_minimax_loras_are_allowlisted_and_injected_in_selection_order(self) -> None:
         options = video.VideoGenerationOptions(
