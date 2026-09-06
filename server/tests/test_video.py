@@ -592,54 +592,76 @@ class VideoContractTest(unittest.TestCase):
         self.assertIn(b".mp4", request.data)
 
     def test_video_prompt_pattern_is_language_union_with_digits_and_symbols(self) -> None:
-        korean_labels = video._video_prompt_section_labels(["ko"])
-        korean_prompt = "\n".join(f"{label}\n장면 0초-3초 @image1: !?" for label in korean_labels)
+        korean_prompt = "[Shot 1] 장면 0초-3초 <Picture 1> N/A !?"
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt))
         self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt.replace("장면", "scene", 1)))
 
-        mixed_labels = video._video_prompt_section_labels(["ko", "en"])
-        mixed_prompt = "\n".join(f"{label}\nred 빨강 16:9 @image1: !?" for label in mixed_labels)
+        mixed_prompt = "[Shot 1] red 빨강 16:9 <Picture 1> N/A !?"
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko", "en"]), mixed_prompt))
 
-        japanese_labels = video._video_prompt_section_labels(["ja"])
-        japanese_prompt = "\n".join(f"{label}\n動き 0秒-3秒 @image1: !?" for label in japanese_labels)
+        japanese_prompt = "[Shot 1] 動き 0秒-3秒 <Picture 1> N/A !?"
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt))
         self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt.replace("動き", "move", 1)))
 
-    def test_video_prompt_requires_atlas_six_blocks_in_order(self) -> None:
-        labels = video._video_prompt_section_labels(["en"])
-        valid = "\n".join(f"{label}\nA concrete instruction." for label in labels)
-        self.assertEqual(video._validate_video_prompt_contents(valid, ["en"]), valid)
+    def test_video_prompt_requires_first_structured_shot_at_zero(self) -> None:
         with self.assertRaises(video._VLLMError):
-            video._validate_video_prompt_contents(valid.replace("Negative:", "Text:", 1), ["en"])
+            video._validate_video_prompt_fields(
+                {
+                    "shots": [{"start_ms": 1, **{field: "concrete instruction" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+                    "overall_soundscape": "quiet ambience",
+                    "non_diegetic_music": "N/A",
+                    "negative": "no subtitles",
+                },
+                video._video_prompt_pattern(["en"]),
+                duration=5,
+            )
 
     def test_video_prompt_enhancement_uses_selected_languages_and_pattern(self) -> None:
         languages: list[Literal["ko", "en", "ja"]] = ["ko", "en"]
-        fields = {field: f"red 빨강 0s-5s @image1: !?" for field in video._VIDEO_PROMPT_FIELDS}
+        plan = {
+            "shots": [
+                {
+                    "start_ms": 0,
+                    "style": "red 빨강 @image1",
+                    "timeline": "0s-5s 움직인다",
+                    "camera": "static shot",
+                    "audio": "no dialogue",
+                    "text": "no visible text",
+                }
+            ],
+            "overall_soundscape": "quiet ambience",
+            "non_diegetic_music": "N/A",
+            "negative": "no subtitles",
+        }
         payload = video.VideoPromptEnhancementRequest(
             prompt="사과가 움직인다",
             mode="i2v",
             duration=5,
             prompt_output_languages=languages,
         )
-        with patch.object(video, "_request_structured_object", return_value=fields) as request:
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
             result = video._enhance_video_prompt(payload)
 
-        expected = video._assemble_video_prompt(
-            {field: video._normalize_video_reference_markers(value) for field, value in fields.items()},
-            languages,
-        )
+        expected = video._assemble_video_prompt(plan, languages)
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
-        self.assertEqual(request.call_args.kwargs["name"], "video_prompt_fields")
+        self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
         schema = request.call_args.kwargs["schema"]
-        self.assertEqual(set(schema["required"]), set(video._VIDEO_PROMPT_FIELDS))
+        self.assertEqual(set(schema["required"]), {"shots", "overall_soundscape", "non_diegetic_music", "negative"})
         self.assertEqual(schema["additionalProperties"], False)
-        self.assertEqual(schema["properties"]["style"]["pattern"], video._video_prompt_pattern(languages))
+        shots = schema["properties"]["shots"]
+        self.assertEqual(shots["items"]["required"], ["start_ms", *video._VIDEO_PROMPT_SHOT_FIELDS])
+        self.assertEqual(shots["items"]["additionalProperties"], False)
+        self.assertEqual(shots["items"]["properties"]["style"]["pattern"], video._video_prompt_pattern(languages))
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
-        fields = {field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_FIELDS}
+        plan = {
+            "shots": [{"start_ms": 0, **{field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+            "overall_soundscape": "quiet room tone",
+            "non_diegetic_music": "N/A",
+            "negative": "no flashbacks",
+        }
         payload = video.VideoPromptEnhancementRequest(
             prompt="continue the scene",
             segment_prompt="The character leaves the room.",
@@ -650,23 +672,22 @@ class VideoContractTest(unittest.TestCase):
             previous_segment_prompt="opening 0s-10s",
             prompt_output_languages=["en"],
         )
-        with patch.object(video, "_request_structured_object", return_value=fields) as request:
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
             video._enhance_video_prompt(payload)
 
         system_prompt = request.call_args.kwargs["system_prompt"]
         user_prompt = request.call_args.kwargs["user_prompt"]
         self.assertIn("The global style and background apply to every sequence segment", system_prompt)
         self.assertIn("never repeat its timeline actions", system_prompt)
-        self.assertIn("local timeline from 0s to the supplied duration", system_prompt)
+        self.assertIn("start_ms is 0; later start_ms values are increasing cut times in the supplied local segment", system_prompt)
         self.assertIn("<global_style_and_background>\ncontinue the scene\n</global_style_and_background>", user_prompt)
         self.assertIn("<current_segment_instruction>\nThe character leaves the room.\n</current_segment_instruction>", user_prompt)
         self.assertIn("<duration_seconds>\n1\n</duration_seconds>", user_prompt)
         self.assertIn("<sequence_segment>\n2/2\n</sequence_segment>", user_prompt)
         self.assertIn("<timeline_clock>\n0s to 1s", user_prompt)
 
-    def test_enabled_video_enhancement_adds_reference_roles_to_workflow_prompt(self) -> None:
-        labels = video._video_prompt_section_labels(["en"])
-        improved = "\n".join(f"{label}\nconcrete instruction 0s-5s @image1: !?" for label in labels)
+    def test_enabled_video_enhancement_forwards_user_edited_prompt_to_workflow(self) -> None:
+        improved = "user edited freeform prompt with no section format"
         request = video.VideoGenerationRequest(
             prompt="move",
             prompt_enhancement_enabled=True,
@@ -676,8 +697,7 @@ class VideoContractTest(unittest.TestCase):
         )
         effective = video._effective_video_prompt("i2v", request)
         self.assertIn("<Picture 1>: start-image reference", effective)
-        normalized_improved = video._normalize_video_reference_markers(improved)
-        self.assertIn(normalized_improved, effective)
+        self.assertIn(improved, effective)
 
     def test_duplicate_video_prompt_languages_are_rejected(self) -> None:
         with self.assertRaises(ValidationError):

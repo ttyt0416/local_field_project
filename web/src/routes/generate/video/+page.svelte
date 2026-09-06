@@ -86,6 +86,7 @@
 	let improvedSegmentPrompts = $state<string[]>(['']);
 	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
 	let enhancingPrompt = $state(false);
+	let enhancingSegmentIndex = $state<number | null>(null);
 	let width = $state(1344);
 	let height = $state(768);
 	let duration = $state(5);
@@ -167,9 +168,11 @@
 	let visibleLoras = $derived(filterModelFolder(videoOptions.loras, loraFolder));
 	let videoDimensionStep = 32;
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
+	let isPromptEnhancing = $derived(enhancingPrompt || enhancingSegmentIndex !== null);
 	let selectionMax = $derived(selectionTarget === 'images' ? (mode === 'r2v' && segmentCount > 1 ? 8 : 9) : selectionMultiple ? 3 : 1);
 
 	$effect(() => {
+		if (!(Number(duration) > 0)) return;
 		if (segmentPrompts.length !== segmentCount) {
 			segmentPrompts = Array.from({ length: segmentCount }, (_, index) => segmentPrompts[index] ?? '');
 		}
@@ -698,6 +701,24 @@
 		return asset.source_type === 'image_generation' ? '생성 이미지' : asset.source_type === 'video_generation' ? '생성 동영상' : '업로드 콘텐츠';
 	}
 
+	async function requestPromptEnhancement(index: number, previousSegmentPrompt: string | null) {
+		const result = await apiJson<{ improved_prompt: { contents: string } }>('generation/video/enhance-prompt', {
+			method: 'POST',
+			timeout: 600_000,
+			json: {
+				prompt: prompt.trim(),
+				segment_prompt: segmentPrompts[index].trim(),
+				mode: index === 0 ? mode : 'r2v',
+				duration: segmentDuration(index),
+				segment_index: index,
+				segment_count: segmentCount,
+				previous_segment_prompt: previousSegmentPrompt,
+				prompt_output_languages: promptOutputLanguages
+			}
+		});
+		return normalizeVideoReferenceMarkers(result.improved_prompt.contents);
+	}
+
 	async function enhancePrompt() {
 		error = '';
 		if (!prompt.trim()) {
@@ -716,27 +737,34 @@
 		try {
 			const proposals = Array.from({ length: segmentCount }, () => '');
 			for (let index = 0; index < segmentCount; index += 1) {
-				const result = await apiJson<{ improved_prompt: { contents: string } }>('generation/video/enhance-prompt', {
-					method: 'POST',
-					timeout: 600_000,
-					json: {
-						prompt: prompt.trim(),
-						segment_prompt: segmentPrompts[index].trim(),
-						mode: index === 0 ? mode : 'r2v',
-						duration: segmentDuration(index),
-						segment_index: index,
-						segment_count: segmentCount,
-						previous_segment_prompt: index > 0 ? (proposals[index - 1]?.trim() || prompt.trim()) : null,
-						prompt_output_languages: promptOutputLanguages
-					}
-				});
-				proposals[index] = normalizeVideoReferenceMarkers(result.improved_prompt.contents);
+				proposals[index] = await requestPromptEnhancement(index, index > 0 ? (proposals[index - 1]?.trim() || prompt.trim()) : null);
 				improvedSegmentPrompts = [...proposals];
 			}
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '프롬프트를 개선하지 못했습니다.';
 		} finally {
 			enhancingPrompt = false;
+		}
+	}
+
+	async function enhanceSegmentPrompt(index: number) {
+		error = '';
+		if (!prompt.trim() || !segmentPrompts[index]?.trim()) {
+			error = '개선할 프롬프트를 입력해 주세요.';
+			return;
+		}
+		if (!promptOutputLanguages.length) {
+			error = '출력 언어를 하나 이상 선택해 주세요.';
+			return;
+		}
+		enhancingSegmentIndex = index;
+		try {
+			const previous = index > 0 ? (improvedSegmentPrompts[index - 1]?.trim() || prompt.trim()) : null;
+			updateImprovedSegmentPrompt(index, await requestPromptEnhancement(index, previous));
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '프롬프트를 개선하지 못했습니다.';
+		} finally {
+			enhancingSegmentIndex = null;
 		}
 	}
 
@@ -1067,12 +1095,12 @@
 									<OutlinedButton
 										type="button"
 										loading={enhancingPrompt}
-										disabled={generating || enhancingPrompt || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim() || segmentPrompts.some((value) => !value.trim())}
+										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim() || segmentPrompts.some((value) => !value.trim())}
 										class="min-h-9 px-3 text-xs"
 										onclick={() => void enhancePrompt()}
 									>
 										<Sparkles size={14} strokeWidth={1.9} />
-										<span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
+										<span>{enhancingPrompt ? '개선 중' : '전체 프롬프트 개선'}</span>
 									</OutlinedButton>
 								</div>
 							</div>
@@ -1090,7 +1118,7 @@
 								</div>
 							{/if}
 							<div class="space-y-4">
-								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={(event) => setPrompt((event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={(event) => setPrompt((event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
 								{#if segmentCount > 1}
 									<div class="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
 										<span class="text-sm font-medium">다음 구간 마지막 프레임 연결</span>
@@ -1099,10 +1127,10 @@
 								{/if}
 								{#each segmentPrompts as segmentPrompt, index}
 									<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
-										<div class="flex items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span></div>
-										<label class="block space-y-2" for={`video-segment-prompt-${index}`}><span class="text-xs font-medium text-primary">입력 프롬프트 {index + 1}</span><textarea id={`video-segment-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" disabled={enhancingPrompt || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+										<div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span><OutlinedButton type="button" loading={enhancingSegmentIndex === index} disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !prompt.trim() || !segmentPrompt.trim()} class="min-h-9 px-3 text-xs" onclick={() => void enhanceSegmentPrompt(index)}><Sparkles size={14} strokeWidth={1.9} /><span>{enhancingSegmentIndex === index ? '개선 중' : '프롬프트 개선'}</span></OutlinedButton></div>
+										<label class="block space-y-2" for={`video-segment-prompt-${index}`}><span class="text-xs font-medium text-primary">입력 프롬프트 {index + 1}</span><textarea id={`video-segment-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
 										{#if promptEnhancementEnabled}
-											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">개선 프롬프트 {index + 1}</span><textarea id={`video-improved-prompt-${index}`} value={improvedSegmentPrompts[index] ?? ''} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">개선 프롬프트 {index + 1}</span><textarea id={`video-improved-prompt-${index}`} value={improvedSegmentPrompts[index] ?? ''} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={isPromptEnhancing} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
 										{/if}
 									</section>
 								{/each}
@@ -1269,7 +1297,7 @@
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || enhancingPrompt || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.some((value) => !value.trim()) || isPromptEnhancing || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>

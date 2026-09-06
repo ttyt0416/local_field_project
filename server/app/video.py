@@ -105,12 +105,9 @@ _VIDEO_PROMPT_LANGUAGE_CHARS = {
     "ja": r"\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
 }
 _VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
-_VIDEO_PROMPT_FIELDS = ("style", "timeline", "camera", "audio", "text", "negative")
-_VIDEO_PROMPT_SECTION_LABELS = {
-    "ko": ("스타일:", "타임라인:", "카메라:", "오디오:", "텍스트:", "부정:"),
-    "en": ("Style:", "Timeline:", "Camera:", "Audio:", "Text:", "Negative:"),
-    "ja": ("スタイル:", "タイムライン:", "カメラ:", "オーディオ:", "テキスト:", "ネガティブ:"),
-}
+_VIDEO_PROMPT_SHOT_FIELDS = ("style", "timeline", "camera", "audio", "text")
+_VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music", "negative")
+_VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|negative|Shot|At|N/A|Picture|Video|Audio|Subject"
 
 
 class VideoAsset(BaseModel):
@@ -776,32 +773,97 @@ def _video_prompt_pattern(languages: Sequence[str]) -> str:
     if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_CHARS for language in languages):
         raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
     language_chars = "".join(_VIDEO_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
-    return rf"^(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|image|video|audio)+$"
+    return rf"^(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS})+$"
 
 
-def _video_prompt_section_labels(languages: Sequence[str]) -> tuple[str, ...]:
-    if not languages or languages[0] not in _VIDEO_PROMPT_SECTION_LABELS:
-        raise ValueError("동영상 프롬프트 출력 언어가 없습니다.")
-    return _VIDEO_PROMPT_SECTION_LABELS[languages[0]]
+def _video_prompt_value(value: object, pattern: str) -> str:
+    value = _normalize_video_reference_markers(value.strip()) if isinstance(value, str) else value
+    if not isinstance(value, str) or not value or not re.fullmatch(pattern, value):
+        raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드에 허용되지 않은 값이 있습니다.")
+    return value.strip()
 
 
-def _validate_video_prompt_contents(contents: str, languages: Sequence[str]) -> str:
-    contents = _normalize_video_reference_markers(contents.strip())
-    if not re.fullmatch(_video_prompt_pattern(languages), contents):
-        raise _VLLMError("동영상 프롬프트에 선택하지 않은 언어 또는 허용되지 않은 문자가 포함되어 있습니다.")
-    labels = _video_prompt_section_labels(languages)
-    positions: list[int] = []
-    for label in labels:
-        match = re.search(rf"(?m)^{re.escape(label)}[ ]*$", contents)
-        if match is None:
-            raise _VLLMError("동영상 프롬프트의 Atlas 6블록 형식이 올바르지 않습니다.")
-        positions.append(match.start())
-    if positions != sorted(positions):
-        raise _VLLMError("동영상 프롬프트의 Atlas 6블록 순서가 올바르지 않습니다.")
-    for index, position in enumerate(positions):
-        end = positions[index + 1] if index + 1 < len(positions) else len(contents)
-        if not contents[position:end].split("\n", 1)[-1].strip():
-            raise _VLLMError("동영상 프롬프트의 Atlas 6블록 내용이 비어 있습니다.")
+def _video_prompt_shot_limit(duration: float) -> int:
+    return max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
+
+
+def _video_prompt_fields_schema(pattern: str, duration: float) -> dict[str, Any]:
+    duration_ms = max(1, round(duration * 1000))
+    shot_properties = {
+        "start_ms": {"type": "integer", "minimum": 0, "maximum": duration_ms - 1},
+        **{
+            field: {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": pattern}
+            for field in _VIDEO_PROMPT_SHOT_FIELDS
+        },
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "shots": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": _video_prompt_shot_limit(duration),
+                "items": {
+                    "type": "object",
+                    "properties": shot_properties,
+                    "required": ["start_ms", *_VIDEO_PROMPT_SHOT_FIELDS],
+                    "additionalProperties": False,
+                },
+            },
+            **{
+                field: {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": pattern}
+                for field in _VIDEO_PROMPT_OVERALL_FIELDS
+            },
+        },
+        "required": ["shots", *_VIDEO_PROMPT_OVERALL_FIELDS],
+        "additionalProperties": False,
+    }
+
+
+def _validate_video_prompt_fields(fields: dict[str, Any], pattern: str, duration: float) -> dict[str, Any]:
+    if set(fields) != {"shots", *_VIDEO_PROMPT_OVERALL_FIELDS}:
+        raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드가 올바르지 않습니다.")
+    raw_shots = fields["shots"]
+    if not isinstance(raw_shots, list) or not 1 <= len(raw_shots) <= _video_prompt_shot_limit(duration):
+        raise _VLLMError("vLLM 동영상 프롬프트 shot 수가 올바르지 않습니다.")
+    duration_ms = max(1, round(duration * 1000))
+    shots: list[dict[str, Any]] = []
+    previous_start_ms = -1
+    for index, raw_shot in enumerate(raw_shots):
+        if not isinstance(raw_shot, dict) or set(raw_shot) != {"start_ms", *_VIDEO_PROMPT_SHOT_FIELDS}:
+            raise _VLLMError("vLLM 동영상 프롬프트 shot 형식이 올바르지 않습니다.")
+        start_ms = raw_shot["start_ms"]
+        if isinstance(start_ms, bool) or not isinstance(start_ms, int) or not 0 <= start_ms < duration_ms:
+            raise _VLLMError("vLLM 동영상 프롬프트 shot 시작 시간이 올바르지 않습니다.")
+        if (index == 0 and start_ms != 0) or (index > 0 and start_ms <= previous_start_ms):
+            raise _VLLMError("vLLM 동영상 프롬프트 shot 시작 시간 순서가 올바르지 않습니다.")
+        shots.append({"start_ms": start_ms, **{field: _video_prompt_value(raw_shot[field], pattern) for field in _VIDEO_PROMPT_SHOT_FIELDS}})
+        previous_start_ms = start_ms
+    return {"shots": shots, **{field: _video_prompt_value(fields[field], pattern) for field in _VIDEO_PROMPT_OVERALL_FIELDS}}
+
+
+def _normalize_video_reference_markers(contents: str) -> str:
+    for pattern, replacement in _REFERENCE_MARKER_REPLACEMENTS:
+        contents = pattern.sub(replacement, contents)
+    return contents
+
+
+def _assemble_video_prompt(fields: dict[str, Any], languages: Sequence[str]) -> str:
+    pattern = _video_prompt_pattern(languages)
+    validated = _validate_video_prompt_fields(fields, pattern, duration=max((shot.get("start_ms", 0) for shot in fields.get("shots", [])), default=0) / 1000 + _SEGMENT_SECONDS)
+    rendered_shots = []
+    for index, shot in enumerate(validated["shots"], start=1):
+        timestamp = "" if index == 1 else f" At {shot['start_ms'] // 60000:02d}:{shot['start_ms'] // 1000 % 60:02d}.{shot['start_ms'] % 1000:03d},"
+        rendered_shots.append(f"[Shot {index}]{timestamp} {' '.join(shot[field] for field in _VIDEO_PROMPT_SHOT_FIELDS)}")
+    integrated_description = "\n".join(rendered_shots)
+    contents = "\n\n".join(
+        [
+            f"integrated_multimodal_description:\n{integrated_description}",
+            *(f"{field}:\n{validated[field]}" for field in _VIDEO_PROMPT_OVERALL_FIELDS),
+        ]
+    )
+    if len(contents) > 5000:
+        raise _VLLMError("조립된 동영상 프롬프트가 길이 제한을 초과했습니다.")
     return contents
 
 
@@ -822,53 +884,12 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhan
         ),
         max_tokens=1536,
         temperature=0.8,
-        schema=_video_prompt_fields_schema(pattern),
-        name="video_prompt_fields",
+        schema=_video_prompt_fields_schema(pattern, payload.duration),
+        name="video_prompt_shots",
     )
-    fields = _validate_video_prompt_fields(fields, pattern)
+    fields = _validate_video_prompt_fields(fields, pattern, payload.duration)
     contents = _assemble_video_prompt(fields, languages)
     return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
-
-
-def _video_prompt_fields_schema(pattern: str) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            field: {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": pattern}
-            for field in _VIDEO_PROMPT_FIELDS
-        },
-        "required": list(_VIDEO_PROMPT_FIELDS),
-        "additionalProperties": False,
-    }
-
-
-def _validate_video_prompt_fields(fields: dict[str, Any], pattern: str) -> dict[str, str]:
-    if set(fields) != set(_VIDEO_PROMPT_FIELDS):
-        raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드가 올바르지 않습니다.")
-    validated: dict[str, str] = {}
-    for field in _VIDEO_PROMPT_FIELDS:
-        value = fields[field]
-        value = _normalize_video_reference_markers(value.strip()) if isinstance(value, str) else value
-        if not isinstance(value, str) or not value or not re.fullmatch(pattern, value):
-            raise _VLLMError("vLLM 동영상 프롬프트 JSON 필드에 허용되지 않은 값이 있습니다.")
-        validated[field] = value.strip()
-    return validated
-
-
-def _normalize_video_reference_markers(contents: str) -> str:
-    for pattern, replacement in _REFERENCE_MARKER_REPLACEMENTS:
-        contents = pattern.sub(replacement, contents)
-    return contents
-
-
-def _assemble_video_prompt(fields: dict[str, str], languages: Sequence[str]) -> str:
-    labels = _video_prompt_section_labels(languages)
-    contents = "\n".join(
-        f"{label}\n{fields[field]}" for label, field in zip(labels, _VIDEO_PROMPT_FIELDS, strict=True)
-    )
-    if len(contents) > 5000:
-        raise _VLLMError("조립된 동영상 프롬프트가 길이 제한을 초과했습니다.")
-    return contents
 
 
 def _video_reference_prompt(mode: str, request: VideoGenerationRequest) -> str:
@@ -1019,10 +1040,6 @@ def _effective_video_prompts(mode: str, request: VideoGenerationRequest) -> list
     improved_prompts = _submitted_improved_segment_prompts(request, segment_count)
     result: list[str] = []
     for index, improved_prompt in enumerate(improved_prompts):
-        try:
-            improved_prompt = _validate_video_prompt_contents(improved_prompt, request.prompt_output_languages)
-        except _VLLMError as exc:
-            raise HTTPException(status_code=422, detail="개선된 동영상 프롬프트 형식이 올바르지 않습니다.") from exc
         reference_prompt = _video_reference_prompt(mode, request) if index == 0 else _continuation_prompt(request)
         result.append(f"{reference_prompt}\n\n{improved_prompt}")
     return result
