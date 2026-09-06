@@ -57,6 +57,23 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(options.samplers, ["euler", "res_multistep"])
         self.assertEqual(options.schedulers, ["normal", "simple"])
         self.assertFalse(options.pdd_available)
+        self.assertFalse(options.learned_upscale_available)
+
+
+    def test_video_options_detects_learned_upscale_v3_combo_model(self) -> None:
+        object_info = {
+            "UNETLoader": {"input": {"required": {"unet_name": [[video._DASIWA_CHECKPOINT]]}}},
+            "KSamplerSelect": {"input": {"required": {"sampler_name": [["res_multistep"]]}}},
+            "BasicScheduler": {"input": {"required": {"scheduler": [["simple"]]}}},
+            "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [[]]}}},
+            video._LEARNED_UPSCALE_NODE: {"input": {"required": {"model_name": ["COMBO", {"options": [video._LEARNED_UPSCALE_MODEL]}]}}},
+            "LTXVSeparateAVLatent": {"input": {"required": {}}},
+            "LTXVConcatAVLatent": {"input": {"required": {}}},
+        }
+        with patch.object(video, "_request_json", return_value=object_info):
+            options = video._video_options("i2v")
+
+        self.assertTrue(options.learned_upscale_available)
 
 
     def test_video_workflows_do_not_clean_vram_automatically(self) -> None:
@@ -315,6 +332,58 @@ class VideoContractTest(unittest.TestCase):
             video.VideoGenerationRequest(prompt="move", megapixels=0.04)
         with self.assertRaises(ValidationError):
             video.VideoGenerationRequest.model_validate({"prompt": "move", "width": 352, "height": 528})
+
+    def test_learned_upscale_keeps_base_generation_and_injects_target_only_path(self) -> None:
+        request = video.VideoGenerationRequest(
+            prompt="move",
+            aspect_ratio="2:3",
+            megapixels=0.2,
+            upscale_mode="learned_3d",
+            target_megapixels=0.4,
+            first_frame=video.VideoAsset(kind="image", file_index=0),
+        )
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            workflow, _ = video._build_prompt("i2v", request, resolved)
+
+        generator = next(node for node in workflow.values() if node["class_type"] == "MiniMaxH3ImageToVideo")
+        sampler_id = next(node_id for node_id, node in workflow.items() if node["class_type"] == "SamplerCustomAdvanced")
+        separate_id, separate = next((node_id, node) for node_id, node in workflow.items() if node["class_type"] == "LTXVSeparateAVLatent")
+        upscale_id, upscale = next((node_id, node) for node_id, node in workflow.items() if node["class_type"] == video._LEARNED_UPSCALE_NODE)
+        concat_id, concat = next((node_id, node) for node_id, node in workflow.items() if node["class_type"] == "LTXVConcatAVLatent")
+        decode = next(node for node in workflow.values() if node["class_type"] == "VAEDecode")
+
+        self.assertEqual((request.width, request.height), (352, 528))
+        self.assertEqual((request.output_width, request.output_height), (512, 768))
+        self.assertNotEqual(request.effective_upscale_scale, 1.5)
+        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (request.width, request.height))
+        self.assertEqual(separate["inputs"], {"av_latent": [sampler_id, 0]})
+        self.assertEqual(upscale["inputs"]["latent"], [separate_id, 0])
+        self.assertEqual(upscale["inputs"]["model_name"], video._LEARNED_UPSCALE_MODEL)
+        self.assertEqual(upscale["inputs"]["mode"], "target dimensions")
+        self.assertEqual((upscale["inputs"]["mode.width"], upscale["inputs"]["mode.height"]), (request.output_width, request.output_height))
+        self.assertEqual(upscale["inputs"]["align"], 32)
+        self.assertEqual(concat["inputs"], {"video_latent": [upscale_id, 0], "audio_latent": [separate_id, 1]})
+        self.assertEqual(decode["inputs"]["samples"], [concat_id, 0])
+        self.assertFalse(any(node["class_type"] == "MiniMaxH3PDDAccApply" for node in workflow.values()))
+
+    def test_learned_upscale_requires_a_larger_target_and_no_pdd(self) -> None:
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.2)
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.4, use_pdd=True)
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", target_megapixels=0.4)
+
+    def test_learned_upscale_requires_live_model_and_node(self) -> None:
+        request = video.VideoGenerationRequest(prompt="move", megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.4)
+        unavailable = video.VideoGenerationOptions(mode="i2v", checkpoints=[], default_checkpoint="", loras=[])
+        available = video.VideoGenerationOptions(mode="i2v", checkpoints=[], default_checkpoint="", loras=[], learned_upscale_available=True)
+        with patch.object(video, "_video_options", return_value=unavailable):
+            with self.assertRaises(video.HTTPException):
+                video._validate_learned_upscale("i2v", request)
+        with patch.object(video, "_video_options", return_value=available):
+            video._validate_learned_upscale("i2v", request)
 
     def test_reference_media_never_sets_output_dimensions(self) -> None:
         request = video.VideoGenerationRequest(

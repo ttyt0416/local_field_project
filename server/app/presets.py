@@ -5,7 +5,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .auth import UserResponse, current_user
 from .database import create_preset, delete_preset, list_presets, update_preset
@@ -37,6 +37,8 @@ class PresetValues(BaseModel):
     loras: list[PresetLora] | None = None
     aspect_ratio: PresetAspectRatio | None = None
     megapixels: float | None = Field(default=None, gt=0)
+    upscale_mode: Literal["learned_3d"] | None = None
+    target_megapixels: float | None = Field(default=None, gt=0)
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
     denoise: float | None = Field(default=None, ge=0, le=1)
@@ -50,6 +52,20 @@ class PresetValues(BaseModel):
     fps: float | None = Field(default=None, ge=1, le=120)
     seed: str | None = Field(default=None, min_length=1, max_length=19, pattern=r"^[0-9]+$")
     random_seed: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_video_upscale(self) -> PresetValues:
+        if self.upscale_mode is None:
+            if self.target_megapixels is not None:
+                raise ValueError("업스케일을 선택한 경우에만 target 메가픽셀을 지정할 수 있습니다.")
+            return self
+        if self.megapixels is None or self.target_megapixels is None:
+            raise ValueError("업스케일 프리셋에는 base와 target 메가픽셀이 필요합니다.")
+        if self.target_megapixels <= self.megapixels:
+            raise ValueError("target 메가픽셀은 base 메가픽셀보다 커야 합니다.")
+        if self.use_pdd:
+            raise ValueError("learned 3D 업스케일 프리셋에는 PDD를 사용할 수 없습니다.")
+        return self
 
 
 class PresetCreateRequest(BaseModel):

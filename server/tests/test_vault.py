@@ -157,8 +157,17 @@ class VaultRouteTest(unittest.TestCase):
         stored = {
             "aspect_ratio": "16:9",
             "megapixels": 1.0,
-            "width": 1344,
+            "width": 512,
             "height": 768,
+            "base_megapixels": 0.2,
+            "base_width": 352,
+            "base_height": 528,
+            "upscale_mode": "learned_3d",
+            "target_megapixels": 0.4,
+            "target_width": 512,
+            "target_height": 768,
+            "upscale_scale": 512 / 352,
+            "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
             "seed": 7,
             "steps": 8,
             "sampler_name": "res_multistep",
@@ -179,6 +188,10 @@ class VaultRouteTest(unittest.TestCase):
         self.assertEqual(result.steps, 8)
         self.assertEqual(result.aspect_ratio, "16:9")
         self.assertEqual(result.megapixels, 1.0)
+        self.assertEqual(result.upscale_mode, "learned_3d")
+        self.assertEqual((result.base_width, result.base_height), (352, 528))
+        self.assertEqual((result.target_width, result.target_height), (512, 768))
+        self.assertEqual(result.upscale_model, "minimax_h3_latent_upscaler_3d_fp16.safetensors")
         self.assertEqual(result.sampler_name, "res_multistep")
         self.assertEqual(result.scheduler, "simple")
         self.assertTrue(result.use_pdd)

@@ -508,6 +508,15 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         checkpoint VARCHAR(255) NOT NULL DEFAULT '',
         aspect_ratio VARCHAR(8),
         megapixels DOUBLE PRECISION,
+        upscale_mode VARCHAR(32),
+        base_megapixels DOUBLE PRECISION,
+        base_width INTEGER,
+        base_height INTEGER,
+        target_megapixels DOUBLE PRECISION,
+        target_width INTEGER,
+        target_height INTEGER,
+        upscale_scale DOUBLE PRECISION,
+        upscale_model VARCHAR(255),
         loras JSONB NOT NULL DEFAULT '[]'::jsonb,
         steps INTEGER NOT NULL DEFAULT 4,
         sampler_name VARCHAR(64),
@@ -548,6 +557,15 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale BOOLEAN NOT NULL DEFAULT TRUE",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS aspect_ratio VARCHAR(8)",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS megapixels DOUBLE PRECISION",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale_mode VARCHAR(32)",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS base_megapixels DOUBLE PRECISION",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS base_width INTEGER",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS base_height INTEGER",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS target_megapixels DOUBLE PRECISION",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS target_width INTEGER",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS target_height INTEGER",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale_scale DOUBLE PRECISION",
+    "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale_model VARCHAR(255)",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS sampler_name VARCHAR(64)",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS scheduler VARCHAR(64)",
     """
@@ -1355,7 +1373,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, loras, steps, sampler_name, scheduler, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
+    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, upscale_mode, base_megapixels, base_width, base_height, target_megapixels, target_width, target_height, upscale_scale, upscale_model, loras, steps, sampler_name, scheduler, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations, continuation_mode, reference_image_file_ids, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
@@ -1376,6 +1394,15 @@ def create_video_generation(
     input_file_ids: list[str],
     aspect_ratio: str | None = None,
     megapixels: float | None = None,
+    upscale_mode: str | None = None,
+    base_megapixels: float | None = None,
+    base_width: int | None = None,
+    base_height: int | None = None,
+    target_megapixels: float | None = None,
+    target_width: int | None = None,
+    target_height: int | None = None,
+    upscale_scale: float | None = None,
+    upscale_model: str | None = None,
     sampler_name: str | None = None,
     scheduler: str | None = None,
     active_prompt_id: str | None = None,
@@ -1395,10 +1422,10 @@ def create_video_generation(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, loras, steps, sampler_name, scheduler, use_pdd, upscale, prompt, width, height, length, fps, seed,
+                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, upscale_mode, base_megapixels, base_width, base_height, target_megapixels, target_width, target_height, upscale_scale, upscale_model, loras, steps, sampler_name, scheduler, use_pdd, upscale, prompt, width, height, length, fps, seed,
                  input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations,
                  continuation_mode, reference_image_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1411,6 +1438,15 @@ def create_video_generation(
                 checkpoint,
                 aspect_ratio,
                 megapixels,
+                upscale_mode,
+                base_megapixels,
+                base_width,
+                base_height,
+                target_megapixels,
+                target_width,
+                target_height,
+                upscale_scale,
+                upscale_model,
                 json.dumps(loras or []),
                 steps,
                 sampler_name,

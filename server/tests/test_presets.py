@@ -64,6 +64,14 @@ class PresetRequestTest(unittest.TestCase):
         self.assertTrue(payload.values.use_pdd)
         self.assertEqual(payload.values.loras[0].strength, -100)
 
+    def test_video_upscale_preset_requires_base_target_order_and_excludes_pdd(self) -> None:
+        values = PresetValues(megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.4)
+        self.assertEqual(values.upscale_mode, "learned_3d")
+        with self.assertRaises(ValidationError):
+            PresetValues(megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.2)
+        with self.assertRaises(ValidationError):
+            PresetValues(megapixels=0.2, upscale_mode="learned_3d", target_megapixels=0.4, use_pdd=True)
+
     def test_preset_dimensions_have_no_upper_bound_but_stay_positive(self) -> None:
         values = PresetValues(width=4096, height=8192)
 

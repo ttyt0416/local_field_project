@@ -20,7 +20,7 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
@@ -121,6 +121,10 @@ _VIDEO_WIDTH_STEP = 32
 _VIDEO_HEIGHT_STEP = 16
 _DEFAULT_VIDEO_SAMPLER = "res_multistep"
 _DEFAULT_VIDEO_SCHEDULER = "simple"
+_LEARNED_UPSCALE_MODE = "learned_3d"
+_LEARNED_UPSCALE_NODE = "MinimaxH3LatentUpscaler3D"
+_LEARNED_UPSCALE_MODEL = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+_LEARNED_UPSCALE_ALIGN = 32
 
 
 class VideoAsset(BaseModel):
@@ -147,6 +151,8 @@ class VideoGenerationRequest(BaseModel):
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
     aspect_ratio: VideoAspectRatio = "16:9"
     megapixels: float = Field(default=1.0, gt=0)
+    upscale_mode: Literal["learned_3d"] | None = None
+    target_megapixels: float | None = Field(default=None, gt=0)
     duration: float = Field(default=5)
     continuation_mode: Literal["r2v", "i2v"] = "r2v"
     fps: float = Field(default=24, ge=1, le=120)
@@ -161,10 +167,13 @@ class VideoGenerationRequest(BaseModel):
     sampler_name: str = Field(default=_DEFAULT_VIDEO_SAMPLER, min_length=1, max_length=64)
     scheduler: str = Field(default=_DEFAULT_VIDEO_SCHEDULER, min_length=1, max_length=64)
     _execution_dimensions: tuple[int, int] | None = PrivateAttr(default=None)
+    _target_execution_dimensions: tuple[int, int] | None = PrivateAttr(default=None)
 
-    @field_validator("megapixels")
+    @field_validator("megapixels", "target_megapixels")
     @classmethod
-    def normalize_megapixels(cls, value: float) -> float:
+    def normalize_megapixels(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
         try:
             normalized = Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
         except (InvalidOperation, ValueError) as exc:
@@ -173,6 +182,20 @@ class VideoGenerationRequest(BaseModel):
             raise ValueError("메가픽셀은 한 자리 반올림 후 0.1 이상이어야 합니다.")
         return float(normalized)
 
+    @model_validator(mode="after")
+    def validate_learned_upscale(self) -> VideoGenerationRequest:
+        if self.upscale_mode is None:
+            if self.target_megapixels is not None:
+                raise ValueError("업스케일을 선택한 경우에만 target 메가픽셀을 지정할 수 있습니다.")
+            return self
+        if self.target_megapixels is None:
+            raise ValueError("업스케일에는 target 메가픽셀이 필요합니다.")
+        if self.target_megapixels <= self.megapixels:
+            raise ValueError("target 메가픽셀은 base 메가픽셀보다 커야 합니다.")
+        if self.use_pdd:
+            raise ValueError("learned 3D 업스케일에는 PDD를 사용할 수 없습니다.")
+        return self
+
     @property
     def width(self) -> int:
         return (self._execution_dimensions or _video_dimensions(self.aspect_ratio, self.megapixels))[0]
@@ -180,6 +203,38 @@ class VideoGenerationRequest(BaseModel):
     @property
     def height(self) -> int:
         return (self._execution_dimensions or _video_dimensions(self.aspect_ratio, self.megapixels))[1]
+
+    @property
+    def upscale_enabled(self) -> bool:
+        return self.upscale_mode == _LEARNED_UPSCALE_MODE
+
+    @property
+    def output_width(self) -> int:
+        if not self.upscale_enabled:
+            return self.width
+        dimensions = self._target_execution_dimensions or _video_dimensions(
+            self.aspect_ratio,
+            self.target_megapixels or self.megapixels,
+            height_step=_LEARNED_UPSCALE_ALIGN,
+        )
+        return dimensions[0]
+
+    @property
+    def output_height(self) -> int:
+        if not self.upscale_enabled:
+            return self.height
+        dimensions = self._target_execution_dimensions or _video_dimensions(
+            self.aspect_ratio,
+            self.target_megapixels or self.megapixels,
+            height_step=_LEARNED_UPSCALE_ALIGN,
+        )
+        return dimensions[1]
+
+    @property
+    def effective_upscale_scale(self) -> float | None:
+        if not self.upscale_enabled:
+            return None
+        return (self.output_width / self.width + self.output_height / self.height) / 2
 
     @field_validator("prompt_output_languages")
     @classmethod
@@ -193,18 +248,18 @@ def _rounded_megapixels(value: float) -> float:
     return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
-def _video_dimensions(aspect_ratio: VideoAspectRatio, megapixels: float) -> tuple[int, int]:
+def _video_dimensions(aspect_ratio: VideoAspectRatio, megapixels: float, *, height_step: int = _VIDEO_HEIGHT_STEP) -> tuple[int, int]:
     ratio_width, ratio_height = _VIDEO_ASPECT_RATIOS[aspect_ratio]
     ratio = ratio_width / ratio_height
     target_pixels = megapixels * 1_000_000
     ideal_width = math.sqrt(target_pixels * ratio)
     ideal_height = math.sqrt(target_pixels / ratio)
     center_width = max(_VIDEO_WIDTH_STEP, round(ideal_width / _VIDEO_WIDTH_STEP) * _VIDEO_WIDTH_STEP)
-    center_height = max(_VIDEO_HEIGHT_STEP, round(ideal_height / _VIDEO_HEIGHT_STEP) * _VIDEO_HEIGHT_STEP)
+    center_height = max(height_step, round(ideal_height / height_step) * height_step)
     # ponytail: search 64 native steps around the ideal; expand only if real high-MP requests need a wider grid.
     candidates: list[tuple[tuple[float, float, float, float], int, int]] = []
     for width in range(max(_VIDEO_WIDTH_STEP, center_width - _VIDEO_WIDTH_STEP * 64), center_width + _VIDEO_WIDTH_STEP * 65, _VIDEO_WIDTH_STEP):
-        for height in range(max(_VIDEO_HEIGHT_STEP, center_height - _VIDEO_HEIGHT_STEP * 64), center_height + _VIDEO_HEIGHT_STEP * 65, _VIDEO_HEIGHT_STEP):
+        for height in range(max(height_step, center_height - height_step * 64), center_height + height_step * 65, height_step):
             actual_megapixels = width * height / 1_000_000
             score = (
                 abs(_rounded_megapixels(actual_megapixels) - megapixels),
@@ -258,6 +313,7 @@ class VideoGenerationOptions(BaseModel):
     default_sampler: str = _DEFAULT_VIDEO_SAMPLER
     default_scheduler: str = _DEFAULT_VIDEO_SCHEDULER
     pdd_available: bool = False
+    learned_upscale_available: bool = False
 
 
 class VideoOutput(BaseModel):
@@ -334,6 +390,7 @@ async def create_video(
         _validate_video_loras(mode, request)
         _validate_video_sampling(mode, request)
         _validate_video_pdd(mode, request)
+        _validate_learned_upscale(mode, request)
         _validate_request(mode, request, files)
         steps = _effective_video_steps(request)
         segment_durations = _video_segment_durations(request.duration)
@@ -369,12 +426,21 @@ async def create_video(
         steps=steps,
         use_pdd=request.use_pdd,
         upscale=True,
+        upscale_mode=request.upscale_mode,
+        base_megapixels=request.megapixels,
+        base_width=request.width,
+        base_height=request.height,
+        target_megapixels=request.target_megapixels,
+        target_width=request.output_width if request.upscale_enabled else None,
+        target_height=request.output_height if request.upscale_enabled else None,
+        upscale_scale=request.effective_upscale_scale,
+        upscale_model=_LEARNED_UPSCALE_MODEL if request.upscale_enabled else None,
         aspect_ratio=request.aspect_ratio,
         megapixels=request.megapixels,
         sampler_name=request.sampler_name,
         scheduler=request.scheduler,
-        width=request.width,
-        height=request.height,
+        width=request.output_width,
+        height=request.output_height,
         length=_video_frame_length(request),
         fps=request.fps,
         seed=seed,
@@ -574,6 +640,11 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
         if "MiniMaxH3PDDAccApply" in object_info
         else set()
     )
+    learned_upscale_available = (
+        _LEARNED_UPSCALE_NODE in object_info
+        and _LEARNED_UPSCALE_MODEL in _node_choices(object_info, _LEARNED_UPSCALE_NODE, "model_name")
+        and {"LTXVSeparateAVLatent", "LTXVConcatAVLatent"}.issubset(object_info)
+    )
     return VideoGenerationOptions(
         mode=mode,
         checkpoints=checkpoints,
@@ -584,6 +655,7 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
         default_sampler=_DEFAULT_VIDEO_SAMPLER if _DEFAULT_VIDEO_SAMPLER in samplers else samplers[0],
         default_scheduler=_DEFAULT_VIDEO_SCHEDULER if _DEFAULT_VIDEO_SCHEDULER in schedulers else schedulers[0],
         pdd_available=_PDD_FILES["ref2va"] in pdd_files,
+        learned_upscale_available=learned_upscale_available,
     )
 
 
@@ -629,6 +701,13 @@ def _validate_video_pdd(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGener
     if not _video_options(mode).pdd_available:
         raise HTTPException(status_code=422, detail="PDD LoRA 또는 custom node를 ComfyUI에서 찾을 수 없습니다.")
     _pdd_file(request.checkpoint)
+
+
+def _validate_learned_upscale(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGenerationRequest) -> None:
+    if not request.upscale_enabled:
+        return
+    if not _video_options(mode).learned_upscale_available:
+        raise HTTPException(status_code=422, detail="H3 learned 3D 업스케일 model 또는 ComfyUI node를 찾을 수 없습니다.")
 
 
 def _effective_video_steps(request: VideoGenerationRequest) -> int:
@@ -750,6 +829,44 @@ def _inject_video_loras(
             inputs["sigmas"] = pdd_sigmas
         if pdd_sigmas is not None and node.get("class_type") == "KSamplerSelect":
             inputs["sampler_name"] = "euler"
+
+
+def _inject_learned_upscale(prompt: dict[str, dict[str, Any]], request: VideoGenerationRequest) -> None:
+    sampler_ids = [node_id for node_id, node in prompt.items() if node.get("class_type") == "SamplerCustomAdvanced"]
+    if len(sampler_ids) != 1:
+        raise _ComfyUIError("H3 learned 업스케일 workflow의 sampler를 찾을 수 없습니다.")
+    next_id = max((int(node_id) for node_id in prompt if node_id.isdecimal()), default=0) + 1
+    separate_id, upscale_id, concat_id = (str(next_id), str(next_id + 1), str(next_id + 2))
+    sampler_output: list[Any] = [sampler_ids[0], 0]
+    prompt[separate_id] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": sampler_output}}
+    prompt[upscale_id] = {
+        "class_type": _LEARNED_UPSCALE_NODE,
+        "inputs": {
+            "latent": [separate_id, 0],
+            "model_name": _LEARNED_UPSCALE_MODEL,
+            "mode": "target dimensions",
+            "mode.width": request.output_width,
+            "mode.height": request.output_height,
+            "align": _LEARNED_UPSCALE_ALIGN,
+            "enable_temporal_chunking": True,
+            "force_unload": True,
+            "device": "cuda",
+            "precision": "fp16",
+        },
+    }
+    prompt[concat_id] = {
+        "class_type": "LTXVConcatAVLatent",
+        "inputs": {"video_latent": [upscale_id, 0], "audio_latent": [separate_id, 1]},
+    }
+    for node_id, node in prompt.items():
+        if node_id in {separate_id, upscale_id, concat_id}:
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for name, value in inputs.items():
+            if value == sampler_output:
+                inputs[name] = [concat_id, 0]
 
 
 def _validate_request(mode: str, request: VideoGenerationRequest, files: list[UploadFile]) -> None:
@@ -1152,6 +1269,8 @@ def _build_prompt(
         pdd_file=_pdd_file(request.checkpoint) if request.use_pdd else None,
         pdd_steps=steps,
     )
+    if request.upscale_enabled:
+        _inject_learned_upscale(prompt, request)
     if mode == "i2v":
         prompt["10"]["inputs"]["image"] = _upload_to_comfy(resolved, request.first_frame, "image")
     elif mode == "fl2v":
@@ -1261,15 +1380,34 @@ def _generation_aspect_ratio(generation: dict[str, Any]) -> VideoAspectRatio:
     return min(_VIDEO_ASPECT_RATIOS, key=lambda value: abs(math.log((width / height) / (_VIDEO_ASPECT_RATIOS[value][0] / _VIDEO_ASPECT_RATIOS[value][1]))))
 
 
-def _generation_megapixels(generation: dict[str, Any]) -> float:
-    stored = generation.get("megapixels")
+def _generation_base_megapixels(generation: dict[str, Any]) -> float:
+    stored = generation.get("base_megapixels", generation.get("megapixels"))
     if isinstance(stored, (int, float)) and stored > 0:
         return _rounded_megapixels(float(stored))
-    return max(0.1, _rounded_megapixels(int(generation["width"]) * int(generation["height"]) / 1_000_000))
+    width = int(generation.get("base_width") or generation["width"])
+    height = int(generation.get("base_height") or generation["height"])
+    return max(0.1, _rounded_megapixels(width * height / 1_000_000))
+
+
+def _generation_upscale_mode(generation: dict[str, Any]) -> Literal["learned_3d"] | None:
+    return _LEARNED_UPSCALE_MODE if generation.get("upscale_mode") == _LEARNED_UPSCALE_MODE else None
+
+
+def _generation_target_megapixels(generation: dict[str, Any]) -> float | None:
+    stored = generation.get("target_megapixels")
+    return _rounded_megapixels(float(stored)) if isinstance(stored, (int, float)) and stored > 0 else None
 
 
 def _keep_generation_dimensions(request: VideoGenerationRequest, generation: dict[str, Any]) -> VideoGenerationRequest:
-    request._execution_dimensions = (int(generation["width"]), int(generation["height"]))
+    request._execution_dimensions = (
+        int(generation.get("base_width") or generation["width"]),
+        int(generation.get("base_height") or generation["height"]),
+    )
+    if request.upscale_enabled:
+        request._target_execution_dimensions = (
+            int(generation.get("target_width") or generation["width"]),
+            int(generation.get("target_height") or generation["height"]),
+        )
     return request
 
 
@@ -1467,8 +1605,10 @@ def _queue_video_continuation(
             loras=_stored_video_loras(generation),
             steps=int(generation.get("steps") or 4),
             use_pdd=bool(generation.get("use_pdd")),
+            upscale_mode=_generation_upscale_mode(generation),
+            target_megapixels=_generation_target_megapixels(generation),
             aspect_ratio=_generation_aspect_ratio(generation),
-            megapixels=_generation_megapixels(generation),
+            megapixels=_generation_base_megapixels(generation),
             sampler_name=str(generation.get("sampler_name") or _DEFAULT_VIDEO_SAMPLER),
             scheduler=str(generation.get("scheduler") or _DEFAULT_VIDEO_SCHEDULER),
             duration=durations[next_index],
@@ -1484,8 +1624,10 @@ def _queue_video_continuation(
             loras=_stored_video_loras(generation),
             steps=int(generation.get("steps") or 4),
             use_pdd=bool(generation.get("use_pdd")),
+            upscale_mode=_generation_upscale_mode(generation),
+            target_megapixels=_generation_target_megapixels(generation),
             aspect_ratio=_generation_aspect_ratio(generation),
-            megapixels=_generation_megapixels(generation),
+            megapixels=_generation_base_megapixels(generation),
             sampler_name=str(generation.get("sampler_name") or _DEFAULT_VIDEO_SAMPLER),
             scheduler=str(generation.get("scheduler") or _DEFAULT_VIDEO_SCHEDULER),
             duration=durations[next_index],

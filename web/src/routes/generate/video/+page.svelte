@@ -81,7 +81,7 @@
 	let ready = $state(false);
 	let mode = $state<VideoMode>('i2v');
 	let checkpoint = $state('');
-	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false });
+	let videoOptions = $state<VideoGenerationOptions>({ mode: 'i2v', checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false, learned_upscale_available: false });
 	let videoOptionsLoading = $state(false);
 	let videoOptionsRequestId = 0;
 	let checkpointModalOpen = $state(false);
@@ -98,6 +98,8 @@
 	let enhancingSegmentIndex = $state<number | null>(null);
 	let aspectRatio = $state<VideoAspectRatio>('16:9');
 	let megapixels = $state(1.0);
+	let learnedUpscale = $state(false);
+	let targetMegapixels = $state(2.0);
 	let samplerName = $state('');
 	let scheduler = $state('');
 	let samplingModalOpen = $state(false);
@@ -176,6 +178,7 @@
 	let loraFolders = $derived(modelFolders(videoOptions.loras));
 	let visibleLoras = $derived(filterModelFolder(videoOptions.loras, loraFolder));
 	let calculatedDimensions = $derived(videoDimensions(aspectRatio, Number(megapixels)));
+	let calculatedTargetDimensions = $derived(learnedUpscale ? videoDimensions(aspectRatio, Number(targetMegapixels), 32) : null);
 
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
 	let isPromptEnhancing = $derived(enhancingPrompt || enhancingSegmentIndex !== null);
@@ -255,6 +258,7 @@
 			const options = await apiJson<VideoGenerationOptions>(`generation/video/options?mode=${nextMode}`);
 			if (!active || requestId !== videoOptionsRequestId) return;
 			videoOptions = options;
+			if (!options.learned_upscale_available) learnedUpscale = false;
 			selectVideoCheckpoint(options.checkpoints.includes(checkpoint) ? checkpoint : options.default_checkpoint);
 			checkpointFolder = '';
 			loraFolder = '';
@@ -263,7 +267,7 @@
 			scheduler = options.schedulers.includes(scheduler) ? scheduler : options.default_scheduler;
 		} catch (reason) {
 			if (!active || requestId !== videoOptionsRequestId) return;
-			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false };
+			videoOptions = { mode: nextMode, checkpoints: [], default_checkpoint: '', loras: [], samplers: [], schedulers: [], default_sampler: '', default_scheduler: '', pdd_available: false, learned_upscale_available: false };
 			checkpoint = '';
 			loras = [];
 			samplerName = '';
@@ -281,6 +285,14 @@
 	function setUsePdd(enabled: boolean) {
 		usePdd = enabled;
 		if (enabled) steps = 8;
+	}
+
+	function setLearnedUpscale(enabled: boolean) {
+		if (enabled && !videoOptions.learned_upscale_available) return;
+		learnedUpscale = enabled;
+		if (!enabled) return;
+		usePdd = false;
+		if (Number(targetMegapixels) <= Number(megapixels)) targetMegapixels = roundedMegapixels(Number(megapixels) + 0.1);
 	}
 
 	function selectMode(next: VideoMode) {
@@ -399,7 +411,7 @@
 		}, videoAspectRatioOptions[0].value);
 	}
 
-	function videoDimensions(ratio: VideoAspectRatio, requestedMegapixels: number): VideoDimensions | null {
+	function videoDimensions(ratio: VideoAspectRatio, requestedMegapixels: number, heightStep = 16): VideoDimensions | null {
 		if (!Number.isFinite(requestedMegapixels) || requestedMegapixels <= 0) return null;
 		const megapixels = roundedMegapixels(requestedMegapixels);
 		if (megapixels <= 0) return null;
@@ -408,12 +420,12 @@
 		const idealWidth = Math.sqrt(targetPixels * ratioWidth / ratioHeight);
 		const idealHeight = Math.sqrt(targetPixels * ratioHeight / ratioWidth);
 		const centerWidth = Math.max(32, Math.round(idealWidth / 32) * 32);
-		const centerHeight = Math.max(16, Math.round(idealHeight / 16) * 16);
+		const centerHeight = Math.max(heightStep, Math.round(idealHeight / heightStep) * heightStep);
 		// ponytail: mirror the server's 64-step local grid; expand only with a real high-MP need.
 		let best: VideoDimensions | null = null;
 		let bestScore: number[] | null = null;
 		for (let width = Math.max(32, centerWidth - 32 * 64); width <= centerWidth + 32 * 64; width += 32) {
-			for (let height = Math.max(16, centerHeight - 16 * 64); height <= centerHeight + 16 * 64; height += 16) {
+			for (let height = Math.max(heightStep, centerHeight - heightStep * 64); height <= centerHeight + heightStep * 64; height += heightStep) {
 				const actualMegapixels = width * height / 1_000_000;
 				const score = [Math.abs(roundedMegapixels(actualMegapixels) - megapixels), Math.abs(Math.log((width / height) / (ratioWidth / ratioHeight))), Math.abs(actualMegapixels - megapixels), Math.abs(width - idealWidth) + Math.abs(height - idealHeight)];
 				if (!bestScore || isBetterScore(score, bestScore)) {
@@ -752,6 +764,18 @@
 			error = 'PDD LoRA 또는 custom node를 찾을 수 없습니다.';
 			return;
 		}
+		if (learnedUpscale && !videoOptions.learned_upscale_available) {
+			error = 'H3 learned 3D 업스케일 model 또는 ComfyUI node를 찾을 수 없습니다.';
+			return;
+		}
+		if (learnedUpscale && Number(targetMegapixels) <= Number(megapixels)) {
+			error = 'Target 메가픽셀은 Base 메가픽셀보다 커야 합니다.';
+			return;
+		}
+		if (learnedUpscale && !calculatedTargetDimensions) {
+			error = 'Target 메가픽셀은 한 자리 반올림 후 0.1 이상이어야 합니다.';
+			return;
+		}
 		if (usePdd && ![4, 6, 8].includes(Number(steps))) {
 			error = 'PDD Steps는 4, 6 또는 8만 사용할 수 있습니다.';
 			return;
@@ -782,13 +806,14 @@
 				prompt_output_languages: promptOutputLanguages,
 				aspect_ratio: aspectRatio,
 				megapixels: Number(megapixels),
+				...(learnedUpscale ? { upscale_mode: 'learned_3d', target_megapixels: Number(targetMegapixels) } : {}),
 				sampler_name: samplerName,
 				scheduler,
 				duration: Number(duration),
 				continuation_mode: continuationMode,
 				fps: Number(fps),
 				steps: Number(steps),
-				use_pdd: usePdd,
+				use_pdd: learnedUpscale ? false : usePdd,
 				seed: randomSeed ? null : seed.trim() || null
 			};
 			if (mode === 'i2v') payload.first_frame = assetRef('image', firstFile, selectedFirst, newFiles, form);
@@ -877,12 +902,13 @@
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
 			aspect_ratio: aspectRatio,
 			megapixels: Number(megapixels),
+			...(learnedUpscale ? { upscale_mode: 'learned_3d' as const, target_megapixels: Number(targetMegapixels) } : {}),
 			sampler_name: samplerName,
 			scheduler,
 			duration: Number(duration),
 			fps: Number(fps),
 			steps: Number(steps),
-			use_pdd: usePdd,
+			use_pdd: learnedUpscale ? false : usePdd,
 			random_seed: randomSeed,
 			...(randomSeed || !seed.trim() ? {} : { seed: seed.trim() })
 		};
@@ -918,10 +944,12 @@
 		else if (values.width !== undefined && values.height !== undefined) aspectRatio = nearestVideoAspectRatio(values.width, values.height);
 		if (values.megapixels !== undefined) megapixels = values.megapixels;
 		else if (values.width !== undefined && values.height !== undefined) megapixels = roundedMegapixels(values.width * values.height / 1_000_000);
+		learnedUpscale = values.upscale_mode === 'learned_3d' && videoOptions.learned_upscale_available;
+		if (values.target_megapixels !== undefined) targetMegapixels = values.target_megapixels;
 		if (values.duration !== undefined) duration = values.duration;
 		if (values.fps !== undefined) fps = values.fps;
 		if (values.steps !== undefined) steps = values.steps;
-		if (values.use_pdd !== undefined) usePdd = values.use_pdd;
+		if (values.use_pdd !== undefined) usePdd = learnedUpscale ? false : values.use_pdd;
 		if (values.sampler_name && videoOptions.samplers.includes(values.sampler_name)) samplerName = values.sampler_name;
 		if (values.scheduler && videoOptions.schedulers.includes(values.scheduler)) scheduler = values.scheduler;
 
@@ -945,6 +973,8 @@
 			sampling: '샘플러 / 스케줄러',
 			aspect_ratio: '비율·메가픽셀',
 			megapixels: '비율·메가픽셀',
+			upscale_mode: '비율·메가픽셀',
+			target_megapixels: '비율·메가픽셀',
 			duration: '길이',
 			fps: 'FPS',
 			steps: 'Steps',
@@ -955,9 +985,11 @@
 			seed: 'Seed',
 			random_seed: 'Seed'
 		};
-		if (fields.has('aspect_ratio') || fields.has('megapixels') || fields.has('width') || fields.has('height')) fields.add('resolution');
+		if (fields.has('aspect_ratio') || fields.has('megapixels') || fields.has('upscale_mode') || fields.has('target_megapixels') || fields.has('width') || fields.has('height')) fields.add('resolution');
 		fields.delete('aspect_ratio');
 		fields.delete('megapixels');
+		fields.delete('upscale_mode');
+		fields.delete('target_megapixels');
 		fields.delete('width');
 		fields.delete('height');
 		if (fields.has('sampler_name') || fields.has('scheduler')) fields.add('sampling');
@@ -1052,7 +1084,7 @@
 							{/if}
 						</div>
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="video-use-pdd">
-							<input id="video-use-pdd" type="checkbox" checked={usePdd} onchange={(event) => setUsePdd((event.currentTarget as HTMLInputElement).checked)} disabled={generating || videoOptionsLoading || !videoOptions.pdd_available} class="size-4 accent-primary" />
+							<input id="video-use-pdd" type="checkbox" checked={usePdd} onchange={(event) => setUsePdd((event.currentTarget as HTMLInputElement).checked)} disabled={generating || videoOptionsLoading || learnedUpscale || !videoOptions.pdd_available} class="size-4 accent-primary" />
 							<span>PDD 사용</span>
 						</label>
 						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={generating || videoOptionsLoading || usePdd || !samplerName || !scheduler} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
@@ -1262,8 +1294,19 @@
 							</div>
 						{/if}
 
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-aspect-ratio"><span class="text-sm font-medium">영상 비율</span><select id="video-aspect-ratio" bind:value={aspectRatio} class={inputClass}>{#each videoAspectRatioOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></label><label class="block space-y-2" for="video-megapixels"><span class="text-sm font-medium">메가픽셀</span><input id="video-megapixels" type="number" min="0.1" step="0.1" bind:value={megapixels} class={inputClass} /></label></div>
-						{#if calculatedDimensions}<p class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">계산된 출력: {calculatedDimensions.width} × {calculatedDimensions.height} · {calculatedDimensions.megapixels.toFixed(1)} MP</p>{/if}
+						<div class="grid gap-4 sm:grid-cols-2">
+							<label class="block space-y-2" for="video-aspect-ratio"><span class="text-sm font-medium">영상 비율</span><select id="video-aspect-ratio" bind:value={aspectRatio} class={inputClass}>{#each videoAspectRatioOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
+							<label class="block space-y-2" for="video-megapixels"><span class="text-sm font-medium">Base 메가픽셀</span><input id="video-megapixels" type="number" min="0.1" step="0.1" bind:value={megapixels} class={inputClass} /></label>
+						</div>
+						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="video-learned-upscale">
+							<input id="video-learned-upscale" type="checkbox" checked={learnedUpscale} onchange={(event) => setLearnedUpscale((event.currentTarget as HTMLInputElement).checked)} disabled={generating || videoOptionsLoading || !videoOptions.learned_upscale_available} class="size-4 accent-primary" />
+							<span>H3 learned 3D latent upscale</span>
+						</label>
+						{#if learnedUpscale}
+							<label class="block space-y-2" for="video-target-megapixels"><span class="text-sm font-medium">Target 메가픽셀</span><input id="video-target-megapixels" type="number" min="0.1" step="0.1" bind:value={targetMegapixels} disabled={generating} class={inputClass} /></label>
+						{/if}
+						{#if calculatedDimensions}<p class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">계산된 Base: {calculatedDimensions.width} × {calculatedDimensions.height} · {calculatedDimensions.megapixels.toFixed(1)} MP</p>{/if}
+						{#if calculatedTargetDimensions}<p class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">계산된 Target: {calculatedTargetDimensions.width} × {calculatedTargetDimensions.height} · {calculatedTargetDimensions.megapixels.toFixed(1)} MP</p>{/if}
 						<div class="grid gap-4 sm:grid-cols-3"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label><label class="block space-y-2" for="video-steps"><span class="text-sm font-medium">Steps</span><input id="video-steps" type="number" min={usePdd ? 4 : 1} max={usePdd ? 8 : 100} step={usePdd ? 2 : 1} bind:value={steps} class={inputClass} /></label></div>
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>

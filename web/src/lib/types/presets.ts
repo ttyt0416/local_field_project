@@ -20,6 +20,7 @@ export const imagePresetCategories: { value: ImagePresetType; label: string; gen
 ];
 export type PresetType = ImagePresetType | 'video';
 export type VideoMode = 'i2v' | 'fl2v' | 'r2v';
+export type VideoUpscaleMode = 'learned_3d';
 export type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 export type LoraSelection = { name: string; strength: number };
 
@@ -34,6 +35,8 @@ export type PresetValues = {
 	loras?: LoraSelection[];
 	aspect_ratio?: AspectRatio;
 	megapixels?: number;
+	upscale_mode?: VideoUpscaleMode;
+	target_megapixels?: number;
 	width?: number;
 	height?: number;
 	denoise?: number;
@@ -80,4 +83,5 @@ export type VideoGenerationOptions = {
 	default_sampler: string;
 	default_scheduler: string;
 	pdd_available: boolean;
+	learned_upscale_available: boolean;
 };

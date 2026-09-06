@@ -28,6 +28,15 @@
 		megapixels: number | null;
 		width: number;
 		height: number;
+		base_megapixels: number | null;
+		base_width: number | null;
+		base_height: number | null;
+		upscale_mode: 'learned_3d' | null;
+		target_megapixels: number | null;
+		target_width: number | null;
+		target_height: number | null;
+		upscale_scale: number | null;
+		upscale_model: string | null;
 		seed: number;
 		steps: number;
 		sampler_name: string | null;
@@ -136,7 +145,8 @@
 			mode: generation.mode,
 			...(generation.checkpoint ? { checkpoint: generation.checkpoint } : {}),
 			loras: generation.loras,
-			...(generation.aspect_ratio && generation.megapixels ? { aspect_ratio: generation.aspect_ratio, megapixels: generation.megapixels } : {}),
+			...(generation.aspect_ratio && (generation.base_megapixels !== null || generation.megapixels !== null) ? { aspect_ratio: generation.aspect_ratio, megapixels: generation.base_megapixels ?? generation.megapixels ?? 0 } : {}),
+			...(generation.upscale_mode === 'learned_3d' && generation.target_megapixels !== null ? { upscale_mode: 'learned_3d' as const, target_megapixels: generation.target_megapixels } : {}),
 			duration: generation.duration_seconds ?? 0,
 			fps: generation.fps,
 			steps: generation.steps,
@@ -201,8 +211,15 @@
 						<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
 						<div><dt class="text-muted-foreground">FPS</dt><dd class="mt-1 font-medium">{generation.fps}</dd></div>
 						<div><dt class="text-muted-foreground">Steps</dt><dd class="mt-1 font-medium">{generation.steps}</dd></div>
-						<div><dt class="text-muted-foreground">비율 / 메가픽셀</dt><dd class="mt-1 font-medium">{generation.aspect_ratio ?? '기록 없음'} / {generation.megapixels?.toFixed(1) ?? '기록 없음'} MP</dd></div>
-						<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
+						{#if generation.upscale_mode === 'learned_3d'}
+							<div><dt class="text-muted-foreground">Base 비율 / 메가픽셀</dt><dd class="mt-1 font-medium">{generation.aspect_ratio ?? '기록 없음'} / {(generation.base_megapixels ?? generation.megapixels)?.toFixed(1) ?? '기록 없음'} MP</dd></div>
+							<div><dt class="text-muted-foreground">Base 영상 크기</dt><dd class="mt-1 font-medium">{generation.base_width ?? generation.width} × {generation.base_height ?? generation.height}</dd></div>
+							<div><dt class="text-muted-foreground">Target 메가픽셀 / 크기</dt><dd class="mt-1 font-medium">{generation.target_megapixels?.toFixed(1) ?? '기록 없음'} MP / {generation.target_width ?? generation.width} × {generation.target_height ?? generation.height}</dd></div>
+							<div><dt class="text-muted-foreground">업스케일</dt><dd class="mt-1 break-all font-medium">H3 learned 3D latent · {generation.upscale_scale?.toFixed(3) ?? '기록 없음'}x · {generation.upscale_model ?? '기록 없음'}</dd></div>
+						{:else}
+							<div><dt class="text-muted-foreground">비율 / 메가픽셀</dt><dd class="mt-1 font-medium">{generation.aspect_ratio ?? '기록 없음'} / {generation.megapixels?.toFixed(1) ?? '기록 없음'} MP</dd></div>
+							<div><dt class="text-muted-foreground">영상 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
+						{/if}
 						<div><dt class="text-muted-foreground">샘플러 / 스케줄러</dt><dd class="mt-1 break-all font-medium">{generation.use_pdd ? 'PDD: euler / PDD schedule' : generation.sampler_name && generation.scheduler ? `${generation.sampler_name} / ${generation.scheduler}` : '기록 없음'}</dd></div>
 						<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed}</dd></div>
 						<div><dt class="text-muted-foreground">Checkpoint</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint ?? '기록 없음'}</dd></div>

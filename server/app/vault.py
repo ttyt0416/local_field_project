@@ -147,6 +147,15 @@ class VaultVideoDetail(VaultVideoSummary):
     megapixels: float | None
     width: int
     height: int
+    base_megapixels: float | None
+    base_width: int | None
+    base_height: int | None
+    upscale_mode: Literal["learned_3d"] | None
+    target_megapixels: float | None
+    target_width: int | None
+    target_height: int | None
+    upscale_scale: float | None
+    upscale_model: str | None
     seed: int
     steps: int
     sampler_name: str | None
@@ -510,6 +519,15 @@ def vault_video_detail(
         megapixels=generation.get("megapixels"),
         width=generation["width"],
         height=generation["height"],
+        base_megapixels=generation.get("base_megapixels"),
+        base_width=generation.get("base_width"),
+        base_height=generation.get("base_height"),
+        upscale_mode=generation.get("upscale_mode"),
+        target_megapixels=generation.get("target_megapixels"),
+        target_width=generation.get("target_width"),
+        target_height=generation.get("target_height"),
+        upscale_scale=generation.get("upscale_scale"),
+        upscale_model=generation.get("upscale_model"),
         seed=generation["seed"],
         steps=int(generation.get("steps") or 4),
         sampler_name=generation.get("sampler_name"),

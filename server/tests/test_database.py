@@ -163,6 +163,15 @@ class VideoGenerationStatusTest(unittest.TestCase):
                 checkpoint="MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
                 aspect_ratio="2:3",
                 megapixels=0.2,
+                upscale_mode="learned_3d",
+                base_megapixels=0.2,
+                base_width=352,
+                base_height=528,
+                target_megapixels=0.4,
+                target_width=512,
+                target_height=768,
+                upscale_scale=512 / 352,
+                upscale_model="minimax_h3_latent_upscaler_3d_fp16.safetensors",
                 sampler_name="euler",
                 scheduler="normal",
                 width=512,
@@ -184,14 +193,18 @@ class VideoGenerationStatusTest(unittest.TestCase):
         self.assertIn("input_segment_prompts, improved_segment_prompts", query)
         self.assertEqual(parameters[6], "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors")
         self.assertEqual(parameters[7:9], ("2:3", 0.2))
-        self.assertEqual(json.loads(str(parameters[9])), [])
-        self.assertEqual(parameters[10:13], (8, "euler", "normal"))
-        self.assertTrue(parameters[13])
-        self.assertTrue(parameters[14])
-        self.assertEqual(json.loads(str(parameters[23])), ["input 1", "input 2"])
-        self.assertEqual(json.loads(str(parameters[24])), ["improved 1", "improved 2"])
-        self.assertEqual(parameters[26], "i2v")
-        self.assertEqual(json.loads(str(parameters[27])), ["a" * 32])
+        self.assertEqual(
+            parameters[9:18],
+            ("learned_3d", 0.2, 352, 528, 0.4, 512, 768, 512 / 352, "minimax_h3_latent_upscaler_3d_fp16.safetensors"),
+        )
+        self.assertEqual(json.loads(str(parameters[18])), [])
+        self.assertEqual(parameters[19:22], (8, "euler", "normal"))
+        self.assertTrue(parameters[22])
+        self.assertTrue(parameters[23])
+        self.assertEqual(json.loads(str(parameters[32])), ["input 1", "input 2"])
+        self.assertEqual(json.loads(str(parameters[33])), ["improved 1", "improved 2"])
+        self.assertEqual(parameters[35], "i2v")
+        self.assertEqual(json.loads(str(parameters[36])), ["a" * 32])
 
     def test_nullable_media_metadata_is_typed_and_preserved(self) -> None:
         connection = FakeConnection()
