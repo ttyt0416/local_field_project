@@ -97,8 +97,8 @@
 	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
 	let enhancingPrompt = $state(false);
 	let enhancingSegmentIndex = $state<number | null>(null);
-	let aspectRatio = $state<VideoAspectRatio>('16:9');
-	let megapixels = $state(1.0);
+	let aspectRatio = $state<VideoAspectRatio>('1:1');
+	let megapixels = $state(0.1);
 	let learnedUpscale = $state(false);
 	let targetMegapixels = $state(2.0);
 	let samplerName = $state('');
@@ -1071,7 +1071,7 @@
 							<span class="shrink-0 text-xs font-semibold text-primary">선택</span>
 						</button>
 					</div>
-					<div class="space-y-3">
+					<div class="mt-5 space-y-3">
 							<div class="flex flex-wrap items-center justify-between gap-3">
 								<span class="text-sm font-medium">LoRA <span class="text-xs font-normal text-muted-foreground">({loras.length})</span></span>
 								<button type="button" onclick={() => (loraModalOpen = true)} disabled={generating || videoOptionsLoading || videoOptions.loras.length === 0} class="rounded-md px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">LoRA 선택</button>
