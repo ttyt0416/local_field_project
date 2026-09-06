@@ -673,6 +673,7 @@ class VideoContractTest(unittest.TestCase):
             shots["items"]["properties"]["style"]["pattern"],
             video._video_prompt_pattern(languages, shots["items"]["properties"]["style"]["maxLength"]),
         )
+        self.assertEqual(schema["properties"]["negative"], {"type": "string", "enum": ["N/A"]})
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
@@ -699,7 +700,7 @@ class VideoContractTest(unittest.TestCase):
         user_prompt = request.call_args.kwargs["user_prompt"]
         self.assertIn("The global style and background apply to every sequence segment", system_prompt)
         self.assertIn("never repeat its timeline actions", system_prompt)
-        self.assertIn("Never repeat vocabulary or make exhaustive body-part, anatomy, or category lists", system_prompt)
+        self.assertIn("Set negative to the exact string N/A", system_prompt)
         self.assertIn("start_ms is 0; later start_ms values are increasing cut times in the supplied local segment", system_prompt)
         self.assertIn("<global_style_and_background>\ncontinue the scene\n</global_style_and_background>", user_prompt)
         self.assertIn("<current_segment_instruction>\nThe character leaves the room.\n</current_segment_instruction>", user_prompt)

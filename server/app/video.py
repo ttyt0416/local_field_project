@@ -807,7 +807,9 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float) -> di
             **{
                 field: {"type": "string", "minLength": 1, "maxLength": field_max_length, "pattern": pattern}
                 for field in _VIDEO_PROMPT_OVERALL_FIELDS
+                if field != "negative"
             },
+            "negative": {"type": "string", "enum": ["N/A"]},
         },
         "required": ["shots", *_VIDEO_PROMPT_OVERALL_FIELDS],
         "additionalProperties": False,
