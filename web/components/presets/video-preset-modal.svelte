@@ -3,6 +3,7 @@
 	import Modal from '../modals/modal.svelte';
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
+	import SamplingSelectionModal from './sampling-selection-modal.svelte';
 	import Select from '../inputs/select.svelte';
 
 	import { apiJson } from '$lib/utils/api';
@@ -263,10 +264,13 @@
 	{#snippet footer()}<OutlinedButton disabled={saving} onclick={() => (open = false)}>취소</OutlinedButton><PrimaryButton loading={saving} disabled={!presetName.trim() || !selectedFieldCount()} onclick={() => void save()}>{editingId ? '수정' : '저장'}</PrimaryButton>{/snippet}
 </Modal>
 
-<Modal bind:open={samplingOpen} title="샘플러 / 스케줄러" description="현재 ComfyUI에서 지원하는 값을 선택하세요.">
-	<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-sampler"><span class="text-sm font-medium">샘플러</span><select id="video-preset-sampler" bind:value={samplerName} class={numberInputClass}>{#each videoOptions.samplers as option}<option value={option}>{option}</option>{/each}</select></label><label class="block space-y-2" for="video-preset-scheduler"><span class="text-sm font-medium">스케줄러</span><select id="video-preset-scheduler" bind:value={scheduler} class={numberInputClass}>{#each videoOptions.schedulers as option}<option value={option}>{option}</option>{/each}</select></label></div>
-	{#snippet footer()}<PrimaryButton onclick={() => (samplingOpen = false)}>선택 완료</PrimaryButton>{/snippet}
-</Modal>
+<SamplingSelectionModal
+	bind:open={samplingOpen}
+	samplers={videoOptions.samplers}
+	schedulers={videoOptions.schedulers}
+	bind:samplerName
+	bind:scheduler
+/>
 
 <Modal bind:open={checkpointModalOpen} title="체크포인트 선택" description="전체 또는 하위 folder에서 하나를 선택하세요.">
 	<div class="space-y-3">

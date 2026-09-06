@@ -98,15 +98,22 @@ _VIDEO_CHECKPOINT_MODELS = {
     for model, checkpoint in checkpoints.items()
 }
 _VIDEO_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
+_VIDEO_PROMPT_NON_WHITESPACE_COMMON_CHARS = r"\x21-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E"
 _VIDEO_PROMPT_LANGUAGE_CHARS = {
     "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
     "en": r"A-Za-z",
     "ja": r"\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
 }
+_VIDEO_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS = {
+    **_VIDEO_PROMPT_LANGUAGE_CHARS,
+    "ja": r"\u3001-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
+}
 _VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
 _VIDEO_PROMPT_SHOT_FIELDS = ("style", "timeline", "camera", "audio", "text")
 _VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music")
 _VIDEO_PROMPT_FIELD_MAX_LENGTH = 328
+_VIDEO_PROMPT_MAX_TOKENS = 512
+_VIDEO_PROMPT_TIMEOUT_SECONDS = 120
 _VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|Shot|At|N/A|Picture|Video|Audio|Subject"
 VideoAspectRatio = Literal["2:3", "3:2", "1:1", "16:9", "9:16"]
 _VIDEO_ASPECT_RATIOS: dict[VideoAspectRatio, tuple[int, int]] = {
@@ -1009,18 +1016,22 @@ async def _resolve_assets(
     return resolved
 
 
-def _video_prompt_pattern(languages: Sequence[str], max_length: int | None = None) -> str:
+def _video_prompt_pattern(languages: Sequence[str]) -> str:
     if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_CHARS for language in languages):
         raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
     language_chars = "".join(_VIDEO_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
-    length = "+" if max_length is None else f"{{1,{max_length}}}"
-    return rf"^(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS}){length}$"
+    non_whitespace_language_chars = "".join(
+        _VIDEO_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages)
+    )
+    content = rf"(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS})"
+    visible_content = rf"(?:[{_VIDEO_PROMPT_NON_WHITESPACE_COMMON_CHARS}{non_whitespace_language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS})"
+    return rf"^{visible_content}(?:{content}*{visible_content})?$"
 
 
 def _video_prompt_fields_schema(languages: Sequence[str], duration: float) -> dict[str, Any]:
     duration_ms = max(1, round(duration * 1000))
     shot_limit = max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
-    pattern = _video_prompt_pattern(languages, _VIDEO_PROMPT_FIELD_MAX_LENGTH)
+    pattern = _video_prompt_pattern(languages)
     shot_properties = {
         "start_ms": {"type": "integer", "minimum": 0, "maximum": duration_ms - 1},
         **{
@@ -1095,8 +1106,9 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
             previous_segment_prompt=(payload.previous_segment_prompt or "none").strip() or "none",
             languages=", ".join(_VIDEO_PROMPT_LANGUAGE_NAMES[language] for language in languages),
         ),
-        max_tokens=1536,
+        max_tokens=_VIDEO_PROMPT_MAX_TOKENS,
         temperature=0.3,
+        timeout_seconds=_VIDEO_PROMPT_TIMEOUT_SECONDS,
         schema=_video_prompt_fields_schema(languages, payload.duration),
         name="video_prompt_shots",
     ))

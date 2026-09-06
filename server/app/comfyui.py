@@ -1322,6 +1322,7 @@ def _request_structured_object(
     temperature: float,
     schema: dict[str, Any],
     name: str,
+    timeout_seconds: int = _VLLM_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     response = _request_vllm_json(
         {
@@ -1342,7 +1343,8 @@ def _request_structured_object(
                 },
             },
             "chat_template_kwargs": {"enable_thinking": False},
-        }
+        },
+        timeout_seconds=timeout_seconds,
     )
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -1364,7 +1366,7 @@ def _request_structured_object(
     return parsed
 
 
-def _request_vllm_json(payload: dict[str, Any]) -> dict[str, Any]:
+def _request_vllm_json(payload: dict[str, Any], *, timeout_seconds: int = _VLLM_TIMEOUT_SECONDS) -> dict[str, Any]:
     request = UrlRequest(
         _vllm_url("/v1/chat/completions"),
         data=json.dumps(payload).encode("utf-8"),
@@ -1372,7 +1374,7 @@ def _request_vllm_json(payload: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=_VLLM_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             decoded = json.loads(response.read())
     except UrlHTTPError as exc:
         raise _VLLMError(f"vLLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc

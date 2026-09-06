@@ -721,6 +721,9 @@ class VideoContractTest(unittest.TestCase):
     def test_video_prompt_pattern_is_language_union_with_digits_and_symbols(self) -> None:
         korean_prompt = "[Shot 1] 장면 0초-3초 <Picture 1> N/A !?"
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt))
+        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), " \n"))
+        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), f" {korean_prompt}"))
+        self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), f"{korean_prompt} \n"))
         self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ko"]), korean_prompt.replace("장면", "scene", 1)))
 
         mixed_prompt = "[Shot 1] red 빨강 16:9 <Picture 1> N/A !?"
@@ -842,6 +845,8 @@ class VideoContractTest(unittest.TestCase):
         expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.3)
+        self.assertEqual(request.call_args.kwargs["max_tokens"], video._VIDEO_PROMPT_MAX_TOKENS)
+        self.assertEqual(request.call_args.kwargs["timeout_seconds"], video._VIDEO_PROMPT_TIMEOUT_SECONDS)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
         schema = request.call_args.kwargs["schema"]
         self.assertEqual(set(schema["required"]), {"shots", "overall_soundscape", "non_diegetic_music"})
@@ -851,7 +856,7 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(shots["items"]["additionalProperties"], False)
         self.assertEqual(
             shots["items"]["properties"]["style"]["pattern"],
-            video._video_prompt_pattern(languages, shots["items"]["properties"]["style"]["maxLength"]),
+            video._video_prompt_pattern(languages),
         )
         self.assertNotIn("negative", schema["properties"])
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])

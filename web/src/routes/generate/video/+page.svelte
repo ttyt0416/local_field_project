@@ -10,6 +10,7 @@
 	import OutlinedButton from '../../../../components/buttons/outlined-button.svelte';
 	import IconOutlinedButton from '../../../../components/buttons/icon-outlined-button.svelte';
 	import VideoPresetModal from '../../../../components/presets/video-preset-modal.svelte';
+	import SamplingSelectionModal from '../../../../components/presets/sampling-selection-modal.svelte';
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import SearchBar from '../../../../components/inputs/searchbar.svelte';
 	import Tab from '../../../../components/tabs/tab.svelte';
@@ -1355,13 +1356,13 @@
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 	</Modal>
 
-	<Modal bind:open={samplingModalOpen} title="샘플러 / 스케줄러" description="현재 ComfyUI에서 지원하는 값을 선택하세요.">
-		<div class="grid gap-4 sm:grid-cols-2">
-			<label class="block space-y-2" for="video-sampler"><span class="text-sm font-medium">샘플러</span><select id="video-sampler" bind:value={samplerName} class={inputClass}>{#each videoOptions.samplers as option}<option value={option}>{option}</option>{/each}</select></label>
-			<label class="block space-y-2" for="video-scheduler"><span class="text-sm font-medium">스케줄러</span><select id="video-scheduler" bind:value={scheduler} class={inputClass}>{#each videoOptions.schedulers as option}<option value={option}>{option}</option>{/each}</select></label>
-		</div>
-		{#snippet footer()}<PrimaryButton onclick={() => (samplingModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
-	</Modal>
+	<SamplingSelectionModal
+		bind:open={samplingModalOpen}
+		samplers={videoOptions.samplers}
+		schedulers={videoOptions.schedulers}
+		bind:samplerName
+		bind:scheduler
+	/>
 
 	<Modal bind:open={videoPresetLoadOpen} title="VIDEO GEN 프리셋 불러오기" description="저장된 동영상 설정을 선택해 적용합니다." closeOnBackdrop={!videoPresetsLoading}>
 		{#if videoPresetsLoading}
