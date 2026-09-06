@@ -845,6 +845,7 @@ class VideoContractTest(unittest.TestCase):
         expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.3)
+        self.assertEqual(video._VIDEO_PROMPT_MAX_TOKENS, 1024)
         self.assertEqual(request.call_args.kwargs["max_tokens"], video._VIDEO_PROMPT_MAX_TOKENS)
         self.assertEqual(request.call_args.kwargs["timeout_seconds"], video._VIDEO_PROMPT_TIMEOUT_SECONDS)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
