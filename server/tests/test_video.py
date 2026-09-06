@@ -733,8 +733,22 @@ class VideoContractTest(unittest.TestCase):
     def test_video_prompt_does_not_revalidate_structured_shot_order(self) -> None:
         plan = {
             "shots": [
-                {"start_ms": 3000, **{field: "first model shot" for field in video._VIDEO_PROMPT_SHOT_FIELDS}},
-                {"start_ms": 1000, **{field: "second model shot" for field in video._VIDEO_PROMPT_SHOT_FIELDS}},
+                {
+                    "start_ms": 3000,
+                    "style": "first style",
+                    "timeline": "first timeline",
+                    "camera": "first camera",
+                    "audio": "first audio",
+                    "text": "first text",
+                },
+                {
+                    "start_ms": 1000,
+                    "style": "second style",
+                    "timeline": "second timeline",
+                    "camera": "second camera",
+                    "audio": "second audio",
+                    "text": "second text",
+                },
             ],
             "overall_soundscape": "quiet ambience",
             "non_diegetic_music": "N/A",
@@ -742,23 +756,63 @@ class VideoContractTest(unittest.TestCase):
         payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
         with patch.object(video, "_request_structured_object", return_value=plan):
             result = video._enhance_video_prompt(payload)
-        self.assertIn("[Shot 1] first model shot", result.improved_prompt.contents)
-        self.assertIn("[Shot 2] At 00:01.000, second model shot", result.improved_prompt.contents)
+        self.assertIn("[Shot 1] At 00:00:00, first style first camera first audio first text", result.improved_prompt.contents)
+        self.assertNotIn("first timeline", result.improved_prompt.contents)
+        self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera second audio second text", result.improved_prompt.contents)
         self.assertNotIn("negative:", result.improved_prompt.contents)
 
-    def test_video_prompt_schema_bounds_assembled_response_length(self) -> None:
+    def test_video_prompt_rejects_missing_structured_timeline(self) -> None:
+        plan = {
+            "shots": [{"start_ms": 0, "style": "style", "camera": "camera", "audio": "audio", "text": "text"}],
+            "overall_soundscape": "quiet ambience",
+            "non_diegetic_music": "N/A",
+        }
+        payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
+
+        with patch.object(video, "_request_structured_object", return_value=plan), self.assertRaisesRegex(video._VLLMError, "필수 shot field"):
+            video._enhance_video_prompt(payload)
+
+    def test_video_prompt_fields_use_fixed_328_character_limit_without_assembled_cap(self) -> None:
         for duration in (1, 5, 10):
             schema = video._video_prompt_fields_schema(["en"], duration)
             shot_schema = schema["properties"]["shots"]
-            field_max_length = shot_schema["items"]["properties"]["style"]["maxLength"]
-            plan = {
-                "shots": [
-                    {"start_ms": index, **{field: "x" * field_max_length for field in video._VIDEO_PROMPT_SHOT_FIELDS}}
-                    for index in range(shot_schema["maxItems"])
-                ],
-                **{field: "x" * field_max_length for field in video._VIDEO_PROMPT_OVERALL_FIELDS},
-            }
-            self.assertLessEqual(len(video._assemble_video_prompt(plan)), 5000)
+            self.assertEqual(
+                [shot_schema["items"]["properties"][field]["maxLength"] for field in video._VIDEO_PROMPT_SHOT_FIELDS],
+                [328] * len(video._VIDEO_PROMPT_SHOT_FIELDS),
+            )
+            self.assertEqual(
+                [schema["properties"][field]["maxLength"] for field in video._VIDEO_PROMPT_OVERALL_FIELDS],
+                [328] * len(video._VIDEO_PROMPT_OVERALL_FIELDS),
+            )
+
+        plan = {
+            "shots": [{"start_ms": index, **{field: "x" * 328 for field in video._VIDEO_PROMPT_SHOT_FIELDS}} for index in range(5)],
+            **{field: "x" * 328 for field in video._VIDEO_PROMPT_OVERALL_FIELDS},
+        }
+        payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
+        with patch.object(video, "_request_structured_object", return_value=plan):
+            result = video._enhance_video_prompt(payload)
+
+        self.assertGreater(len(result.improved_prompt.contents), 5000)
+        with self.assertRaisesRegex(video._VLLMError, "필수 shot field"):
+            video._validate_video_prompt_fields(
+                {
+                    "shots": [{"start_ms": 0, **{field: "x" * (329 if field == "timeline" else 328) for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+                    **{field: "x" * 328 for field in video._VIDEO_PROMPT_OVERALL_FIELDS},
+                }
+            )
+
+    def test_submitted_improved_video_prompt_can_exceed_5000_characters(self) -> None:
+        improved = "x" * 5001
+        request = video.VideoGenerationRequest(
+            prompt="move", prompt_enhancement_enabled=True, improved_segment_prompts=[improved]
+        )
+        enhancement_request = video.VideoPromptEnhancementRequest(
+            prompt="move", mode="i2v", previous_segment_prompt=improved
+        )
+
+        self.assertEqual(video._submitted_improved_segment_prompts(request, 1), [improved])
+        self.assertEqual(enhancement_request.previous_segment_prompt, improved)
 
     def test_video_prompt_enhancement_uses_selected_languages_and_pattern(self) -> None:
         languages: list[Literal["ko", "en", "ja"]] = ["ko", "en"]

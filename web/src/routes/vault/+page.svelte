@@ -16,7 +16,7 @@
 	import SearchBar from '../../../components/inputs/searchbar.svelte';
 	import Tab from '../../../components/tabs/tab.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
+	import { generationJobStore, type GenerationJob } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
@@ -36,6 +36,8 @@
 
 	type VaultImage = {
 		id: string;
+		prompt_id: string;
+		client_id: string;
 		media_type: string;
 		status: string;
 		prompt: string;
@@ -70,6 +72,8 @@
 
 	type Vault3D = {
 		id: string;
+		prompt_id: string;
+		client_id: string;
 		media_type: '3d';
 		status: string;
 		stage?: string;
@@ -496,9 +500,15 @@
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패', cancelled: '취소됨' }[status] ?? status;
 	}
 
-	function activeVideoJob(video: VaultVideo) {
-		const job = generationJobStore.jobs[`video:${video.prompt_id}`];
+	function activeGenerationJob(kind: GenerationJob['kind'], generation: { prompt_id: string }) {
+		const job = generationJobStore.jobs[`${kind}:${generation.prompt_id}`];
 		return job?.status === 'queued' || job?.status === 'processing' ? job : undefined;
+	}
+
+	function threeDStageLabel(stage: string | undefined) {
+		return {
+			queued: '생성 대기 중', preparing: '작업 준비 중', preprocessing: '소스 이미지 전처리 중', background_removal: '배경 제거 중', background_cleanup: '배경과 오브젝트 경계 정리 중', conditioning: '3D 조건 분석 중', structure: '3D 구조 생성 중', shape: '3D 형상 생성 중', sampling: '3D 구조 생성 중', decoding: '3D 표현 변환 중', texture: '텍스처 생성 중', mesh: '메시 생성 중', mesh_extraction: '메시 추출 중', texture_baking: '텍스처 생성 중', storage: '모델 파일 저장 중', exporting: '모델 파일 내보내는 중'
+	}[stage ?? ''] ?? '3D 모델 생성 중';
 	}
 </script>
 
@@ -506,6 +516,10 @@
 	<title>{favoritesOnly ? '즐겨찾기' : '보관함'} · Local Field</title>
 	<meta name="description" content="생성된 이미지, 동영상, 3D 모델을 검색하고 관리하는 보관함" />
 </svelte:head>
+
+{#snippet vaultProgress(job: GenerationJob, label: string)}
+	<div class="flex h-full flex-col items-center justify-center gap-3 px-5 text-center"><LoadingSpinner size="sm" label={label} />{#if job.kind === '3d'}<p class="text-sm font-medium text-foreground">{threeDStageLabel(job.stage ?? job.status)}</p>{:else}<p class="text-sm font-medium text-foreground">{statusLabel(job.status)} · {Math.round(job.progress)}%</p><div class="h-2 w-full overflow-hidden rounded-full bg-muted-foreground/20"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${Math.round(job.progress)}%`}></div></div>{/if}<p class="text-xs text-muted-foreground">경과 {formatElapsedSeconds(generationJobStore.elapsedSeconds(job, generationJobStore.now))}{#if job.queuePosition !== null} · 대기 {job.queuePosition}번째{/if}</p></div>
+{/snippet}
 
 <Layout>
 	<div class="space-y-8">
@@ -589,6 +603,7 @@
 					</div>
 					<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
 					{#each images as image (image.id)}
+						{@const job = activeGenerationJob('image', image)}
 						<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
 							<div class="relative aspect-square bg-muted">
 								<label class="pointer-events-auto absolute left-3 top-3 z-10 inline-flex cursor-pointer">
@@ -601,7 +616,9 @@
 										class="size-5 rounded border-input accent-primary"
 									/>
 								</label>
-								{#if image.image_url}
+								{#if job}
+									{@render vaultProgress(job, '이미지 생성 중')}
+								{:else if image.image_url}
 									<ImageMedia source={imageSource(image)} sourceType={imageSourceType(imageSource(image))} alt="생성 이미지" class="h-full" />
 								{:else}
 									<div class="flex h-full items-center justify-center text-sm text-muted-foreground">이미지 준비 중</div>
@@ -610,7 +627,7 @@
 							<div class="space-y-3 p-4">
 								<a href={`/vault/images/${image.id}`} aria-label={`${image.prompt || image.checkpoint} 콘텐츠 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
 									<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-										<span>{image.generation_mode.toUpperCase()} · {modelFamilyLabel(image.model_family)}{image.status === 'completed' ? '' : ` · ${statusLabel(image.status)}`}</span>
+										<span>{image.generation_mode.toUpperCase()} · {modelFamilyLabel(image.model_family)}{(job?.status ?? image.status) === 'completed' ? '' : ` · ${statusLabel(job?.status ?? image.status)}`}</span>
 										<span>{formatKstDateTime(image.created_at)}</span>
 									</div>
 									<p class="line-clamp-2 text-sm leading-5 text-foreground transition hover:text-primary">{image.prompt}</p>
@@ -618,7 +635,7 @@
 								<div class="flex items-end justify-between gap-3">
 									<div class="min-w-0 space-y-0.5 text-xs text-muted-foreground">
 										<p class="truncate" title={image.checkpoint}>{image.checkpoint}</p>
-										<p>소요 {formatElapsedSeconds(image.elapsed_seconds)}</p>
+										<p>소요 {formatElapsedSeconds(job ? generationJobStore.elapsedSeconds(job, generationJobStore.now) : image.elapsed_seconds)}</p>
 										<p>조회 {image.view_count}</p>
 									</div>
 									<div class="flex shrink-0 gap-2">
@@ -672,11 +689,11 @@
 				{:else}
 					<section class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
 						{#each videos as video (video.id)}
-							{@const job = activeVideoJob(video)}
+							{@const job = activeGenerationJob('video', video)}
 							<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
 								<div class="relative aspect-video bg-muted">
 									{#if job}
-										<div class="flex h-full flex-col items-center justify-center gap-3 px-5 text-center"><LoadingSpinner size="sm" label="영상 생성 중" /><p class="text-sm font-medium text-foreground">{statusLabel(job.status)} · {Math.round(job.progress)}%</p><div class="h-2 w-full overflow-hidden rounded-full bg-muted-foreground/20"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${Math.round(job.progress)}%`}></div></div><p class="text-xs text-muted-foreground">경과 {formatElapsedSeconds(generationJobStore.elapsedSeconds(job, generationJobStore.now))}{#if job.queuePosition !== null} · 대기 {job.queuePosition}번째{/if}</p></div>
+										{@render vaultProgress(job, '영상 생성 중')}
 									{:else if video.video_url}<VideoMedia source={video.video_url} sourceType="server" preview={false} muted={false} class="h-full" />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">영상 준비 중</div>{/if}
 								</div>
 								<div class="space-y-3 p-4">
@@ -706,9 +723,12 @@
 				{:else}
 					<section class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
 						{#each models as model (model.id)}
+							{@const job = activeGenerationJob('3d', model)}
 							<article class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/40 hover:shadow-md">
 								<div class="aspect-square bg-muted">
-									{#if model.source_image_url}
+									{#if job}
+										{@render vaultProgress(job, '3D 모델 생성 중')}
+									{:else if model.source_image_url}
 										<ImageMedia source={model.source_image_url} sourceType={imageSourceType(model.source_image_url)} alt="3D 모델 소스 이미지" class="h-full" />
 									{:else}
 										<div class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Box size={28} strokeWidth={1.7} />3D 모델</div>
@@ -716,11 +736,11 @@
 								</div>
 								<div class="space-y-3 p-4">
 									<a href={`/vault/3d/${model.id}`} aria-label={`${modelPresetLabel(model.preset)} 3D 모델 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>3D · {statusLabel(model.status)}</span><span>{formatKstDateTime(model.created_at)}</span></div>
+										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>3D · {statusLabel(job?.status ?? model.status)}</span><span>{formatKstDateTime(model.created_at)}</span></div>
 										<p class="text-sm font-medium text-foreground transition hover:text-primary">{modelPresetLabel(model.preset)} 프리셋 · Seed {model.seed ?? '무작위'}</p>
 									</a>
 									<div class="flex items-end justify-between gap-3">
-										<div class="min-w-0 space-y-0.5 text-xs text-muted-foreground"><p>소요 {formatElapsedSeconds(model.elapsed_seconds)}</p><p>용량 {formatFileSize(model.file_size_bytes)}</p><p>조회 {model.view_count}</p></div>
+										<div class="min-w-0 space-y-0.5 text-xs text-muted-foreground"><p>소요 {formatElapsedSeconds(job ? generationJobStore.elapsedSeconds(job, generationJobStore.now) : model.elapsed_seconds)}</p><p>용량 {formatFileSize(model.file_size_bytes)}</p><p>조회 {model.view_count}</p></div>
 										<div class="flex shrink-0 gap-2"><IconOutlinedButton ariaLabel="3D 모델 다운로드" loading={downloadingId === model.id} disabled={!model.model_url} onclick={() => void downloadModel(model)}><Download size={17} strokeWidth={1.9} /></IconOutlinedButton><IconOutlinedButton variant="filled" ariaLabel={model.is_favorite ? '3D 모델 즐겨찾기 해제' : '3D 모델 즐겨찾기 추가'} pressed={model.is_favorite} loading={modelFavoriteUpdatingId === model.id} class={model.is_favorite ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''} onclick={() => void toggleFavoriteModel(model)}><Heart size={17} strokeWidth={1.9} fill={model.is_favorite ? 'currentColor' : 'none'} /></IconOutlinedButton><IconOutlinedButton ariaLabel="3D 모델 삭제" loading={modelDeletingId === model.id} variant="destructive" onclick={() => requestDeleteModel(model)}><Trash2 size={17} strokeWidth={2} /></IconOutlinedButton></div>
 									</div>
 								</div>

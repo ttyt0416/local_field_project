@@ -25,8 +25,6 @@ from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
 from .comfyui import (
-    PromptEnhancementContent,
-    PromptEnhancementResponse,
     _ComfyUIError,
     _VLLMError,
     cancel_comfy_generation,
@@ -108,6 +106,7 @@ _VIDEO_PROMPT_LANGUAGE_CHARS = {
 _VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
 _VIDEO_PROMPT_SHOT_FIELDS = ("style", "timeline", "camera", "audio", "text")
 _VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music")
+_VIDEO_PROMPT_FIELD_MAX_LENGTH = 328
 _VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|Shot|At|N/A|Picture|Video|Audio|Subject"
 VideoAspectRatio = Literal["2:3", "3:2", "1:1", "16:9", "9:16"]
 _VIDEO_ASPECT_RATIOS: dict[VideoAspectRatio, tuple[int, int]] = {
@@ -145,7 +144,7 @@ class VideoGenerationRequest(BaseModel):
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
     loras: list[VideoLoraSelection] = Field(default_factory=list)
     prompt_enhancement_enabled: bool = False
-    improved_prompt: str | None = Field(default=None, max_length=5000)
+    improved_prompt: str | None = None
     segment_prompts: list[str] = Field(default_factory=list, max_length=360)
     improved_segment_prompts: list[str] = Field(default_factory=list, max_length=360)
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
@@ -279,7 +278,7 @@ class VideoPromptEnhancementRequest(BaseModel):
     duration: float = Field(default=5)
     segment_index: int = Field(default=0, ge=0, le=359)
     segment_count: int = Field(default=1, ge=1, le=360)
-    previous_segment_prompt: str | None = Field(default=None, max_length=5000)
+    previous_segment_prompt: str | None = None
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
 
     @field_validator("prompt_output_languages")
@@ -288,6 +287,33 @@ class VideoPromptEnhancementRequest(BaseModel):
         if len(value) != len(set(value)):
             raise ValueError("동영상 프롬프트 출력 언어는 중복 선택할 수 없습니다.")
         return value
+
+
+class VideoPromptEnhancementContent(BaseModel):
+    contents: str = Field(min_length=1)
+
+
+class VideoPromptEnhancementResponse(BaseModel):
+    improved_prompt: VideoPromptEnhancementContent
+
+
+class _VideoPromptShot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_ms: int = Field(ge=0)
+    style: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
+    timeline: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
+    camera: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
+    audio: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
+    text: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
+
+
+class _VideoPromptFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shots: list[_VideoPromptShot] = Field(min_length=1, max_length=360)
+    overall_soundscape: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
+    non_diegetic_music: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_MAX_LENGTH)
 
 
 class VideoGenerationAccepted(BaseModel):
@@ -364,11 +390,11 @@ def video_options(
     return _video_options(mode)
 
 
-@router.post("/enhance-prompt", response_model=PromptEnhancementResponse)
+@router.post("/enhance-prompt", response_model=VideoPromptEnhancementResponse)
 def enhance_video_prompt(
     payload: VideoPromptEnhancementRequest,
     _: UserResponse = Depends(current_user),
-) -> PromptEnhancementResponse:
+) -> VideoPromptEnhancementResponse:
     try:
         return _enhance_video_prompt(payload)
     except _VLLMError as exc:
@@ -994,13 +1020,11 @@ def _video_prompt_pattern(languages: Sequence[str], max_length: int | None = Non
 def _video_prompt_fields_schema(languages: Sequence[str], duration: float) -> dict[str, Any]:
     duration_ms = max(1, round(duration * 1000))
     shot_limit = max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
-    # ponytail: reserves 512 chars for server headings and timestamps; use exact accounting if the format grows.
-    field_max_length = max(1, (5000 - 512) // (shot_limit * len(_VIDEO_PROMPT_SHOT_FIELDS) + len(_VIDEO_PROMPT_OVERALL_FIELDS)))
-    pattern = _video_prompt_pattern(languages, field_max_length)
+    pattern = _video_prompt_pattern(languages, _VIDEO_PROMPT_FIELD_MAX_LENGTH)
     shot_properties = {
         "start_ms": {"type": "integer", "minimum": 0, "maximum": duration_ms - 1},
         **{
-            field: {"type": "string", "minLength": 1, "maxLength": field_max_length, "pattern": pattern}
+            field: {"type": "string", "minLength": 1, "maxLength": _VIDEO_PROMPT_FIELD_MAX_LENGTH, "pattern": pattern}
             for field in _VIDEO_PROMPT_SHOT_FIELDS
         },
     }
@@ -1019,7 +1043,7 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float) -> di
                 },
             },
             **{
-                field: {"type": "string", "minLength": 1, "maxLength": field_max_length, "pattern": pattern}
+                field: {"type": "string", "minLength": 1, "maxLength": _VIDEO_PROMPT_FIELD_MAX_LENGTH, "pattern": pattern}
                 for field in _VIDEO_PROMPT_OVERALL_FIELDS
             },
         },
@@ -1037,8 +1061,9 @@ def _normalize_video_reference_markers(contents: str) -> str:
 def _assemble_video_prompt(fields: dict[str, Any]) -> str:
     rendered_shots = []
     for index, shot in enumerate(fields["shots"], start=1):
-        timestamp = "" if index == 1 else f" At {shot['start_ms'] // 60000:02d}:{shot['start_ms'] // 1000 % 60:02d}.{shot['start_ms'] % 1000:03d},"
-        rendered_shots.append(f"[Shot {index}]{timestamp} {' '.join(shot[field] for field in _VIDEO_PROMPT_SHOT_FIELDS)}")
+        timestamp = " At 00:00:00," if index == 1 else f" At {shot['start_ms'] // 60000:02d}:{shot['start_ms'] // 1000 % 60:02d}.{shot['start_ms'] % 1000:03d},"
+        shot_fields = (field for field in _VIDEO_PROMPT_SHOT_FIELDS if index != 1 or field != "timeline")
+        rendered_shots.append(f"[Shot {index}]{timestamp} {' '.join(shot[field] for field in shot_fields)}")
     integrated_description = "\n".join(rendered_shots)
     contents = "\n\n".join(
         [
@@ -1049,9 +1074,16 @@ def _assemble_video_prompt(fields: dict[str, Any]) -> str:
     return _normalize_video_reference_markers(contents)
 
 
-def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhancementResponse:
+def _validate_video_prompt_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return _VideoPromptFields.model_validate(fields).model_dump()
+    except ValidationError as exc:
+        raise _VLLMError("vLLM 구조화 동영상 프롬프트에 필수 shot field가 없습니다.") from exc
+
+
+def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPromptEnhancementResponse:
     languages = payload.prompt_output_languages
-    fields = _request_structured_object(
+    fields = _validate_video_prompt_fields(_request_structured_object(
         system_prompt=VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
         user_prompt=VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT.format(
             prompt=payload.prompt.strip(),
@@ -1067,9 +1099,9 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhan
         temperature=0.3,
         schema=_video_prompt_fields_schema(languages, payload.duration),
         name="video_prompt_shots",
-    )
+    ))
     contents = _assemble_video_prompt(fields)
-    return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
+    return VideoPromptEnhancementResponse(improved_prompt=VideoPromptEnhancementContent(contents=contents))
 
 
 def _video_reference_prompt(mode: str, request: VideoGenerationRequest) -> str:
@@ -1140,7 +1172,7 @@ def _video_segment_durations(duration: float) -> list[float]:
 
 
 def _segment_prompt_values(
-    values: list[str], legacy_value: str | None, segment_count: int, label: str, *, repeat_legacy: bool = False
+    values: list[str], legacy_value: str | None, segment_count: int, label: str, *, repeat_legacy: bool = False, max_length: int | None = 5000
 ) -> list[str]:
     source = values or (
         [legacy_value] * segment_count
@@ -1152,8 +1184,10 @@ def _segment_prompt_values(
     if len(source) != segment_count:
         raise HTTPException(status_code=422, detail=f"{label} 수가 10초 구간 수와 일치해야 합니다.")
     result = [value.strip() if isinstance(value, str) else "" for value in source]
-    if any(not value or len(value) > 5000 for value in result):
-        raise HTTPException(status_code=422, detail=f"{label}은 구간마다 1~5000자여야 합니다.")
+    if any(not value for value in result):
+        raise HTTPException(status_code=422, detail=f"{label}은 구간마다 비어 있을 수 없습니다.")
+    if max_length is not None and any(len(value) > max_length for value in result):
+        raise HTTPException(status_code=422, detail=f"{label}은 구간마다 1~{max_length}자여야 합니다.")
     return result
 
 
@@ -1167,7 +1201,7 @@ def _submitted_improved_segment_prompts(request: VideoGenerationRequest, segment
     if not request.prompt_enhancement_enabled:
         return []
     return _segment_prompt_values(
-        request.improved_segment_prompts, request.improved_prompt, segment_count, "개선된 프롬프트"
+        request.improved_segment_prompts, request.improved_prompt, segment_count, "개선된 프롬프트", max_length=None
     )
 
 

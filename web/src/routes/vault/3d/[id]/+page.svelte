@@ -13,12 +13,15 @@
 	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 
 	type Vault3DDetail = {
 		id: string;
+		prompt_id: string;
+		client_id: string;
 		media_type: '3d';
 		status: string;
 		stage?: string;
@@ -44,6 +47,12 @@
 	let deleting = $state(false);
 	let favoriteUpdating = $state(false);
 	let downloading = $state(false);
+	let threeDJobKey = $state('');
+	let threeDJob = $derived(threeDJobKey ? generationJobStore.jobs[threeDJobKey] : undefined);
+	let threeDStatus = $derived(threeDJob?.status ?? generation?.status ?? '');
+	let threeDStage = $derived(threeDJob?.stage ?? generation?.stage ?? threeDStatus);
+	let threeDElapsedSeconds = $derived(threeDJob ? generationJobStore.elapsedSeconds(threeDJob, generationJobStore.now) : generation?.elapsed_seconds ?? 0);
+	let threeDActive = $derived(threeDStatus === 'queued' || threeDStatus === 'processing');
 
 	onMount(() => {
 		void loadDetail();
@@ -62,12 +71,33 @@
 			return;
 		}
 		try {
+			await generationJobStore.initialize();
 			generation = await apiJson<Vault3DDetail>(`vault/3d/${generationId}`);
+			trackThreeDJob(generation);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '3D 모델 상세 정보를 불러오지 못했습니다.';
 		} finally {
 			ready = true;
 		}
+	}
+
+	function trackThreeDJob(model: Vault3DDetail) {
+		if ((model.status !== 'queued' && model.status !== 'processing') || !model.prompt_id || !model.client_id) {
+			threeDJobKey = '';
+			return;
+		}
+		threeDJobKey = `3d:${model.prompt_id}`;
+		if (generationJobStore.jobs[threeDJobKey]) return;
+		generationJobStore.track({
+			kind: '3d',
+			promptId: model.prompt_id,
+			clientId: model.client_id,
+			generationId: model.id,
+			status: model.status === 'processing' ? 'processing' : 'queued',
+			stage: model.stage,
+			createdAt: Date.parse(model.created_at),
+			elapsedSeconds: model.elapsed_seconds
+		});
 	}
 
 	async function toggleFavorite() {
@@ -120,6 +150,12 @@
 		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패', cancelled: '취소됨' }[status] ?? status;
 	}
 
+	function stageLabel(stage: string) {
+		return {
+			queued: '생성 대기 중', preparing: '작업 준비 중', preprocessing: '소스 이미지 전처리 중', background_removal: '배경 제거 중', background_cleanup: '배경과 오브젝트 경계 정리 중', conditioning: '3D 조건 분석 중', structure: '3D 구조 생성 중', shape: '3D 형상 생성 중', sampling: '3D 구조 생성 중', decoding: '3D 표현 변환 중', texture: '텍스처 생성 중', mesh: '메시 생성 중', mesh_extraction: '메시 추출 중', texture_baking: '텍스처 생성 중', storage: '모델 파일 저장 중', exporting: '모델 파일 내보내는 중', completed: '3D 모델 생성 완료'
+		}[stage] ?? '3D 모델 생성 중';
+	}
+
 	function imageSourceType(url: string): 'server' | 'external' {
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
 	}
@@ -143,13 +179,15 @@
 			<a href="/vault?tab=3d" class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground"><ArrowLeft size={16} strokeWidth={1.8} />보관함으로 돌아가기</a>
 			<section>
 				<Typography as="h1" variant="display">3D 모델 상세</Typography>
-				<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
+				<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · {statusLabel(threeDStatus)} · 소요 {formatElapsedSeconds(threeDElapsedSeconds)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
 			</section>
 
 			<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="relative overflow-hidden rounded-xl bg-muted">
-						{#if generation.model_url}
+						{#if threeDActive}
+							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 px-5 text-center sm:min-h-[36rem]"><LoadingSpinner size="lg" label="3D 모델 생성 중" /><p class="text-base font-medium text-foreground">{stageLabel(threeDStage)}</p><p class="text-sm text-muted-foreground">경과 {formatElapsedSeconds(threeDElapsedSeconds)}{#if threeDJob?.queuePosition !== null && threeDJob?.queuePosition !== undefined} · 대기 {threeDJob.queuePosition}번째{/if}</p></div>
+						{:else if generation.model_url}
 							<ModelViewer source={generation.model_url} sourceType="server" poster={generation.source_image_url ?? undefined} alt="생성된 3D 모델" autoRotate class="min-h-[24rem] sm:min-h-[36rem]" />
 						{:else}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Box size={28} strokeWidth={1.7} />3D 모델 결과가 아직 없습니다.</div>
@@ -167,7 +205,7 @@
 						<div class="flex items-center gap-2"><Box size={18} class="text-primary" strokeWidth={1.8} /><Typography as="h2" variant="h2">생성 파라미터</Typography></div>
 						<dl class="mt-5 space-y-4 text-sm">
 							<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">3D</dd></div>
-							<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{statusLabel(generation.status)}</dd></div>
+							<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{threeDActive ? stageLabel(threeDStage) : statusLabel(threeDStatus)}</dd></div>
 							<div><dt class="text-muted-foreground">품질 프리셋</dt><dd class="mt-1 font-medium">{presetLabel(generation.preset)}</dd></div>
 							<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed ?? '무작위'}</dd></div>
 							<div><dt class="text-muted-foreground">배경 제거</dt><dd class="mt-1 font-medium">{generation.remove_background ? '사용' : '사용 안 함'}</dd></div>

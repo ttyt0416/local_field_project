@@ -71,6 +71,8 @@ ImageModelFamily = Literal["anima", "illustrious", "krea2"]
 
 class VaultImageSummary(BaseModel):
     id: UUID
+    prompt_id: str = ""
+    client_id: str = ""
     media_type: str
     status: str
     prompt: str
@@ -94,7 +96,6 @@ class VaultLora(BaseModel):
 
 
 class VaultImageDetail(VaultImageSummary):
-    prompt_id: str
     negative_prompt: str
     positive_prompt_prefix: str
     negative_prompt_prefix: str
@@ -181,6 +182,8 @@ class VaultVideoDetail(VaultVideoSummary):
 
 class VaultThreeDSummary(BaseModel):
     id: UUID
+    prompt_id: str = ""
+    client_id: str = ""
     media_type: str
     status: str
     stage: str
@@ -922,6 +925,8 @@ def _three_d_summary(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultThreeDSummary(
         id=generation["id"],
+        prompt_id=str(generation.get("prompt_id") or ""),
+        client_id=str(generation.get("client_id") or ""),
         media_type="3d",
         status=generation["status"],
         stage=generation["stage"],
@@ -988,6 +993,8 @@ def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultImageSummary(
         id=generation["id"],
+        prompt_id=str(generation.get("prompt_id") or ""),
+        client_id=str(generation.get("client_id") or ""),
         media_type="image",
         status=generation["status"],
         prompt=generation["prompt"],
@@ -1009,7 +1016,6 @@ def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False
 def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
     return VaultImageDetail(
         **_summary(generation, user_id, include_file_size=True).model_dump(),
-        prompt_id=generation["prompt_id"],
         negative_prompt=generation["negative_prompt"],
         positive_prompt_prefix=generation["positive_prompt_prefix"],
         negative_prompt_prefix=generation["negative_prompt_prefix"],

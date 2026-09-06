@@ -15,6 +15,7 @@
 	import ImagePresetModal from '../../../../../components/presets/image-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
+	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import type { ImageOptions, ImagePresetType, Preset, PresetValues } from '$lib/types/presets';
@@ -25,6 +26,7 @@
 		media_type: string;
 		status: string;
 		prompt_id: string;
+		client_id: string;
 		prompt: string;
 		negative_prompt: string;
 		positive_prompt_prefix: string;
@@ -72,6 +74,12 @@
 	let presetSuccess = $state('');
 	let presetOpen = $state(false);
 	let imageOptions = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
+	let imageJobKey = $state('');
+	let imageJob = $derived(imageJobKey ? generationJobStore.jobs[imageJobKey] : undefined);
+	let imageStatus = $derived(imageJob?.status ?? generation?.status ?? '');
+	let imageProgress = $derived(imageJob?.progress ?? 0);
+	let imageElapsedSeconds = $derived(imageJob ? generationJobStore.elapsedSeconds(imageJob, generationJobStore.now) : generation?.elapsed_seconds ?? 0);
+	let imageActive = $derived(imageStatus === 'queued' || imageStatus === 'processing');
 
 	onMount(() => {
 		void loadDetail();
@@ -90,7 +98,9 @@
 			return;
 		}
 		try {
+			await generationJobStore.initialize();
 			generation = await apiJson<VaultImageDetail>(`vault/images/${generationId}`);
+			trackImageJob(generation);
 			try {
 				imageOptions = await apiJson<ImageOptions>(`generation/image/options?family=${generation.model_family}`);
 			} catch (reason) {
@@ -101,6 +111,24 @@
 		} finally {
 			ready = true;
 		}
+	}
+
+	function trackImageJob(image: VaultImageDetail) {
+		if ((image.status !== 'queued' && image.status !== 'processing') || !image.prompt_id || !image.client_id) {
+			imageJobKey = '';
+			return;
+		}
+		imageJobKey = `image:${image.prompt_id}`;
+		if (generationJobStore.jobs[imageJobKey]) return;
+		generationJobStore.track({
+			kind: 'image',
+			promptId: image.prompt_id,
+			clientId: image.client_id,
+			generationId: image.id,
+			status: image.status === 'processing' ? 'processing' : 'queued',
+			createdAt: Date.parse(image.created_at),
+			elapsedSeconds: image.elapsed_seconds
+		});
 	}
 
 	function requestDelete() {
@@ -225,6 +253,10 @@
 		return /^(https?:)?\/\//.test(url) ? 'external' : 'server';
 	}
 
+	function statusLabel(status: string) {
+		return { queued: '대기 중', processing: '생성 중', completed: '완료', failed: '실패', cancelled: '취소됨' }[status] ?? status;
+	}
+
 	async function copyPrompt(prompt: string, label: string) {
 		copyError = '';
 		copySuccess = '';
@@ -272,7 +304,7 @@
 							<Typography as="h1" variant="display">콘텐츠 상세</Typography>
 							{#if generation.is_edited}<span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">편집 결과</span>{/if}
 						</div>
-						<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · 소요 {formatElapsedSeconds(generation.elapsed_seconds)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
+						<p class="mt-3 text-sm text-muted-foreground">생성 시작 {formatKstDateTime(generation.created_at)} · {statusLabel(imageStatus)} · 소요 {formatElapsedSeconds(imageElapsedSeconds)} · 용량 {formatFileSize(generation.file_size_bytes)} · 조회 {generation.view_count}</p>
 					</div>
 				</div>
 			</section>
@@ -280,7 +312,9 @@
 			<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="relative">
-						{#if generation.image_url}
+						{#if imageActive}
+							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 rounded-xl bg-muted px-5 text-center sm:min-h-[36rem]"><LoadingSpinner size="lg" label="이미지 생성 중" /><p class="text-sm font-medium text-foreground">{statusLabel(imageStatus)} · {Math.round(imageProgress)}%</p><div class="h-2 w-full max-w-md overflow-hidden rounded-full bg-muted-foreground/20"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${Math.round(imageProgress)}%`}></div></div><p class="text-sm text-muted-foreground">경과 {formatElapsedSeconds(imageElapsedSeconds)}{#if imageJob?.queuePosition !== null && imageJob?.queuePosition !== undefined} · 대기 {imageJob.queuePosition}번째{/if}</p></div>
+						{:else if generation.image_url}
 							<ImageMedia source={imageSource(generation)} sourceType={imageSourceType(imageSource(generation))} alt="생성 이미지" class="min-h-[24rem] sm:min-h-[36rem]" />
 						{:else}
 							<div class="flex min-h-[24rem] items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">이미지 결과가 아직 없습니다.</div>

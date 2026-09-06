@@ -87,6 +87,21 @@ class VaultRouteTest(unittest.TestCase):
 
         self.assertEqual(summary.model_family, "krea2")
 
+    def test_vault_summaries_include_shared_progress_ids(self) -> None:
+        created_at = datetime.now(timezone.utc)
+        image_row = {
+            "id": uuid4(), "prompt_id": "image-prompt", "client_id": "image-client", "status": "processing", "prompt": "portrait", "checkpoint": "image.safetensors", "model_family": "anima", "generation_mode": "t2i", "filename": None, "storage_file_id": None, "source_file_id": None, "view_count": 0, "is_favorite": False, "created_at": created_at, "completed_at": None, "elapsed_seconds": 12, "is_edited": False, "size_bytes": None,
+        }
+        three_d_row = {
+            "id": uuid4(), "prompt_id": "3d-prompt", "client_id": "3d-client", "status": "queued", "stage": "queued", "preset": "standard", "seed": 7, "storage_file_id": None, "source_file_id": None, "view_count": 0, "is_favorite": False, "created_at": created_at, "completed_at": None, "elapsed_seconds": 3, "size_bytes": None,
+        }
+        with patch.object(vault, "storage_enabled", return_value=False):
+            image = vault._summary(image_row, self.user.id)
+            three_d = vault._three_d_summary(three_d_row, self.user.id)
+
+        self.assertEqual((image.prompt_id, image.client_id), ("image-prompt", "image-client"))
+        self.assertEqual((three_d.prompt_id, three_d.client_id), ("3d-prompt", "3d-client"))
+
     def test_list_rejects_partial_image_category(self) -> None:
         with self.assertRaises(HTTPException) as raised:
             vault.vault_images("", "latest", False, 1, self.user, "i2i")
