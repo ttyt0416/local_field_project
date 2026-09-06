@@ -621,7 +621,7 @@ class VideoContractTest(unittest.TestCase):
 
     def test_video_prompt_schema_bounds_assembled_response_length(self) -> None:
         for duration in (1, 5, 10):
-            schema = video._video_prompt_fields_schema(video._video_prompt_pattern(["en"]), duration)
+            schema = video._video_prompt_fields_schema(["en"], duration)
             shot_schema = schema["properties"]["shots"]
             field_max_length = shot_schema["items"]["properties"]["style"]["maxLength"]
             plan = {
@@ -661,7 +661,7 @@ class VideoContractTest(unittest.TestCase):
 
         expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
-        self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
+        self.assertEqual(request.call_args.kwargs["temperature"], 0.3)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
         schema = request.call_args.kwargs["schema"]
         self.assertEqual(set(schema["required"]), {"shots", "overall_soundscape", "non_diegetic_music", "negative"})
@@ -669,7 +669,10 @@ class VideoContractTest(unittest.TestCase):
         shots = schema["properties"]["shots"]
         self.assertEqual(shots["items"]["required"], ["start_ms", *video._VIDEO_PROMPT_SHOT_FIELDS])
         self.assertEqual(shots["items"]["additionalProperties"], False)
-        self.assertEqual(shots["items"]["properties"]["style"]["pattern"], video._video_prompt_pattern(languages))
+        self.assertEqual(
+            shots["items"]["properties"]["style"]["pattern"],
+            video._video_prompt_pattern(languages, shots["items"]["properties"]["style"]["maxLength"]),
+        )
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
@@ -696,6 +699,7 @@ class VideoContractTest(unittest.TestCase):
         user_prompt = request.call_args.kwargs["user_prompt"]
         self.assertIn("The global style and background apply to every sequence segment", system_prompt)
         self.assertIn("never repeat its timeline actions", system_prompt)
+        self.assertIn("Never repeat vocabulary or make exhaustive body-part, anatomy, or category lists", system_prompt)
         self.assertIn("start_ms is 0; later start_ms values are increasing cut times in the supplied local segment", system_prompt)
         self.assertIn("<global_style_and_background>\ncontinue the scene\n</global_style_and_background>", user_prompt)
         self.assertIn("<current_segment_instruction>\nThe character leaves the room.\n</current_segment_instruction>", user_prompt)

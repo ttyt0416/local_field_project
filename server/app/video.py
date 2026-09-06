@@ -769,18 +769,20 @@ async def _resolve_assets(
     return resolved
 
 
-def _video_prompt_pattern(languages: Sequence[str]) -> str:
+def _video_prompt_pattern(languages: Sequence[str], max_length: int | None = None) -> str:
     if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_CHARS for language in languages):
         raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
     language_chars = "".join(_VIDEO_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
-    return rf"^(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS})+$"
+    length = "+" if max_length is None else f"{{1,{max_length}}}"
+    return rf"^(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS}){length}$"
 
 
-def _video_prompt_fields_schema(pattern: str, duration: float) -> dict[str, Any]:
+def _video_prompt_fields_schema(languages: Sequence[str], duration: float) -> dict[str, Any]:
     duration_ms = max(1, round(duration * 1000))
     shot_limit = max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
     # ponytail: reserves 512 chars for server headings and timestamps; use exact accounting if the format grows.
     field_max_length = max(1, (5000 - 512) // (shot_limit * len(_VIDEO_PROMPT_SHOT_FIELDS) + len(_VIDEO_PROMPT_OVERALL_FIELDS)))
+    pattern = _video_prompt_pattern(languages, field_max_length)
     shot_properties = {
         "start_ms": {"type": "integer", "minimum": 0, "maximum": duration_ms - 1},
         **{
@@ -835,7 +837,6 @@ def _assemble_video_prompt(fields: dict[str, Any]) -> str:
 
 def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhancementResponse:
     languages = payload.prompt_output_languages
-    pattern = _video_prompt_pattern(languages)
     fields = _request_structured_object(
         system_prompt=VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
         user_prompt=VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT.format(
@@ -849,8 +850,8 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> PromptEnhan
             languages=", ".join(_VIDEO_PROMPT_LANGUAGE_NAMES[language] for language in languages),
         ),
         max_tokens=1536,
-        temperature=0.8,
-        schema=_video_prompt_fields_schema(pattern, payload.duration),
+        temperature=0.3,
+        schema=_video_prompt_fields_schema(languages, payload.duration),
         name="video_prompt_shots",
     )
     contents = _assemble_video_prompt(fields)
