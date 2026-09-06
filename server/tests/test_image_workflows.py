@@ -50,6 +50,17 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
 
         self.assertEqual(payload.negative_prompt, "")
 
+    def test_image_dimensions_allow_native_maximum_and_reject_invalid_alignment(self) -> None:
+        payload = comfyui.ImageGenerationRequest(prompt="portrait", checkpoint="Anima/anima_aestheticV11.safetensors", width=4096, height=16384)
+
+        self.assertEqual((payload.width, payload.height), (4096, 16384))
+        workflow, _ = comfyui._build_prompt(payload)
+        self.assertEqual((workflow["7"]["inputs"]["width"], workflow["7"]["inputs"]["height"]), (4096, 16384))
+        with self.assertRaises(ValidationError):
+            comfyui.ImageGenerationRequest(prompt="portrait", checkpoint="Anima/anima_aestheticV11.safetensors", width=0)
+        with self.assertRaises(ValidationError):
+            comfyui.ImageGenerationRequest(prompt="portrait", checkpoint="Anima/anima_aestheticV11.safetensors", width=18)
+
     def test_image_request_accepts_more_than_eight_loras(self) -> None:
         payload = comfyui.ImageGenerationRequest(
             prompt="portrait",

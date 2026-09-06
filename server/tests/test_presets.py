@@ -64,6 +64,13 @@ class PresetRequestTest(unittest.TestCase):
         self.assertTrue(payload.values.use_pdd)
         self.assertEqual(payload.values.loras[0].strength, -100)
 
+    def test_preset_dimensions_have_no_upper_bound_but_stay_positive(self) -> None:
+        values = PresetValues(width=4096, height=8192)
+
+        self.assertEqual((values.width, values.height), (4096, 8192))
+        with self.assertRaises(ValidationError):
+            PresetValues(width=0)
+
     def test_image_preset_accepts_sampler_scheduler_and_seed(self) -> None:
         payload = PresetCreateRequest.model_validate(
             {

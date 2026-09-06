@@ -41,8 +41,10 @@
 	type ContinuationMode = 'r2v' | 'i2v';
 	type MediaDimensions = { width: number; height: number };
 	type MediaDimensionState = MediaDimensions | 'failed';
-	// ponytail: backend owns model-specific size validation; add runtime size metadata only if a third contract appears.
-	const maxVideoDimension = 1344;
+	const minimaxDimensionMin = 32;
+	const minimaxDimensionMax = 16384;
+	const minimaxDimensionStep = 32;
+
 	const modes: { value: VideoMode; label: string; description: string }[] = [
 		{ value: 'i2v', label: 'I2V', description: '시작 이미지에서 영상 생성' },
 		{ value: 'fl2v', label: 'FL2V', description: '첫·마지막 프레임 사이 생성' },
@@ -166,7 +168,7 @@
 	let filteredCheckpoints = $derived(filterModelFolder(videoOptions.checkpoints, checkpointFolder));
 	let loraFolders = $derived(modelFolders(videoOptions.loras));
 	let visibleLoras = $derived(filterModelFolder(videoOptions.loras, loraFolder));
-	let videoDimensionStep = 32;
+
 	let segmentCount = $derived(Math.max(1, Math.ceil(Math.max(Number(duration) || 0, 0.001) / 10)));
 	let isPromptEnhancing = $derived(enhancingPrompt || enhancingSegmentIndex !== null);
 	let selectionMax = $derived(selectionTarget === 'images' ? (mode === 'r2v' && segmentCount > 1 ? 8 : 9) : selectionMultiple ? 3 : 1);
@@ -409,7 +411,7 @@
 		try {
 			const cached = mediaDimensions[key];
 			const dimensions = cached && cached !== 'failed' ? cached : await readMediaDimensions(source, kind);
-			const fitted = fitVideoDimensions(dimensions);
+			const fitted = fitMiniMaxDimensions(dimensions);
 			width = fitted.width;
 			height = fitted.height;
 			mediaDimensions = { ...mediaDimensions, [key]: dimensions };
@@ -441,9 +443,8 @@
 		return `원본 ${dimensions.width} × ${dimensions.height}`;
 	}
 
-	function fitVideoDimensions(dimensions: MediaDimensions): MediaDimensions {
-		const scale = Math.min(1, maxVideoDimension / dimensions.width, maxVideoDimension / dimensions.height);
-		const fit = (value: number) => Math.max(videoDimensionStep, Math.min(maxVideoDimension, Math.round(value * scale / videoDimensionStep) * videoDimensionStep));
+	function fitMiniMaxDimensions(dimensions: MediaDimensions): MediaDimensions {
+		const fit = (value: number) => Math.max(minimaxDimensionMin, Math.min(minimaxDimensionMax, Math.round(value / minimaxDimensionStep) * minimaxDimensionStep));
 		return { width: fit(dimensions.width), height: fit(dimensions.height) };
 	}
 
@@ -1292,7 +1293,7 @@
 						{/if}
 
 						<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">영상 크기</span><IconOutlinedButton ariaLabel="가로와 세로 바꾸기" onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton></div>
-						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min={videoDimensionStep} max={maxVideoDimension} step={videoDimensionStep} bind:value={height} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-width"><span class="text-sm font-medium">가로</span><input id="video-width" type="number" min={minimaxDimensionMin} max={minimaxDimensionMax} step={minimaxDimensionStep} bind:value={width} class={inputClass} /></label><label class="block space-y-2" for="video-height"><span class="text-sm font-medium">세로</span><input id="video-height" type="number" min={minimaxDimensionMin} max={minimaxDimensionMax} step={minimaxDimensionStep} bind:value={height} class={inputClass} /></label></div>
 						<div class="grid gap-4 sm:grid-cols-3"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label><label class="block space-y-2" for="video-steps"><span class="text-sm font-medium">Steps</span><input id="video-steps" type="number" min={usePdd ? 4 : 1} max={usePdd ? 8 : 100} step={usePdd ? 2 : 1} bind:value={steps} class={inputClass} /></label></div>
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>

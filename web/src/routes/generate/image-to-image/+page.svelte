@@ -83,8 +83,6 @@
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50';
 	const fileInputClass = 'block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary disabled:cursor-not-allowed disabled:opacity-50';
 	const maxSeed = BigInt('9223372036854775807');
-	const maxImageDimension = 2048;
-	const minImageDimension = 64;
 	const imageDimensionStep = 8;
 const selectionSourceTabs: { value: SelectionSource; label: string }[] = [
 	{ value: 'device', label: '기기 저장소' },
@@ -544,10 +542,8 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	}
 
 	function normalizedImageDimensions(dimensions: ImageDimensions) {
-		const scale = Math.min(1, maxImageDimension / dimensions.width, maxImageDimension / dimensions.height);
 		const normalize = (value: number) => {
-			const stepped = Math.round((value * scale) / imageDimensionStep) * imageDimensionStep;
-			return Math.max(minImageDimension, Math.min(maxImageDimension, stepped));
+			return Math.max(16, Math.min(16384, Math.round(value / imageDimensionStep) * imageDimensionStep));
 		};
 		return { width: normalize(dimensions.width), height: normalize(dimensions.height) };
 	}
@@ -629,7 +625,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (!checkpoint || !options.checkpoints.includes(checkpoint)) return '체크포인트를 선택해 주세요.';
 		if (new Set(loras.map(({ name }) => name)).size !== loras.length) return 'LoRA 선택을 확인해 주세요.';
 		if (loras.some(({ name, strength }) => !name.trim() || !options.loras.includes(name) || !Number.isFinite(Number(strength)))) return 'LoRA와 Strength 값을 확인해 주세요.';
-		if (!isValidDimension(width) || !isValidDimension(height)) return '이미지 가로·세로는 64~2048 범위의 8의 배수여야 합니다.';
+		if (!isValidDimension(width) || !isValidDimension(height)) return '이미지 가로·세로는 16~16384 범위의 8의 배수여야 합니다.';
 		if (!Number.isFinite(Number(denoise)) || Number(denoise) < 0 || Number(denoise) > 1) return 'Denoise는 0.0에서 1.0 사이로 입력해 주세요.';
 		if (!Number.isFinite(Number(cfg)) || Number(cfg) < 0 || Number(cfg) > 20) return 'CFG는 0에서 20 사이로 입력해 주세요.';
 		if (!Number.isInteger(Number(steps)) || Number(steps) < 1 || Number(steps) > 100) return 'Steps는 1에서 100 사이의 정수로 입력해 주세요.';
@@ -641,7 +637,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function isValidDimension(value: number) {
 		const parsed = Number(value);
-		return Number.isInteger(parsed) && parsed >= minImageDimension && parsed <= maxImageDimension && parsed % imageDimensionStep === 0;
+		return Number.isInteger(parsed) && parsed >= 16 && parsed <= 16384 && parsed % imageDimensionStep === 0;
 	}
 
 	function isValidSeed(value: string) {
@@ -957,8 +953,8 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 							<IconOutlinedButton ariaLabel="가로와 세로 바꾸기" disabled={generating} onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton>
 						</div>
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="i2i-width"><span class="text-sm font-medium">가로</span><input id="i2i-width" type="number" min="64" max="2048" step="8" bind:value={width} disabled={generating} class={numberInputClass} /></label>
-							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" min="64" max="2048" step="8" bind:value={height} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-width"><span class="text-sm font-medium">가로</span><input id="i2i-width" type="number" min="16" max="16384" step="8" bind:value={width} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" min="16" max="16384" step="8" bind:value={height} disabled={generating} class={numberInputClass} /></label>
 						</div>
 
 						<label class="block space-y-2" for="i2i-denoise">

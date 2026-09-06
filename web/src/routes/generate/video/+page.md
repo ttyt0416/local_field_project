@@ -4,7 +4,7 @@ I2V·FL2V·R2V를 tab으로 선택한다. 각 input은 device storage 또는 sto
 
 동영상 생성의 image source selector는 `저장된 콘텐츠 → 생성 → T2I (Anima)`를 initial state로 열고, `ANIMA`, `ILLUSTRIOUS`, `KREA2` family tab과 그 아래 `T2I`, `I2I` mode tab을 표시한다. selected category는 `/uploads`의 `generation_mode`와 `model_family` exact filter로 전송한다. video/audio reference는 image generation category filter 없이 기존 device selection을 유지한다.
 
-I2V·FL2V·R2V source card는 원본 비율과 관계없이 12rem preview 높이를 사용해 original media dimensions와 해당 source 전용 `이 사이즈 사용` action을 card 바로 아래에 표시한다. action은 MiniMax H3의 1344 maximum과 32 multiple constraint에 맞춘 dimensions만 current video form에 적용한다.
+I2V·FL2V·R2V source card는 원본 비율과 관계없이 12rem preview 높이를 사용해 original media dimensions와 해당 source 전용 `이 사이즈 사용` action을 card 바로 아래에 표시한다. action은 기존 1344 product cap 없이 MiniMax H3 native `32~16384`, 32 pixel multiple에 맞춘 dimensions를 current video form에 적용한다.
 
 `Checkpoint`는 current video mode의 `/generation/video/options` 결과를 folder-filtered modal로 표시한다. Eros와 Dasiwa MiniMax H3 int8만 남고 Dasiwa가 default다. `MiniMax/` allowlist의 LoRA를 folder-filtered modal에서 multi-select하며, 선택 순서와 strength를 request에 기록한다. MiniMax workflow에는 built-in LoRA가 없고 선택 LoRA만 주입한다. image LoRA는 표시하거나 전송하지 않는다. `PDD 사용`은 live PDD node와 matching LoRA가 있을 때만 활성화되고, 켜면 PDD schedule의 Euler sampler와 matching Ref2VA PDD file을 사용한다. Steps input은 request·preset에 저장되며 PDD는 4·6·8 step만 전송한다. 선택한 checkpoint와 LoRA, steps, PDD state는 request, preset, Vault detail/preset 저장에 남는다. 두 column의 video result/settings layout은 `min-w-0`과 `max-w-full`로 side column 내에서 shrink하며 header controls가 wrap되므로 small viewport에서 horizontal overflow를 만들지 않는다.
 

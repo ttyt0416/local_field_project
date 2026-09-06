@@ -36,8 +36,8 @@ class PresetValues(BaseModel):
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)
     loras: list[PresetLora] | None = None
     aspect_ratio: PresetAspectRatio | None = None
-    width: int | None = Field(default=None, ge=32, le=2048)
-    height: int | None = Field(default=None, ge=32, le=2048)
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
     denoise: float | None = Field(default=None, ge=0, le=1)
     cfg: float | None = Field(default=None, ge=0, le=20)
     steps: int | None = Field(default=None, ge=1, le=100)

@@ -279,6 +279,20 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(generator["inputs"]["length"], video._frame_length(3, 30))
         self.assertEqual(create_video["inputs"]["fps"], 30)
 
+    def test_video_dimensions_allow_native_maximum_and_reject_invalid_alignment(self) -> None:
+        request = video.VideoGenerationRequest(prompt="move", width=4096, height=16384, first_frame=video.VideoAsset(kind="image", file_index=0))
+
+        self.assertEqual((request.width, request.height), (4096, 16384))
+        resolved = {"index:0": video._ResolvedAsset(file_id="a" * 32, filename="image.png", content=b"i", media_type="image/png", kind="image")}
+        with patch.object(video, "_upload_to_comfy", return_value="image.png"):
+            workflow, _ = video._build_prompt("i2v", request, resolved)
+        generator = next(node for node in workflow.values() if node["class_type"] == "MiniMaxH3ImageToVideo")
+        self.assertEqual((generator["inputs"]["width"], generator["inputs"]["height"]), (4096, 16384))
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", width=0)
+        with self.assertRaises(ValidationError):
+            video.VideoGenerationRequest(prompt="move", width=33)
+
     def test_fps_validation_rejects_values_outside_supported_range(self) -> None:
         with self.assertRaises(ValidationError):
             video.VideoGenerationRequest(prompt="move", fps=0)

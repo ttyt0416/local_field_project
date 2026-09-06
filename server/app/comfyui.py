@@ -103,8 +103,8 @@ class ImageGenerationRequest(BaseModel):
     steps: int = Field(default=30, ge=1, le=100)
     sampler_name: str = Field(default=_DEFAULT_SAMPLER, min_length=1, max_length=64)
     scheduler: str = Field(default=_DEFAULT_SCHEDULER, min_length=1, max_length=64)
-    width: int = Field(default=1024, ge=64, le=2048)
-    height: int = Field(default=1024, ge=64, le=2048)
+    width: int = Field(default=1024, ge=16, le=16384, multiple_of=8)
+    height: int = Field(default=1024, ge=16, le=16384, multiple_of=8)
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
 
 

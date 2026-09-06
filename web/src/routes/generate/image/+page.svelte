@@ -552,8 +552,8 @@
 			generationError = '시드를 입력하거나 무작위 시드를 선택해 주세요.';
 			return;
 		}
-		if (width % 8 !== 0 || height % 8 !== 0) {
-			generationError = '이미지 가로·세로 크기는 8의 배수여야 합니다.';
+		if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16 || width > 16384 || height > 16384 || width % 8 !== 0 || height % 8 !== 0) {
+			generationError = '이미지 가로·세로 크기는 16~16384 범위의 8의 배수여야 합니다.';
 			return;
 		}
 
@@ -867,11 +867,11 @@
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="width">
 								<span class="text-sm font-medium">가로</span>
-								<input id="width" type="number" min="64" max="2048" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
+								<input id="width" type="number" min="16" max="16384" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 							<label class="block space-y-2" for="height">
 								<span class="text-sm font-medium">세로</span>
-								<input id="height" type="number" min="64" max="2048" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
+								<input id="height" type="number" min="16" max="16384" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 						</div>
 

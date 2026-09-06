@@ -130,8 +130,8 @@ class VideoGenerationRequest(BaseModel):
     segment_prompts: list[str] = Field(default_factory=list, max_length=360)
     improved_segment_prompts: list[str] = Field(default_factory=list, max_length=360)
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
-    width: int = Field(default=1344, ge=32, le=1344)
-    height: int = Field(default=768, ge=32, le=1344)
+    width: int = Field(default=1344, ge=32, le=16384, multiple_of=32)
+    height: int = Field(default=768, ge=32, le=16384, multiple_of=32)
     duration: float = Field(default=5)
     continuation_mode: Literal["r2v", "i2v"] = "r2v"
     fps: float = Field(default=24, ge=1, le=120)
@@ -1043,8 +1043,8 @@ def _build_prompt(
             if node.get("class_type") == "UNETLoader":
                 inputs["unet_name"] = checkpoint
             if node.get("class_type") in {"MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"}:
-                inputs["width"] = _multiple_of_32(request.width)
-                inputs["height"] = _multiple_of_32(request.height)
+                inputs["width"] = request.width
+                inputs["height"] = request.height
                 inputs["length"] = _frame_length(request.duration, request.fps)
             if node.get("class_type") == "CreateVideo":
                 inputs["fps"] = request.fps
@@ -1509,10 +1509,6 @@ def _frame_length(duration: float, fps: float = 24) -> int:
 
 def _video_frame_length(request: VideoGenerationRequest) -> int:
     return _frame_length(request.duration, request.fps)
-
-
-def _multiple_of_32(value: int) -> int:
-    return max(32, min(1344, round(value / 32) * 32))
 
 
 def _safe_filename(filename: str | None, kind: str, media_type: str | None) -> str:
