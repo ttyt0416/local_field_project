@@ -8,7 +8,7 @@ Image·video·3D cancel endpoint는 isolated job manager의 `POST /api/jobs/{pro
 
 Video와 3D API workflow는 VRAM cleanup node를 포함하지 않는다. VRAM cleanup은 ComfyUI의 `LocalField VRAM Cleanup` custom output node를 graph에 직접 추가하고 Queue Prompt로 수동 실행한다. 이 node는 ComfyUI model unload, CUDA cache, IPC cache를 shared process에서 비운다. 10초를 초과하는 video sequence는 final segment를 제외한 각 segment 완료 뒤, 다음 segment prompt 전에 isolated worker에서 이 node를 자동 실행한다.
 
-lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하지 않는다. 생성 seed는 PostgreSQL `BIGINT`에 저장 가능한 signed 64-bit 범위로 제한한다. 공통 Comfy model option reader는 legacy list schema와 ComfyUI V3 `COMBO` `{ options: [...] }` schema를 모두 처리한다. 따라서 live node가 V3 combo를 반환해도 image/video/3D readiness 및 LTX core gate가 model filename을 누락하지 않는다.
+lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하지 않는다. 생성 seed는 PostgreSQL `BIGINT`에 저장 가능한 signed 64-bit 범위로 제한한다. 공통 Comfy model option reader는 legacy list schema와 ComfyUI V3 `COMBO` `{ options: [...] }` schema를 모두 처리한다.
 
 공통 Comfy progress state는 현재 실행 node ID도 보존한다. image/video caller는 기존 progress 계약을 그대로 사용하고, TRELLIS.2 router는 node ID를 background cleanup·structure·shape·texture·mesh stage로 매핑한다.
 
