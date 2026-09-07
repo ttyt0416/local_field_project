@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
+from app.configs.constants import DEFAULT_VLLM_MODEL, settings
 from app.comfyui import (
     ImageGenerationRequest,
     _MAX_SEED,
@@ -112,6 +113,14 @@ class PromptEnhancementTest(unittest.TestCase):
 
         contents = request.call_args.args[0]["response_format"]["json_schema"]["schema"]["properties"]["contents"]
         self.assertEqual(contents["pattern"], r"^[A-Za-z0-9 ,'-]+$")
+
+    def test_structured_enhancement_uses_shared_target_model(self) -> None:
+        self.assertEqual(DEFAULT_VLLM_MODEL, "pekkAi/G4-MeroMero-26B-A4B-it-uncensored-heretic-NVFP4")
+        response = {"choices": [{"finish_reason": "stop", "message": {"content": '{"contents":"a red apple"}'}}]}
+        with patch("app.comfyui._request_vllm_json", return_value=response) as request:
+            _request_structured_content(system_prompt="system", user_prompt="user", max_tokens=64, temperature=0.8)
+
+        self.assertEqual(request.call_args.args[0]["model"], settings.vllm_model)
 
     def test_structured_length_logs_safe_video_metadata(self) -> None:
         schema = {
