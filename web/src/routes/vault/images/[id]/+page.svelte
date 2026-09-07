@@ -374,23 +374,41 @@
 			</div>
 
 			<section class="grid gap-6 lg:grid-cols-2">
-				<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+				<div class="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="flex items-center justify-between gap-3">
 						<Typography as="h2" variant="h2">사용된 긍정 프롬프트</Typography>
 						<IconOutlinedButton ariaLabel="긍정 프롬프트 복사" onclick={() => void copyPrompt(generation!.prompt, '긍정 프롬프트')}>
 							<Copy size={16} strokeWidth={1.8} />
 						</IconOutlinedButton>
 					</div>
-					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.prompt}</p>
+					<div class="mt-4 min-w-0 space-y-2">
+						<div class="min-w-0 space-y-1">
+							<span class="text-sm font-semibold">긍정 프롬프트 Prefix</span>
+							<p class="min-w-0 max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6 [overflow-wrap:anywhere]">{generation.positive_prompt_prefix}</p>
+						</div>
+						<div class="min-w-0 space-y-1">
+							<span class="text-sm font-semibold">긍정 프롬프트</span>
+							<p class="min-w-0 max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6 [overflow-wrap:anywhere]">{generation.prompt}</p>
+						</div>
+					</div>
 				</div>
-				<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+				<div class="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
 					<div class="flex items-center justify-between gap-3">
 						<Typography as="h2" variant="h2">부정 프롬프트</Typography>
 						<IconOutlinedButton ariaLabel="부정 프롬프트 복사" onclick={() => void copyPrompt(generation!.negative_prompt, '부정 프롬프트')}>
 							<Copy size={16} strokeWidth={1.8} />
 						</IconOutlinedButton>
 					</div>
-					<p class="mt-4 whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6">{generation.negative_prompt}</p>
+					<div class="mt-4 min-w-0 space-y-2">
+						<div class="min-w-0 space-y-1">
+							<span class="text-sm font-semibold">부정 프롬프트 Prefix</span>
+							<p class="min-w-0 max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6 [overflow-wrap:anywhere]">{generation.negative_prompt_prefix}</p>
+						</div>
+						<div class="min-w-0 space-y-1">
+							<span class="text-sm font-semibold">부정 프롬프트</span>
+							<p class="min-w-0 max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6 [overflow-wrap:anywhere]">{generation.negative_prompt}</p>
+						</div>
+					</div>
 				</div>
 			</section>
 
