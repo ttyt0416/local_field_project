@@ -4,9 +4,9 @@
 
 Storage가 설정된 생성 결과는 만료 읽기 URL을 사용한다. 기존 생성 데이터나 Storage 설정이 없는 환경은 기존 Local Field 이미지 프록시를 사용해 개발 환경과 기존 데이터를 유지한다. 이미지 조회 endpoint도 Storage 파일 ID가 있으면 서명 URL로 임시 리다이렉트한다.
 
-Image·video·3D cancel endpoint는 isolated job manager의 `POST /api/jobs/{prompt_id}/cancel`을 호출한다. pending job은 manager queue에서 제거되고, running job은 해당 worker process group만 종료한다. unknown 또는 terminal ID는 no-op이며 DB, SSE, 전역 job store는 `cancelled` terminal 상태를 사용해 polling과 대기 promise를 종료한다.
+Image·video·3D cancel endpoint는 shared ComfyUI의 `POST /api/jobs/{prompt_id}/cancel`을 호출한다. pending job은 ComfyUI queue에서 제거되고, running job은 해당 prompt만 interrupt한다. unknown 또는 terminal ID는 no-op이며 DB, SSE, 전역 job store는 `cancelled` terminal 상태를 사용해 polling과 대기 promise를 종료한다.
 
-Video와 3D API workflow는 VRAM cleanup node를 포함하지 않는다. VRAM cleanup은 ComfyUI의 `LocalField VRAM Cleanup` custom output node를 graph에 직접 추가하고 Queue Prompt로 수동 실행한다. 이 node는 ComfyUI model unload, CUDA cache, IPC cache를 shared process에서 비운다. 10초를 초과하는 video sequence는 final segment를 제외한 각 segment 완료 뒤, 다음 segment prompt 전에 isolated worker에서 이 node를 자동 실행한다.
+Video와 3D API workflow는 VRAM cleanup node를 포함하지 않는다. VRAM cleanup은 ComfyUI의 `LocalField VRAM Cleanup` custom output node를 graph에 직접 추가하고 Queue Prompt로 수동 실행한다. 이 node는 ComfyUI model unload, CUDA cache, IPC cache를 shared process에서 비운다.
 
 lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하지 않는다. 생성 seed는 PostgreSQL `BIGINT`에 저장 가능한 signed 64-bit 범위로 제한한다. 공통 Comfy model option reader는 legacy list schema와 ComfyUI V3 `COMBO` `{ options: [...] }` schema를 모두 처리한다.
 

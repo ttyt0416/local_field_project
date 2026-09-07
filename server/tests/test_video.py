@@ -480,7 +480,7 @@ class VideoContractTest(unittest.TestCase):
         request = cast(video.VideoGenerationRequest, captured["request"])
         resolved = cast(dict[str, video._ResolvedAsset], captured["resolved"])
         self.assertEqual(prompt_id, "r2v-prompt")
-        self.assertTrue(submit.call_args.args[2]["local_field_vram_cleanup_after"])
+        self.assertEqual(set(submit.call_args.args[2]), {"prompt", "client_id"})
         self.assertEqual(captured["mode"], "r2v")
         self.assertEqual(captured["effective_prompt"], "continuation")
         self.assertEqual(request.duration, 10.0)
@@ -517,7 +517,7 @@ class VideoContractTest(unittest.TestCase):
             video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
 
         request = cast(video.VideoGenerationRequest, captured["request"])
-        self.assertNotIn("local_field_vram_cleanup_after", submit.call_args.args[2])
+        self.assertEqual(set(submit.call_args.args[2]), {"prompt", "client_id"})
         self.assertEqual(captured["mode"], "i2v")
         self.assertEqual(request.first_frame, video.VideoAsset(kind="image", file_id="f" * 32))
         self.assertEqual(request.reference_images, [])

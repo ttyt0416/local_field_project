@@ -443,8 +443,6 @@ async def create_video(
         prompt, seed = _build_prompt(mode, initial_request, resolved, effective_prompt=effective_prompts[0])
         client_id = str(uuid.uuid4())
         prompt_payload: dict[str, Any] = {"prompt": prompt, "client_id": client_id}
-        if len(segment_durations) > 1:
-            prompt_payload["local_field_vram_cleanup_after"] = True
         response = _request_json("POST", "/prompt", prompt_payload)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
@@ -1699,8 +1697,6 @@ def _queue_video_continuation(
     request = _keep_generation_dimensions(request, generation)
     prompt, _ = _build_prompt(workflow_mode, request, resolved, effective_prompt=prompts[next_index])
     prompt_payload: dict[str, Any] = {"prompt": prompt, "client_id": generation["client_id"]}
-    if next_index + 1 < len(durations):
-        prompt_payload["local_field_vram_cleanup_after"] = True
     response = _request_json("POST", "/prompt", prompt_payload)
     next_prompt_id = response.get("prompt_id")
     if not isinstance(next_prompt_id, str) or not next_prompt_id:
