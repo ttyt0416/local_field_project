@@ -709,10 +709,6 @@
 	async function enhancePrompt() {
 		error = '';
 		const activeSegmentScenes = segmentScenes.slice(0, segmentCount);
-		if (!prompt.trim()) {
-			error = '개선할 프롬프트를 입력해 주세요.';
-			return;
-		}
 		if (!promptOutputLanguages.length) {
 			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
@@ -737,7 +733,7 @@
 
 	async function enhanceSegmentPrompt(index: number) {
 		error = '';
-		if (!prompt.trim() || !segmentScenes[index] || hasEmptyScene([segmentScenes[index]])) {
+		if (!segmentScenes[index] || hasEmptyScene([segmentScenes[index]])) {
 			error = '개선할 프롬프트를 입력해 주세요.';
 			return;
 		}
@@ -1137,7 +1133,7 @@
 									<OutlinedButton
 										type="button"
 										loading={enhancingPrompt}
-										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim() || hasEmptyScene(segmentScenes.slice(0, segmentCount))}
+										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !promptOutputLanguages.length || hasEmptyScene(segmentScenes.slice(0, segmentCount))}
 										class="min-h-9 px-3 text-xs"
 										onclick={() => void enhancePrompt()}
 									>
@@ -1173,7 +1169,7 @@
 											<span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span>
 											<div class="flex items-center gap-2">
 												<IconOutlinedButton ariaLabel={`구간 ${index + 1} 장면 추가`} title="장면 추가" disabled={isPromptEnhancing || generating} onclick={() => addScene(index)}><Plus size={16} strokeWidth={2} /></IconOutlinedButton>
-												<OutlinedButton type="button" loading={enhancingSegmentIndex === index} disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !prompt.trim() || hasEmptyScene([scenes])} class="min-h-9 px-3 text-xs" onclick={() => void enhanceSegmentPrompt(index)}><Sparkles size={14} strokeWidth={1.9} /><span>{enhancingSegmentIndex === index ? '개선 중' : '프롬프트 개선'}</span></OutlinedButton>
+												<OutlinedButton type="button" loading={enhancingSegmentIndex === index} disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || hasEmptyScene([scenes])} class="min-h-9 px-3 text-xs" onclick={() => void enhanceSegmentPrompt(index)}><Sparkles size={14} strokeWidth={1.9} /><span>{enhancingSegmentIndex === index ? '개선 중' : '프롬프트 개선'}</span></OutlinedButton>
 											</div>
 										</div>
 										{#each scenes as scene, sceneIndex}

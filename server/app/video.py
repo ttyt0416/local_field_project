@@ -279,7 +279,7 @@ def _video_dimensions(aspect_ratio: VideoAspectRatio, megapixels: float, *, heig
 
 
 class VideoPromptEnhancementRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=5000)
+    prompt: str = Field(max_length=5000)
     segment_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     mode: Literal["i2v", "fl2v", "r2v"]
     duration: float = Field(default=5)
@@ -287,6 +287,12 @@ class VideoPromptEnhancementRequest(BaseModel):
     segment_count: int = Field(default=1, ge=1, le=360)
     previous_segment_prompt: str | None = None
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(default_factory=lambda: ["en"], min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def prompt_source_required(self) -> "VideoPromptEnhancementRequest":
+        if not self.prompt.strip() and not (self.segment_prompt or "").strip():
+            raise ValueError("전체 또는 구간 동영상 프롬프트가 필요합니다.")
+        return self
 
     @field_validator("prompt_output_languages")
     @classmethod

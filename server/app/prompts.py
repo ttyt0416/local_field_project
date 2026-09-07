@@ -22,7 +22,6 @@ IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT = (
 )
 
 VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
-    "You are an expert prompt designer for MiniMax H3 video generation. "
     "Interpret the user's request and rewrite it as precise shot data while preserving its intent. "
     "Follow every specific detail in the user's request as closely as possible. "
     "Add only missing, coherent details needed to make the video producible without overriding or weakening the user's specifics. "

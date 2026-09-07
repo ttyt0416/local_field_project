@@ -906,10 +906,32 @@ class VideoContractTest(unittest.TestCase):
         )
         self.assertNotIn("negative", schema["properties"])
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
+        self.assertNotIn("expert prompt designer for MiniMax H3", request.call_args.kwargs["system_prompt"])
         self.assertIn(
             "Translate any user-supplied content written in a language that is not among the selected output languages",
             request.call_args.kwargs["system_prompt"],
         )
+
+    def test_video_prompt_enhancement_allows_empty_overall_prompt_with_segment(self) -> None:
+        plan = {
+            "shots": [{"start_ms": 0, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+            "overall_soundscape": "quiet ambience",
+            "non_diegetic_music": "N/A",
+        }
+        payload = video.VideoPromptEnhancementRequest(
+            prompt="",
+            segment_prompt="[Scene 1]\nThe character walks.",
+            mode="i2v",
+            prompt_output_languages=["en"],
+        )
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
+            video._enhance_video_prompt(payload)
+
+        user_prompt = request.call_args.kwargs["user_prompt"]
+        self.assertIn("<global_style_and_background>\n\n</global_style_and_background>", user_prompt)
+        self.assertIn("<current_segment_instruction>\n[Scene 1]\nThe character walks.\n</current_segment_instruction>", user_prompt)
+        with self.assertRaises(ValidationError):
+            video.VideoPromptEnhancementRequest(prompt="", mode="i2v")
 
     def test_explicit_shots_are_preserved_by_prompt_without_schema_count_enforcement(self) -> None:
         plan = {
