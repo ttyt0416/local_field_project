@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Save, Sparkles, Video, X } from '@lucide/svelte';
+	import { AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Plus, Save, Sparkles, Trash2, Video, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -91,7 +91,7 @@
 	let loraFolder = $state('');
 	let loras = $state<LoraSelection[]>([]);
 	let prompt = $state('');
-	let segmentPrompts = $state<string[]>(['']);
+	let segmentScenes = $state<string[][]>([['']]);
 	let promptEnhancementEnabled = $state(false);
 	let improvedSegmentPrompts = $state<string[]>(['']);
 	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
@@ -187,8 +187,8 @@
 
 	$effect(() => {
 		if (!(Number(duration) > 0)) return;
-		if (segmentPrompts.length < segmentCount) {
-			segmentPrompts = [...segmentPrompts, ...Array.from({ length: segmentCount - segmentPrompts.length }, () => '')];
+		if (segmentScenes.length < segmentCount) {
+			segmentScenes = [...segmentScenes, ...Array.from({ length: segmentCount - segmentScenes.length }, () => [''])];
 		}
 		if (improvedSegmentPrompts.length < segmentCount) {
 			improvedSegmentPrompts = [...improvedSegmentPrompts, ...Array.from({ length: segmentCount - improvedSegmentPrompts.length }, () => '')];
@@ -368,9 +368,34 @@
 		improvedSegmentPrompts = improvedSegmentPrompts.map((current, currentIndex) => currentIndex === index ? value : current);
 	}
 
-	function updateSegmentPrompt(index: number, value: string) {
-		segmentPrompts = segmentPrompts.map((current, currentIndex) => currentIndex === index ? value : current);
-		updateImprovedSegmentPrompt(index, '');
+	function serializeSegmentScenes(scenes: string[]) {
+		return scenes.map((scene, index) => `[Scene ${index + 1}]\n${scene.trim()}`).join('\n\n');
+	}
+
+	function hasEmptyScene(segments: string[][]) {
+		return segments.some((scenes) => scenes.some((scene) => !scene.trim()));
+	}
+
+	function updateScenePrompt(segmentIndex: number, sceneIndex: number, value: string) {
+		segmentScenes = segmentScenes.map((scenes, currentSegmentIndex) =>
+			currentSegmentIndex === segmentIndex
+				? scenes.map((scene, currentSceneIndex) => currentSceneIndex === sceneIndex ? value : scene)
+				: scenes
+		);
+		updateImprovedSegmentPrompt(segmentIndex, '');
+	}
+
+	function addScene(segmentIndex: number) {
+		segmentScenes = segmentScenes.map((scenes, currentIndex) => currentIndex === segmentIndex ? [...scenes, ''] : scenes);
+		updateImprovedSegmentPrompt(segmentIndex, '');
+	}
+
+	function deleteScene(segmentIndex: number, sceneIndex: number) {
+		if (segmentScenes[segmentIndex].length === 1) return;
+		segmentScenes = segmentScenes.map((scenes, currentIndex) =>
+			currentIndex === segmentIndex ? scenes.filter((_, currentSceneIndex) => currentSceneIndex !== sceneIndex) : scenes
+		);
+		updateImprovedSegmentPrompt(segmentIndex, '');
 	}
 
 	function segmentDuration(index: number) {
@@ -669,7 +694,7 @@
 			timeout: 600_000,
 			json: {
 				prompt: prompt.trim(),
-				segment_prompt: segmentPrompts[index].trim(),
+				segment_prompt: serializeSegmentScenes(segmentScenes[index]),
 				mode: index === 0 ? mode : 'r2v',
 				duration: segmentDuration(index),
 				segment_index: index,
@@ -683,7 +708,7 @@
 
 	async function enhancePrompt() {
 		error = '';
-		const activeSegmentPrompts = segmentPrompts.slice(0, segmentCount);
+		const activeSegmentScenes = segmentScenes.slice(0, segmentCount);
 		if (!prompt.trim()) {
 			error = '개선할 프롬프트를 입력해 주세요.';
 			return;
@@ -692,8 +717,8 @@
 			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
 		}
-		if (activeSegmentPrompts.some((value) => !value.trim())) {
-			error = '구간별 프롬프트를 모두 입력해 주세요.';
+		if (hasEmptyScene(activeSegmentScenes)) {
+			error = '구간별 장면 프롬프트를 모두 입력해 주세요.';
 			return;
 		}
 		enhancingPrompt = true;
@@ -712,7 +737,7 @@
 
 	async function enhanceSegmentPrompt(index: number) {
 		error = '';
-		if (!prompt.trim() || !segmentPrompts[index]?.trim()) {
+		if (!prompt.trim() || !segmentScenes[index] || hasEmptyScene([segmentScenes[index]])) {
 			error = '개선할 프롬프트를 입력해 주세요.';
 			return;
 		}
@@ -738,7 +763,8 @@
 		success = '';
 		videoUrl = '';
 		status = 'queued';
-		const activeSegmentPrompts = segmentPrompts.slice(0, segmentCount);
+		const activeSegmentScenes = segmentScenes.slice(0, segmentCount);
+		const activeSegmentPrompts = activeSegmentScenes.map(serializeSegmentScenes);
 		const activeImprovedSegmentPrompts = improvedSegmentPrompts.slice(0, segmentCount);
 		if (!prompt.trim()) {
 			error = '생성할 프롬프트를 입력해 주세요.';
@@ -748,8 +774,8 @@
 			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
 		}
-		if (activeSegmentPrompts.some((value) => !value.trim())) {
-			error = '구간별 프롬프트를 모두 입력해 주세요.';
+		if (hasEmptyScene(activeSegmentScenes)) {
+			error = '구간별 장면 프롬프트를 모두 입력해 주세요.';
 			return;
 		}
 		if (promptEnhancementEnabled && activeImprovedSegmentPrompts.some((value) => !value.trim())) {
@@ -839,7 +865,7 @@
 					...referenceAudioFiles.map((file) => assetRef('audio', file, null, newFiles, form))
 				];
 			}
-			segmentPrompts = activeSegmentPrompts;
+			segmentScenes = activeSegmentScenes;
 			improvedSegmentPrompts = activeImprovedSegmentPrompts;
 			form.append('payload', JSON.stringify(payload));
 			generating = true;
@@ -1111,7 +1137,7 @@
 									<OutlinedButton
 										type="button"
 										loading={enhancingPrompt}
-										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim() || segmentPrompts.slice(0, segmentCount).some((value) => !value.trim())}
+										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !promptOutputLanguages.length || !prompt.trim() || hasEmptyScene(segmentScenes.slice(0, segmentCount))}
 										class="min-h-9 px-3 text-xs"
 										onclick={() => void enhancePrompt()}
 									>
@@ -1141,10 +1167,24 @@
 										<Tab items={continuationModeTabs} bind:value={continuationMode} ariaLabel="다음 구간 마지막 프레임 연결 방식" onselect={selectContinuationMode} />
 									</div>
 								{/if}
-								{#each segmentPrompts.slice(0, segmentCount) as segmentPrompt, index}
+								{#each segmentScenes.slice(0, segmentCount) as scenes, index}
 									<section class="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
-										<div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span><OutlinedButton type="button" loading={enhancingSegmentIndex === index} disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !prompt.trim() || !segmentPrompt.trim()} class="min-h-9 px-3 text-xs" onclick={() => void enhanceSegmentPrompt(index)}><Sparkles size={14} strokeWidth={1.9} /><span>{enhancingSegmentIndex === index ? '개선 중' : '프롬프트 개선'}</span></OutlinedButton></div>
-										<label class="block space-y-2" for={`video-segment-prompt-${index}`}><span class="text-xs font-medium text-primary">입력 프롬프트 {index + 1}</span><textarea id={`video-segment-prompt-${index}`} value={segmentPrompt} oninput={(event) => updateSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+										<div class="flex flex-wrap items-center justify-between gap-3">
+											<span class="text-sm font-semibold">구간 {index + 1} · {segmentTimeRange(index)}</span>
+											<div class="flex items-center gap-2">
+												<IconOutlinedButton ariaLabel={`구간 ${index + 1} 장면 추가`} title="장면 추가" disabled={isPromptEnhancing || generating} onclick={() => addScene(index)}><Plus size={16} strokeWidth={2} /></IconOutlinedButton>
+												<OutlinedButton type="button" loading={enhancingSegmentIndex === index} disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !prompt.trim() || hasEmptyScene([scenes])} class="min-h-9 px-3 text-xs" onclick={() => void enhanceSegmentPrompt(index)}><Sparkles size={14} strokeWidth={1.9} /><span>{enhancingSegmentIndex === index ? '개선 중' : '프롬프트 개선'}</span></OutlinedButton>
+											</div>
+										</div>
+										{#each scenes as scene, sceneIndex}
+											<div class="space-y-2">
+												<div class="flex items-center justify-between gap-3">
+													<label class="text-xs font-medium text-primary" for={`video-segment-${index}-scene-${sceneIndex}`}>장면 {sceneIndex + 1}</label>
+													<IconOutlinedButton variant="destructive" ariaLabel={`구간 ${index + 1} 장면 ${sceneIndex + 1} 삭제`} title="장면 삭제" disabled={isPromptEnhancing || generating || scenes.length === 1} onclick={() => deleteScene(index, sceneIndex)}><Trash2 size={16} strokeWidth={2} /></IconOutlinedButton>
+												</div>
+												<textarea id={`video-segment-${index}-scene-${sceneIndex}`} value={scene} oninput={(event) => updateScenePrompt(index, sceneIndex, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+											</div>
+										{/each}
 										{#if promptEnhancementEnabled}
 											<label class="block space-y-2" for={`video-improved-prompt-${index}`}><span class="text-xs font-medium text-primary">개선 프롬프트 {index + 1}</span><textarea id={`video-improved-prompt-${index}`} value={improvedSegmentPrompts[index] ?? ''} oninput={(event) => updateImprovedSegmentPrompt(index, (event.currentTarget as HTMLTextAreaElement).value)} rows="8" disabled={isPromptEnhancing} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
 										{/if}
@@ -1317,7 +1357,7 @@
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || segmentPrompts.slice(0, segmentCount).some((value) => !value.trim()) || isPromptEnhancing || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || hasEmptyScene(segmentScenes.slice(0, segmentCount)) || isPromptEnhancing || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>

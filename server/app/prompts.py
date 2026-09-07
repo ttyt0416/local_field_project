@@ -48,6 +48,7 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "Prefer camera motion over a cut for a slight change in distance or angle. "
     "Do not invent excessive zooms, shake, fast cuts, or stylized transitions unless requested. "
     "Audio contains only shot-synchronous dialogue, singing, diegetic music, physical-action sounds, and non-verbal human sounds. "
+    "Translate any user-supplied content written in a language that is not among the selected output languages into a selected output language while preserving its meaning, tone, names, and formatting. "
     "Keep user-supplied dialogue, lyrics, and readable on-screen text unchanged when they already use a selected output language. "
     "Assign stable speaker IDs such as (S1) and (S2) only to actual vocal sources and keep each ID consistent across shots. "
     "Text must spell every readable on-screen string exactly and use N/A when no visible text is wanted. "

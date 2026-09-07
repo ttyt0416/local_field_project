@@ -1245,7 +1245,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
                     system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
                     user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
                     max_tokens=768,
-                    temperature=0.8,
+                    temperature=0.6,
                 )
             )
         )
@@ -1255,7 +1255,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
             system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
             user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
             max_tokens=768,
-            temperature=0.8,
+            temperature=0.6,
         )
         if model_family == "anima"
         else ""
@@ -1267,7 +1267,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
             candidate_tags=", ".join(candidate_tags),
         ),
         max_tokens=256,
-        temperature=0.8,
+        temperature=0.6,
     )
     valid_tags = validate_danbooru_tags(raw_tags)
     if not valid_tags:

@@ -1,3 +1,3 @@
-# 이미지 생성 seed 테스트
+# Prompt enhancement tests
 
-자동 생성 seed가 PostgreSQL `BIGINT` 최대값을 넘지 않는지 확인하고, 범위를 넘는 명시적 seed를 거부하는 회귀 테스트다.
+Image prompt enhancement의 Anima natural-language and tag calls, Illustrious tag call, Krea2 natural-language call이 모두 `temperature=0.6`을 사용하는지 검증한다. Structured output character pattern과 safe length-exhaustion telemetry contract도 검증한다.

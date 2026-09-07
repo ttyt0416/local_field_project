@@ -766,6 +766,38 @@ class VideoContractTest(unittest.TestCase):
         self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera second audio second text", result.improved_prompt.contents)
         self.assertNotIn("negative:", result.improved_prompt.contents)
 
+    def test_video_prompt_omits_shot_na_placeholders_but_keeps_overall_na(self) -> None:
+        plan = {
+            "shots": [
+                {
+                    "start_ms": 0,
+                    "style": "first style",
+                    "timeline": "first timeline",
+                    "camera": "first camera",
+                    "audio": "N/A",
+                    "text": "N/A",
+                },
+                {
+                    "start_ms": 1000,
+                    "style": "second style",
+                    "timeline": "second timeline",
+                    "camera": "second camera",
+                    "audio": "N/A",
+                    "text": "N/A",
+                },
+            ],
+            "overall_soundscape": "N/A",
+            "non_diegetic_music": "N/A",
+        }
+
+        contents = video._assemble_video_prompt(plan)
+
+        self.assertIn("[Shot 1] first style first camera", contents)
+        self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera", contents)
+        self.assertTrue(all(not line.endswith("N/A") for line in contents.splitlines() if line.startswith("[Shot ")))
+        self.assertIn("overall_soundscape:\nN/A", contents)
+        self.assertIn("non_diegetic_music:\nN/A", contents)
+
     def test_video_prompt_rejects_missing_structured_timeline(self) -> None:
         plan = {
             "shots": [{"start_ms": 0, "style": "style", "camera": "camera", "audio": "audio", "text": "text"}],
@@ -857,7 +889,7 @@ class VideoContractTest(unittest.TestCase):
 
         expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
-        self.assertEqual(request.call_args.kwargs["temperature"], 0.8)
+        self.assertEqual(request.call_args.kwargs["temperature"], 0.6)
         self.assertEqual(video._VIDEO_PROMPT_MAX_TOKENS, 1024)
         self.assertEqual(request.call_args.kwargs["max_tokens"], video._VIDEO_PROMPT_MAX_TOKENS)
         self.assertEqual(request.call_args.kwargs["timeout_seconds"], video._VIDEO_PROMPT_TIMEOUT_SECONDS)
@@ -874,6 +906,10 @@ class VideoContractTest(unittest.TestCase):
         )
         self.assertNotIn("negative", schema["properties"])
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
+        self.assertIn(
+            "Translate any user-supplied content written in a language that is not among the selected output languages",
+            request.call_args.kwargs["system_prompt"],
+        )
 
     def test_explicit_shots_are_preserved_by_prompt_without_schema_count_enforcement(self) -> None:
         plan = {
