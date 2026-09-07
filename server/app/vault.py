@@ -96,6 +96,7 @@ class VaultLora(BaseModel):
 
 
 class VaultImageDetail(VaultImageSummary):
+    improved_prompt: str | None
     negative_prompt: str
     positive_prompt_prefix: str
     negative_prompt_prefix: str
@@ -1016,6 +1017,7 @@ def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False
 def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
     return VaultImageDetail(
         **_summary(generation, user_id, include_file_size=True).model_dump(),
+        improved_prompt=generation.get("improved_prompt"),
         negative_prompt=generation["negative_prompt"],
         positive_prompt_prefix=generation["positive_prompt_prefix"],
         negative_prompt_prefix=generation["negative_prompt_prefix"],

@@ -437,6 +437,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         client_id VARCHAR(128) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
         prompt TEXT NOT NULL,
+        improved_prompt TEXT,
         negative_prompt TEXT NOT NULL,
         positive_prompt_prefix TEXT NOT NULL DEFAULT '',
         negative_prompt_prefix TEXT NOT NULL DEFAULT '',
@@ -476,6 +477,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS denoise DOUBLE PRECISION NOT NULL DEFAULT 1.0",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS positive_prompt_prefix TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS negative_prompt_prefix TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS improved_prompt TEXT",
     """
     CREATE INDEX IF NOT EXISTS image_generations_user_id_idx ON image_generations(user_id)
     """,
@@ -731,7 +733,7 @@ def initialize_database() -> None:
 
 
 _IMAGE_GENERATION_FIELDS = (
-    "id, user_id, prompt_id, client_id, status, prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint, "
+    "id, user_id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint, "
     "loras, cfg, steps, sampler_name, scheduler, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
     "source_generation_id, is_edited, size_bytes, model_family, generation_mode, source_file_id, "
@@ -755,6 +757,7 @@ def create_image_generation(
     width: int,
     height: int,
     seed: int,
+    improved_prompt: str | None = None,
     sampler_name: str = "er_sde",
     scheduler: str = "simple",
     model_family: str = "anima",
@@ -768,10 +771,10 @@ def create_image_generation(
         row = connection.execute(
             """
             INSERT INTO image_generations
-                (id, user_id, prompt_id, client_id, prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
+                (id, user_id, prompt_id, client_id, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, model_family,
                  generation_mode, source_file_id, source_filename, denoise)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s,
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
             """,
@@ -781,6 +784,7 @@ def create_image_generation(
                 prompt_id,
                 client_id,
                 prompt,
+                improved_prompt,
                 negative_prompt,
                 positive_prompt_prefix,
                 negative_prompt_prefix,
@@ -823,11 +827,11 @@ def create_image_edit(
         row = connection.execute(
             """
             INSERT INTO image_generations
-                (id, user_id, prompt_id, client_id, status, prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
+                (id, user_id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, storage_file_id, filename, subfolder,
                  image_type, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes,
                  model_family, generation_mode, source_file_id, source_filename, denoise)
-            SELECT %s, user_id, %s, %s, 'completed', prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
+            SELECT %s, user_id, %s, %s, 'completed', prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                    loras, cfg, steps, sampler_name, scheduler, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s, model_family, generation_mode, source_file_id, source_filename, denoise
             FROM image_generations

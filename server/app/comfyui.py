@@ -419,6 +419,7 @@ def _submit_image_generation(
         prompt_id=prompt_id,
         client_id=client_id,
         prompt=payload.prompt,
+        improved_prompt=payload.improved_prompt.strip() if payload.prompt_enhancement_enabled and payload.improved_prompt else None,
         negative_prompt=payload.negative_prompt,
         positive_prompt_prefix=payload.positive_prompt_prefix,
         negative_prompt_prefix=payload.negative_prompt_prefix,

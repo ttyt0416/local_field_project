@@ -28,6 +28,7 @@
 		prompt_id: string;
 		client_id: string;
 		prompt: string;
+		improved_prompt: string | null;
 		negative_prompt: string;
 		positive_prompt_prefix: string;
 		negative_prompt_prefix: string;
@@ -390,6 +391,12 @@
 							<span class="text-sm font-semibold">긍정 프롬프트</span>
 							<p class="min-w-0 max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6 [overflow-wrap:anywhere]">{generation.prompt}</p>
 						</div>
+						{#if generation.improved_prompt}
+							<div class="min-w-0 space-y-1">
+								<span class="text-sm font-semibold">개선된 긍정 프롬프트</span>
+								<p class="min-w-0 max-w-full break-words whitespace-pre-wrap rounded-xl bg-muted/60 p-4 text-sm leading-6 [overflow-wrap:anywhere]">{generation.improved_prompt}</p>
+							</div>
+						{/if}
 					</div>
 				</div>
 				<div class="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">

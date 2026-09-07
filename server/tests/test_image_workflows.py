@@ -187,6 +187,8 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         payload = self._request("anima")
         payload.positive_prompt_prefix = "cinematic lighting"
         payload.negative_prompt_prefix = "bad anatomy"
+        payload.prompt_enhancement_enabled = True
+        payload.improved_prompt = "improved portrait"
         user = UserResponse(id=uuid4(), username="tester")
         created_at = datetime.now(timezone.utc)
         with (
@@ -198,6 +200,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
             comfyui._submit_image_generation(payload, user)
 
         self.assertEqual(create_record.call_args.kwargs["prompt"], "1girl, portrait")
+        self.assertEqual(create_record.call_args.kwargs["improved_prompt"], "improved portrait")
         self.assertEqual(create_record.call_args.kwargs["positive_prompt_prefix"], "cinematic lighting")
         self.assertEqual(create_record.call_args.kwargs["negative_prompt"], "low quality")
         self.assertEqual(create_record.call_args.kwargs["negative_prompt_prefix"], "bad anatomy")
