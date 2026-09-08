@@ -21,6 +21,38 @@ IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT = (
     "<candidate_tags>\n{candidate_tags}\n</candidate_tags>"
 )
 
+MUSIC_DESCRIPTION_ENHANCEMENT_SYSTEM_PROMPT = (
+    "Rewrite the user's MiniMax-Music3 description while preserving the user's intent. "
+    "Return exactly one JSON object with a contents string. "
+    "Clearly specify genre, mood, tempo, instrumentation, vocal character when present, production style, and song progression. "
+    "Use the supplied lyrics only as context and do not include lyrics in the description. "
+    "Translate content outside the selected output languages into a selected output language while preserving meaning, tone, and names. "
+    "Keep content already written in a selected output language in that language. "
+    "Use only the selected output languages, digits, spaces, line breaks, and ASCII punctuation. "
+    "Do not add headings, markdown fences, explanations, or extra JSON fields."
+)
+
+MUSIC_LYRICS_ENHANCEMENT_SYSTEM_PROMPT = (
+    "Create or improve lyrics for the user's MiniMax-Music3 request. "
+    "Return exactly one JSON object with a contents string. "
+    "When lyrics are provided, preserve their story, names, section order, section tags, and line breaks while improving phrasing, rhythm, rhyme, and singability. "
+    "When lyrics are empty, write complete new lyrics that match the music description and duration. "
+    "Translate content outside the selected output languages into a selected output language while preserving meaning, tone, names, section tags, and formatting. "
+    "Keep content already written in a selected output language in that language. "
+    "Standard English section tags such as [Verse], [Chorus], and [Bridge] are allowed in every output language. "
+    "Use only the selected output languages, digits, spaces, line breaks, and ASCII punctuation. "
+    "Do not add markdown fences, explanations, or extra JSON fields."
+)
+
+MUSIC_PROMPT_ENHANCEMENT_USER_PROMPT = (
+    "<target>\n{target}\n</target>\n"
+    "<music_description>\n{description}\n</music_description>\n"
+    "<lyrics>\n{lyrics}\n</lyrics>\n"
+    "<duration_seconds>\n{duration}\n</duration_seconds>\n"
+    "<output_languages>\n{languages}\n</output_languages>\n"
+    "<required_field>\ncontents\n</required_field>"
+)
+
 VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "Interpret the user's request and rewrite it as precise shot data while preserving its intent. "
     "Follow every specific detail in the user's request as closely as possible. "

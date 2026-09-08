@@ -3,6 +3,7 @@
 `music.py`는 shared local ComfyUI의 native MiniMax-Music3 node로 text-to-music generation을 실행한다.
 
 - `GET /generation/music/options`: required node, exact model filename, Storage readiness를 확인한다.
+- `POST /generation/music/enhance-prompt`: `description`과 `lyrics` target을 따로 개선한다. description target은 lyrics를 context로만 사용하고, lyrics target은 원문이 비어 있으면 description과 duration에 맞는 새 가사를 생성한다. `ko`, `en`, `ja` output language를 1개 이상 받고 strict `{contents}` schema를 사용한다.
 - `POST /generation/music`: description, optional lyrics, 10-300 second limit, optional seed를 official 30-step workflow에 넣고 `202`를 반환한다. 빈 lyrics는 instrumental generation이다.
 - `GET /generation/music/latest`: reload 뒤 latest result 또는 active job을 복구한다.
 - `GET /generation/music/{prompt_id}`와 `/events`: DB snapshot, progress, queue position, terminal output을 반환한다.

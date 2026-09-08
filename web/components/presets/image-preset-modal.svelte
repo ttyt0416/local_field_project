@@ -205,8 +205,11 @@
 			values.scheduler = scheduler;
 		}
 		if (selectedFields.seed) {
-			values.random_seed = randomSeed;
-			if (!randomSeed && seed.trim()) values.seed = seed.trim();
+			if (randomSeed) values.random_seed = true;
+			else if (seed.trim()) {
+				values.random_seed = false;
+				values.seed = seed.trim();
+			}
 		}
 		if (isT2I && selectedFields.prompt_enhancement) {
 			values.prompt_enhancement_enabled = promptEnhancementEnabled;
@@ -222,7 +225,6 @@
 		if (selectedFields.prompt && !prompt.trim()) return (error = '긍정 프롬프트를 입력해 주세요.');
 		if (selectedFields.checkpoint && !checkpoint) return (error = '체크포인트를 선택해 주세요.');
 		if (isI2I && selectedFields.denoise && (!Number.isFinite(denoise) || denoise < 0 || denoise > 1)) return (error = 'Denoise는 0.0에서 1.0 사이로 입력해 주세요.');
-		if (selectedFields.seed && !randomSeed && !seed.trim()) return (error = '시드를 입력하거나 무작위 시드를 선택해 주세요.');
 		saving = true;
 		try {
 			const saved = await apiJson<Preset>(editingId ? `presets/${editingId}` : 'presets', {
@@ -266,7 +268,7 @@
 		{#if isI2I && selectedFields.denoise}<label class="block space-y-2" for="image-preset-denoise"><span class="text-sm font-medium">Denoise</span><input id="image-preset-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.cfg || selectedFields.steps}<div class="grid gap-4 sm:grid-cols-2">{#if selectedFields.cfg}<label class="block space-y-2" for="image-preset-cfg"><span class="text-sm font-medium">CFG</span><input id="image-preset-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} /></label>{/if}{#if selectedFields.steps}<label class="block space-y-2" for="image-preset-steps"><span class="text-sm font-medium">Steps</span><input id="image-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} /></label>{/if}</div>{/if}
 		{#if selectedFields.sampling}<button type="button" onclick={() => (samplingOpen = true)} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName} / {scheduler}</span></button>{/if}
-		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-seed"><span class="text-sm font-medium">Seed</span><input id="image-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="image-preset-random-seed"><input id="image-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
+		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-seed"><span class="text-sm font-medium">Seed</span><input id="image-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="image-preset-random-seed"><input id="image-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
 		{#if isT2I && selectedFields.prompt_enhancement}<label class="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} class="size-4 accent-primary" /><span>프롬프트 개선 사용</span></label><label class="block space-y-2" for="image-preset-improved"><span class="text-sm font-medium">개선된 프롬프트</span><textarea id="image-preset-improved" bind:value={improvedPrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>

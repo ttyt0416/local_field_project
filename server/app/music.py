@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime
 import json
 from pathlib import Path
@@ -9,16 +10,18 @@ from typing import Any, Literal
 from urllib.parse import urlencode
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.responses import StreamingResponse
 
 from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
+    _VLLMError,
     _queue_position,
     _request_bytes,
     _request_json,
+    _request_structured_object,
     cancel_comfy_generation,
     generation_progress,
 )
@@ -30,12 +33,32 @@ from .database import (
     update_music_generation_status,
 )
 from .generation_events import generation_event_broker, generation_key
+from .prompts import (
+    MUSIC_DESCRIPTION_ENHANCEMENT_SYSTEM_PROMPT,
+    MUSIC_LYRICS_ENHANCEMENT_SYSTEM_PROMPT,
+    MUSIC_PROMPT_ENHANCEMENT_USER_PROMPT,
+)
 from .storage import StorageError, enabled as storage_enabled, read_url as storage_read_url, upload_file as storage_upload_file
 
 
 router = APIRouter(prefix="/generation/music", tags=["music generation"])
 _WORKFLOW_PATH = Path(__file__).with_name("workflows") / "music_t2m.json"
 _MAX_SEED = 2**53 - 1
+_MUSIC_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
+_MUSIC_PROMPT_NON_WHITESPACE_COMMON_CHARS = r"\x21-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E"
+_MUSIC_PROMPT_LANGUAGE_CHARS = {
+    "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
+    "en": r"A-Za-z",
+    "ja": r"\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
+}
+_MUSIC_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS = {
+    **_MUSIC_PROMPT_LANGUAGE_CHARS,
+    "ja": r"\u3001-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
+}
+_MUSIC_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
+_MUSIC_PROMPT_FIXED_TOKENS = "Verse|Pre-Chorus|Chorus|Bridge|Intro|Outro|Instrumental|Hook|Rap"
+_MUSIC_PROMPT_MAX_TOKENS = 4096
+_MUSIC_PROMPT_TIMEOUT_SECONDS = 300
 _MODEL_FILES = {
     ("UNETLoader", "unet_name"): "minimax_music3_dit_fp16.safetensors",
     ("CLIPLoader", "clip_name"): "minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
@@ -71,6 +94,37 @@ class MusicGenerationRequest(BaseModel):
         if not value:
             raise ValueError("음악 설명이 필요합니다.")
         return value
+
+
+class MusicPromptEnhancementRequest(BaseModel):
+    target: Literal["description", "lyrics"]
+    description: str = Field(min_length=1, max_length=5000)
+    lyrics: str = Field(default="", max_length=5000)
+    duration_seconds: float = Field(default=60, ge=10, le=300)
+    prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(
+        default_factory=lambda: ["en"], min_length=1, max_length=3
+    )
+
+    @field_validator("description")
+    @classmethod
+    def description_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("음악 설명이 필요합니다.")
+        return value
+
+    @field_validator("prompt_output_languages")
+    @classmethod
+    def unique_prompt_output_languages(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("음악 프롬프트 출력 언어는 중복 선택할 수 없습니다.")
+        return value
+
+
+class MusicPromptEnhancementResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contents: str = Field(min_length=1, max_length=5000)
 
 
 class MusicOutput(BaseModel):
@@ -118,8 +172,21 @@ def music_options(_: UserResponse = Depends(current_user)) -> MusicGenerationOpt
     elif not storage_enabled():
         detail = "스토리지 설정이 없습니다."
     else:
-        detail = "MiniMax-Music3 local generation이 준비됐습니다."
+        detail = ""
     return MusicGenerationOptions(model="MiniMax-Music3", service_available=available, detail=detail)
+
+
+@router.post("/enhance-prompt", response_model=MusicPromptEnhancementResponse)
+def enhance_music_prompt(
+    payload: MusicPromptEnhancementRequest,
+    request: Request,
+    _: UserResponse = Depends(current_user),
+) -> MusicPromptEnhancementResponse:
+    try:
+        return _enhance_music_prompt(payload)
+    except _VLLMError as exc:
+        request.state.provider_response = exc.provider_response
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("", response_model=MusicGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
@@ -245,6 +312,62 @@ async def _stream_events(prompt_id: str, user_id: uuid.UUID):
             yield _sse(message["event"], message["data"])
             if message["event"] in {"completed", "failed", "cancelled", "error"}:
                 return
+
+
+def _music_prompt_pattern(languages: Sequence[str]) -> str:
+    if not languages or any(language not in _MUSIC_PROMPT_LANGUAGE_CHARS for language in languages):
+        raise ValueError("지원하지 않는 음악 프롬프트 출력 언어입니다.")
+    language_chars = "".join(_MUSIC_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
+    visible_language_chars = "".join(
+        _MUSIC_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages)
+    )
+    content = rf"(?:[{_MUSIC_PROMPT_COMMON_CHARS}{language_chars}]|{_MUSIC_PROMPT_FIXED_TOKENS})"
+    visible = rf"(?:[{_MUSIC_PROMPT_NON_WHITESPACE_COMMON_CHARS}{visible_language_chars}]|{_MUSIC_PROMPT_FIXED_TOKENS})"
+    return rf"^{visible}(?:{content}*{visible})?$"
+
+
+def _music_prompt_schema(languages: Sequence[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "contents": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 5000,
+                "pattern": _music_prompt_pattern(languages),
+            }
+        },
+        "required": ["contents"],
+        "additionalProperties": False,
+    }
+
+
+def _enhance_music_prompt(payload: MusicPromptEnhancementRequest) -> MusicPromptEnhancementResponse:
+    system_prompt = (
+        MUSIC_DESCRIPTION_ENHANCEMENT_SYSTEM_PROMPT
+        if payload.target == "description"
+        else MUSIC_LYRICS_ENHANCEMENT_SYSTEM_PROMPT
+    )
+    result = _request_structured_object(
+        system_prompt=system_prompt,
+        user_prompt=MUSIC_PROMPT_ENHANCEMENT_USER_PROMPT.format(
+            target=payload.target,
+            description=payload.description,
+            lyrics=payload.lyrics.strip(),
+            duration=f"{payload.duration_seconds:g}",
+            languages=", ".join(_MUSIC_PROMPT_LANGUAGE_NAMES[language] for language in payload.prompt_output_languages),
+        ),
+        max_tokens=_MUSIC_PROMPT_MAX_TOKENS,
+        temperature=0.6,
+        timeout_seconds=_MUSIC_PROMPT_TIMEOUT_SECONDS,
+        schema=_music_prompt_schema(payload.prompt_output_languages),
+        name=f"music_{payload.target}",
+    )
+    try:
+        response = MusicPromptEnhancementResponse.model_validate(result)
+    except ValidationError as exc:
+        raise _VLLMError("vLLM 구조화 음악 프롬프트에 contents가 없습니다.") from exc
+    return response.model_copy(update={"contents": response.contents.strip()})
 
 
 def _build_prompt(request: MusicGenerationRequest) -> tuple[dict[str, Any], int]:

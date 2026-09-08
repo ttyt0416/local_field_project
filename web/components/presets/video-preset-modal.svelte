@@ -206,8 +206,11 @@
 		if (selectedFields.pdd) values.use_pdd = learnedUpscale ? false : usePdd;
 
 		if (selectedFields.seed) {
-			values.random_seed = randomSeed;
-			if (!randomSeed && seed.trim()) values.seed = seed.trim();
+			if (randomSeed) values.random_seed = true;
+			else if (seed.trim()) {
+				values.random_seed = false;
+				values.seed = seed.trim();
+			}
 		}
 		return values;
 	}
@@ -220,7 +223,6 @@
 		if (selectedFields.checkpoint && (videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint))) return (error = '동영상 checkpoint를 선택해 주세요.');
 		if (selectedFields.resolution && learnedUpscale && !videoOptions.learned_upscale_available) return (error = 'H3 learned 3D 업스케일 model 또는 ComfyUI node를 찾을 수 없습니다.');
 		if (selectedFields.resolution && learnedUpscale && Number(targetMegapixels) <= Number(megapixels)) return (error = 'Target 메가픽셀은 Base 메가픽셀보다 커야 합니다.');
-		if (selectedFields.seed && !randomSeed && !seed.trim()) return (error = '시드를 입력하거나 무작위 시드를 선택해 주세요.');
 		saving = true;
 		try {
 			const saved = await apiJson<Preset>(editingId ? `presets/${editingId}` : 'presets', {
@@ -258,7 +260,7 @@
 		{#if selectedFields.steps}<label class="block space-y-2" for="video-preset-steps"><span class="text-sm font-medium">Steps</span><input id="video-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} /></label>{/if}
 		{#if selectedFields.sampling}<button type="button" onclick={() => (samplingOpen = true)} disabled={videoOptionsLoading || !samplerName || !scheduler} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName} / {scheduler}</span></button>{/if}
 		{#if selectedFields.pdd}<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="video-preset-use-pdd"><input id="video-preset-use-pdd" type="checkbox" bind:checked={usePdd} disabled={learnedUpscale} class="size-4 accent-primary" /><span>PDD 사용</span></label>{/if}
-		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-seed"><span class="text-sm font-medium">Seed</span><input id="video-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="video-preset-random-seed"><input id="video-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
+		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-preset-seed"><span class="text-sm font-medium">Seed</span><input id="video-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="video-preset-random-seed"><input id="video-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>
 	{#snippet footer()}<OutlinedButton disabled={saving} onclick={() => (open = false)}>취소</OutlinedButton><PrimaryButton loading={saving} disabled={!presetName.trim() || !selectedFieldCount()} onclick={() => void save()}>{editingId ? '수정' : '저장'}</PrimaryButton>{/snippet}
