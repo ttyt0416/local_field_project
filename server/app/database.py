@@ -592,6 +592,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         elapsed_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
     )
     """,
+    "ALTER TABLE music_generations ADD COLUMN IF NOT EXISTS max_duration_seconds DOUBLE PRECISION NOT NULL DEFAULT 60",
     "CREATE INDEX IF NOT EXISTS music_generations_user_created_idx ON music_generations(user_id, created_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS three_d_generations (
@@ -1376,6 +1377,122 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
     if row is None:
         return None
     return dict(zip(_REUSABLE_MEDIA_FIELDS.split(", "), row, strict=True))
+
+
+_MUSIC_FIELDS = (
+    "id, user_id, prompt_id, client_id, status, description, lyrics, seed, max_duration_seconds, "
+    "storage_file_id, filename, content_type, duration_seconds, size_bytes, view_count, is_favorite, "
+    "created_at, completed_at, elapsed_seconds"
+)
+
+
+def create_music_generation(
+    *,
+    user_id: uuid.UUID,
+    prompt_id: str,
+    client_id: str,
+    description: str,
+    lyrics: str,
+    seed: int,
+    max_duration_seconds: float,
+) -> tuple[uuid.UUID, datetime]:
+    generation_id = uuid.uuid4()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            INSERT INTO music_generations
+                (id, user_id, prompt_id, client_id, description, lyrics, seed, max_duration_seconds)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+            """,
+            (
+                generation_id,
+                user_id,
+                prompt_id,
+                client_id,
+                description,
+                lyrics,
+                seed,
+                max_duration_seconds,
+            ),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("music generation insert did not return a row")
+    return row[0], row[1]
+
+
+def get_music_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE prompt_id = %s AND user_id = %s",
+            (prompt_id, user_id),
+        ).fetchone()
+    return dict(zip(_MUSIC_FIELDS.split(", "), row, strict=True)) if row is not None else None
+
+
+def get_latest_music_generation(user_id: uuid.UUID) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE user_id = %s ORDER BY created_at DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return dict(zip(_MUSIC_FIELDS.split(", "), row, strict=True)) if row is not None else None
+
+
+def list_active_music_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+    filters = ["status IN ('queued', 'processing')"]
+    parameters: list[Any] = []
+    if user_id is not None:
+        filters.append("user_id = %s")
+        parameters.append(user_id)
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
+            parameters,
+        ).fetchall()
+    return [dict(zip(_MUSIC_FIELDS.split(", "), row, strict=True)) for row in rows]
+
+
+def update_music_generation_status(
+    *,
+    prompt_id: str,
+    user_id: uuid.UUID,
+    status: str,
+    storage_file_id: str | None = None,
+    filename: str | None = None,
+    content_type: str | None = None,
+    duration_seconds: float | None = None,
+    size_bytes: int | None = None,
+) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE music_generations
+            SET status = %s,
+                storage_file_id = COALESCE(%s, storage_file_id),
+                filename = COALESCE(%s, filename),
+                content_type = COALESCE(%s, content_type),
+                duration_seconds = COALESCE(%s, duration_seconds),
+                size_bytes = COALESCE(%s, size_bytes),
+                completed_at = CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE completed_at END,
+                elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
+                    CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
+                )))
+            WHERE prompt_id = %s AND user_id = %s
+            """,
+            (
+                status,
+                storage_file_id,
+                filename,
+                content_type,
+                duration_seconds,
+                size_bytes,
+                status,
+                status,
+                prompt_id,
+                user_id,
+            ),
+        )
 
 
 _VIDEO_FIELDS = (

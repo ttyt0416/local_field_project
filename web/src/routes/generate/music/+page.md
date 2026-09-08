@@ -1,5 +1,11 @@
-# MiniMax Music 3 음악 생성
+# 음악 생성 화면
 
-`/generate/music`는 MiniMax Music 3 local generation UI와 contract를 먼저 제공한다. 로그인 뒤 `GET /generation/music/options`를 호출해 model name과 service availability를 읽는다. 현재 local service, model download, inference worker가 없으므로 `service_available=false`이며 form은 음악 설명과 tagged lyrics를 편집할 수 있지만 생성 button은 deactive다.
+`+page.svelte`는 MiniMax-Music3 local generation 화면이다.
 
-음악 설명은 genre, mood, vocal, instrumentation, arrangement를 입력하고 가사는 `[Verse]`, `[Chorus]`, `[Bridge]`, `[Instrumental]` 같은 line-based section tag를 허용한다. service 연결 뒤에만 durable job submit, status, audio player, Storage output, Vault MUSIC을 추가한다.
+- 입력: 음악 설명, optional 가사, 10-300초 최대 길이, optional seed
+- 빈 가사: 연주곡 generation
+- 상태: global generation job store의 SSE progress, queue position, elapsed time, cancel
+- 결과: Storage signed URL을 browser native audio player와 download link에 연결
+- 복구: page load 때 options와 latest music generation을 읽고 active job 또는 latest completed audio를 표시
+
+MODEL 영역에는 model attribution requirement에 따라 `MiniMax-Music3`를 눈에 띄게 표시한다.

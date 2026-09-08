@@ -2,7 +2,7 @@ import { browser } from '$app/environment';
 import { SERVER_URL } from '$lib/configs/constants';
 import { apiJson, streamSse } from '$lib/utils/api';
 
-export type GenerationJobKind = 'image' | 'video' | '3d';
+export type GenerationJobKind = 'image' | 'video' | '3d' | 'music';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 export type GenerationJob = {
 	key: string;
@@ -25,6 +25,9 @@ export type GenerationJob = {
 	modelUrl?: string;
 	modelFilename?: string;
 	modelSizeBytes?: number | null;
+	audioUrl?: string;
+	audioFilename?: string;
+	audioSizeBytes?: number | null;
 	error?: string;
 	createdAt: number;
 };
@@ -170,6 +173,9 @@ class GenerationJobStore {
 		if (job.kind === '3d') {
 			return `generation/3d/${job.promptId}/events?client_id=${encodeURIComponent(job.clientId)}`;
 		}
+		if (job.kind === 'music') {
+			return `generation/music/${job.promptId}/events?client_id=${encodeURIComponent(job.clientId)}`;
+		}
 		return `generation/video/${job.mode}/${job.promptId}/events?client_id=${encodeURIComponent(job.clientId)}`;
 	}
 
@@ -194,11 +200,15 @@ class GenerationJobStore {
 			const image = Array.isArray(data.images) ? (data.images[0] as { url?: unknown } | undefined) : undefined;
 			const video = data.video as { url?: unknown } | null | undefined;
 			const model = data.model as { url?: unknown; filename?: unknown; size_bytes?: unknown } | null | undefined;
+			const audio = data.audio as { url?: unknown; filename?: unknown; size_bytes?: unknown } | null | undefined;
 			if (typeof image?.url === 'string') changes.imageUrl = new URL(image.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
 			if (typeof video?.url === 'string') changes.videoUrl = new URL(video.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
 			if (typeof model?.url === 'string') changes.modelUrl = new URL(model.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
 			if (typeof model?.filename === 'string') changes.modelFilename = model.filename;
 			if (typeof model?.size_bytes === 'number' || model?.size_bytes === null) changes.modelSizeBytes = model.size_bytes;
+			if (typeof audio?.url === 'string') changes.audioUrl = new URL(audio.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
+			if (typeof audio?.filename === 'string') changes.audioFilename = audio.filename;
+			if (typeof audio?.size_bytes === 'number' || audio?.size_bytes === null) changes.audioSizeBytes = audio.size_bytes;
 			changes.error = undefined;
 		}
 		if (eventName === 'failed') changes.error = typeof data.message === 'string' ? data.message : '생성에 실패했습니다.';
@@ -217,6 +227,8 @@ class GenerationJobStore {
 			? `generation/image/${job.promptId}/cancel`
 			: job.kind === '3d'
 				? `generation/3d/${job.promptId}/cancel`
+				: job.kind === 'music'
+					? `generation/music/${job.promptId}/cancel`
 				: `generation/video/${job.mode}/${job.promptId}/cancel`;
 		await apiJson(path, { method: 'POST' });
 		this.update(key, { status: 'cancelled', queuePosition: null, error: undefined });

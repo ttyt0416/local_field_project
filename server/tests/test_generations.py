@@ -38,22 +38,33 @@ class ActiveGenerationRouteTest(unittest.TestCase):
             "status": "processing",
             "created_at": created_at,
         }
+        music = {
+            "id": uuid4(),
+            "prompt_id": "music-prompt",
+            "client_id": "music-client",
+            "seed": 456,
+            "status": "queued",
+            "created_at": created_at,
+        }
         with (
             patch.object(generations, "list_active_image_generations", return_value=[image]) as image_list,
             patch.object(generations, "list_active_video_generations", return_value=[video]) as video_list,
             patch.object(generations, "list_active_three_d_generations", return_value=[three_d]) as three_d_list,
+            patch.object(generations, "list_active_music_generations", return_value=[music]) as music_list,
         ):
             result = generations.active_generations(user)
 
         image_list.assert_called_once_with(user.id)
         video_list.assert_called_once_with(user.id)
         three_d_list.assert_called_once_with(user.id)
-        self.assertEqual([item.kind for item in result], ["image", "video", "3d"])
+        music_list.assert_called_once_with(user.id)
+        self.assertEqual([item.kind for item in result], ["image", "video", "3d", "music"])
         self.assertEqual(result[0].status, "processing")
         self.assertEqual(result[1].mode, "i2v")
         self.assertEqual(result[2].stage, "shape")
         self.assertEqual(result[2].preset, "standard")
         self.assertEqual(result[2].seed, 123)
+        self.assertEqual(result[3].seed, 456)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from .comfyui import generation_progress
 from .database import (
     generation_elapsed_seconds,
     list_active_image_generations,
+    list_active_music_generations,
     list_active_three_d_generations,
     list_active_video_generations,
 )
@@ -18,7 +19,7 @@ from .video import _video_sequence_fields, _video_sequence_progress
 
 
 router = APIRouter(prefix="/generation", tags=["generation"])
-GenerationKind = Literal["image", "video", "3d"]
+GenerationKind = Literal["image", "video", "3d", "music"]
 GenerationStatus = Literal["queued", "processing"]
 VideoMode = Literal["i2v", "fl2v", "r2v"]
 
@@ -99,6 +100,19 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 "created_at": generation["created_at"],
             }
             for generation in list_active_three_d_generations(user.id)
+        ),
+        *(
+            {
+                "kind": "music",
+                "prompt_id": generation["prompt_id"],
+                "client_id": generation["client_id"],
+                "generation_id": str(generation["id"]),
+                "seed": generation["seed"],
+                "status": generation["status"],
+                **active_fields(generation),
+                "created_at": generation["created_at"],
+            }
+            for generation in list_active_music_generations(user.id)
         ),
     ]
     return [ActiveGeneration.model_validate(row) for row in sorted(rows, key=lambda row: row["created_at"])]

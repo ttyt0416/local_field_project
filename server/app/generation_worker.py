@@ -8,13 +8,16 @@ from typing import Any
 from .comfyui import _history_generation_status, generation_progress, record_comfy_progress, stream_comfy_progress
 from .database import (
     get_image_generation,
+    get_music_generation,
     get_three_d_generation,
     get_video_generation,
     list_active_image_generations,
+    list_active_music_generations,
     list_active_three_d_generations,
     list_active_video_generations,
 )
 from .generation_events import generation_event_broker, generation_key
+from .music import _history_status as _music_history_status
 from .three_d import _history_status as _three_d_history_status
 from .video import _history_status
 
@@ -52,6 +55,15 @@ def reconcile_active_generations() -> None:
             logger.exception("3D 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("3d", generation, previous_status)
 
+    for generation in list_active_music_generations():
+        previous_status = str(generation.get("status", "queued"))
+        try:
+            result = _music_history_status(generation, generation["user_id"])
+            _publish_if_changed("music", generation, previous_status, result.status, result.model_dump(mode="json"))
+        except Exception:
+            logger.exception("음악 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
+            _publish_terminal_if_changed("music", generation, previous_status)
+
 
 def _publish_if_changed(
     kind: str,
@@ -88,8 +100,10 @@ def _publish_terminal_if_changed(kind: str, generation: dict[str, Any], previous
         current = get_image_generation(generation["prompt_id"], generation["user_id"])
     elif kind == "video":
         current = get_video_generation(generation["prompt_id"], generation["user_id"])
-    else:
+    elif kind == "3d":
         current = get_three_d_generation(generation["prompt_id"], generation["user_id"])
+    else:
+        current = get_music_generation(generation["prompt_id"], generation["user_id"])
     if current is None or current["status"] == previous_status or current["status"] not in {"completed", "failed", "cancelled"}:
         return
     key = generation_key(kind, generation["user_id"], generation["prompt_id"])
@@ -119,6 +133,7 @@ def _active_generations() -> list[tuple[str, dict[str, Any]]]:
         *(("image", generation) for generation in list_active_image_generations()),
         *(("video", generation) for generation in list_active_video_generations()),
         *(("3d", generation) for generation in list_active_three_d_generations()),
+        *(("music", generation) for generation in list_active_music_generations()),
     ]
 
 
