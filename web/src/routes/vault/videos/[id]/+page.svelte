@@ -173,7 +173,7 @@
 		try {
 			await apiDelete(`vault/videos/${generation.id}`);
 			deleteModalOpen = false;
-			await goto('/vault?tab=videos');
+			await goto('/vault?tab=videos', { replaceState: true });
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '영상을 삭제하지 못했습니다.';
 		} finally {

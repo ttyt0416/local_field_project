@@ -179,6 +179,7 @@ class VideoContractTest(unittest.TestCase):
         sage_id, sage = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "PathchSageAttentionKJ")
         sol_id, sol = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "SolAttnPatch")
         cache_id, cache = next((node_id, node) for node_id, node in prompt.items() if node["class_type"] == "EasyCache")
+        self.assertEqual(video._EROS_CHECKPOINT, "MiniMaxH3/10Eros_Max_h3_hybrid_beta5.safetensors")
         self.assertEqual(unet["inputs"]["unet_name"], video._EROS_CHECKPOINT)
         self.assertEqual(loras, [])
         self.assertEqual(sage["inputs"]["model"], ["1", 0])

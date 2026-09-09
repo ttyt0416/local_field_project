@@ -249,6 +249,21 @@
 		void loadVault(nextPage);
 	}
 
+	function currentPage() {
+		return mediaTab === 'images' ? imagePage : mediaTab === 'videos' ? videoPage : modelPage;
+	}
+
+	function currentTotalPages() {
+		return mediaTab === 'images' ? imageTotalPages : mediaTab === 'videos' ? videoTotalPages : modelTotalPages;
+	}
+
+	async function reloadVaultAfterDelete() {
+		const requestedPage = currentPage();
+		await loadVault(requestedPage);
+		const lastPage = Math.max(currentTotalPages(), 1);
+		if (requestedPage > lastPage) await loadVault(lastPage);
+	}
+
 	function requestDelete(image: VaultImage) {
 		deleteTarget = image;
 		deleteModalOpen = true;
@@ -292,9 +307,9 @@
 				method: 'DELETE',
 				json: { generation_ids: generationIds }
 			});
-			images = images.filter((image) => !selectedIds.has(image.id));
 			selectedIds = new Set();
 			bulkDeleteModalOpen = false;
+			await reloadVaultAfterDelete();
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '선택한 콘텐츠를 삭제하지 못했습니다.';
 		} finally {
@@ -333,10 +348,9 @@
 		deletingId = target.id;
 		try {
 			await apiDelete(`vault/images/${target.id}`);
-			images = images.filter((image) => image.id !== target.id);
-			selectedIds = new Set([...selectedIds].filter((id) => id !== target.id));
 			deleteModalOpen = false;
 			deleteTarget = null;
+			await reloadVaultAfterDelete();
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '콘텐츠를 삭제하지 못했습니다.';
 		} finally {
@@ -445,9 +459,9 @@
 		videoDeletingId = target.id;
 		try {
 			await apiDelete(`vault/videos/${target.id}`);
-			videos = videos.filter((video) => video.id !== target.id);
 			videoDeleteModalOpen = false;
 			videoDeleteTarget = null;
+			await reloadVaultAfterDelete();
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '영상을 삭제하지 못했습니다.';
 		} finally {
@@ -466,9 +480,9 @@
 		modelDeletingId = target.id;
 		try {
 			await apiDelete(`vault/3d/${target.id}`);
-			models = models.filter((model) => model.id !== target.id);
 			modelDeleteModalOpen = false;
 			modelDeleteTarget = null;
+			await reloadVaultAfterDelete();
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '3D 모델을 삭제하지 못했습니다.';
 		} finally {

@@ -205,7 +205,7 @@
 		try {
 			await apiDelete(`vault/images/${generationId}`);
 			deleteModalOpen = false;
-			await goto('/vault');
+			await goto('/vault', { replaceState: true });
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '콘텐츠를 삭제하지 못했습니다.';
 		} finally {

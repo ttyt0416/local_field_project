@@ -134,7 +134,7 @@
 		try {
 			await apiDelete(`vault/3d/${generation.id}`);
 			deleteModalOpen = false;
-			await goto('/vault?tab=3d');
+			await goto('/vault?tab=3d', { replaceState: true });
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '3D 모델을 삭제하지 못했습니다.';
 		} finally {
