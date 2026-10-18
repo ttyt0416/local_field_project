@@ -1,7 +1,13 @@
 # 프리셋 관리
 
-프리셋 관리는 visible `IMAGE`/`VIDEO` title 없이 최상단 `IMAGE`, `VIDEO` 2-tab을 표시한다. IMAGE가 선택되면 그 아래 `ANIMA`, `ILLUSTRIOUS`, `KREA2` family 3-tab과 `T2I`, `I2I` mode 2-tab을 동일한 간격으로 표시한다. 기본 선택은 `IMAGE` → `ANIMA` → `T2I`다. 새 프리셋 button은 이 tab cluster 바로 아래 우측에 둔다. 각 조합은 정확히 하나의 preset type만 조회·기본 지정·삭제한다. Krea2 T2I는 installed Turbo workflow options를 사용해 새 preset 생성·수정을 제공한다. Krea2 I2I는 dedicated style-reference LoRA workflow가 없으므로 disabled 상태다.
+IMAGE·VIDEO tab과 이미지 family·mode tab을 제공한다. 신규 이미지 선택은 Anima·Illustrious·FLUX 3 Klein이며 FLUX는 `i2i_flux3_klein`으로 분리한다. family에 현재 mode가 없으면 해당 family의 I2I를 선택하고, FLUX에서 T2I를 선택하면 Anima T2I로 이동한다. Krea2 신규 선택은 제거했으며 이전 데이터를 삭제하지 않는다.
 
-이미지 preset type은 `t2i_anima`, `i2i_anima`, `t2i_illustrious`, `i2i_illustrious`, `t2i_krea2`, `i2i_krea2`다. mode 또는 family 간 fallback·공유는 없다. 따라서 같은 이름의 preset이어도 type이 다르면 서로 영향을 주지 않으며, 사용자·exact type마다 기본 프리셋은 하나만 유지한다. `VIDEO`는 기존 `video` type을 유지한다.
+목록 조회·생성·수정·기본 지정·삭제는 정확한 preset type과 사용자 ownership을 유지한다. 이미지 옵션의 기본 CFG·steps를 preset editor에 전달한다. VIDEO namespace와 동작은 유지한다.
 
-이미지 modal은 T2I에서 prompt improvement를, I2I에서 Denoise를 해당 mode 전용 항목으로 표시한다. 선택한 값만 저장하며, load는 선택한 exact type의 저장 항목만 현재 설정에 덮어쓴다.
+FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
+
+MOSS 분류는 T2I 전용이며 선택 시 I2I 방식 탭을 표시하지 않는다.
+
+Qwen 2.1 Turbo 분류는 I2I/R2I 전용이므로 T2I 방식 탭을 표시하지 않는다.
+
+MOSS 레이아웃과 Qwen LLM 강화 저장 항목은 목록에서 사용자용 이름으로 표시한다.

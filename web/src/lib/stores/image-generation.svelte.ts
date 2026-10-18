@@ -1,8 +1,13 @@
+import type { MossSettings } from '$lib/types/moss';
+
 export type ImageGenerationParameters = {
-	model_family?: 'anima' | 'illustrious' | 'krea2';
+	model_family?: 'anima' | 'illustrious' | 'krea2' | 'flux3_klein' | 'moss' | 'qwen_image_2_1';
+	moss?: Partial<MossSettings>;
+	prompt_enhancement_enabled?: boolean;
 	generation_mode?: 't2i' | 'i2i';
 	source_file_id?: string | null;
 	source_image_url?: string | null;
+	reference_images?: { file_id: string; filename: string; url: string | null }[];
 	denoise?: number;
 	positive_prompt_prefix?: string;
 	prompt: string;

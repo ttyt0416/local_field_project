@@ -22,12 +22,13 @@
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
-	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
-	type ImageFamily = 'anima' | 'illustrious';
-	type ImageFamilyTab = ImageFamily | 'krea2';
+	type ImageFamily = 'anima' | 'illustrious' | 'flux3_klein' | 'qwen_image_2_1';
+	type ImageFamilyTab = ImageFamily;
 	type ImageDimensions = { width: number; height: number };
 	type ImageOptions = {
+		prompt_enhancer_available?: boolean;
 		checkpoints: string[];
 		loras: string[];
 		embeddings: string[];
@@ -36,6 +37,8 @@
 		default_checkpoint: string;
 		default_sampler: string;
 		default_scheduler: string;
+		default_cfg: number;
+		default_steps: number;
 	};
 	type LoraSelection = {
 		name: string;
@@ -66,6 +69,7 @@
 		page: number;
 		total_pages: number;
 	};
+	type ReferenceImage = { file?: File; file_id?: string; filename: string; url?: string | null };
 	type SelectionSource = 'device' | 'stored';
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
@@ -78,12 +82,13 @@
 		schedulers: [],
 		default_checkpoint: '',
 		default_sampler: '',
-		default_scheduler: ''
+		default_scheduler: '',
+		default_cfg: 4,
+		default_steps: 30
 	};
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50';
 	const fileInputClass = 'block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary disabled:cursor-not-allowed disabled:opacity-50';
 	const maxSeed = BigInt('9223372036854775807');
-	const imageDimensionStep = 8;
 const selectionSourceTabs: { value: SelectionSource; label: string }[] = [
 	{ value: 'device', label: '기기 저장소' },
 	{ value: 'stored', label: '저장된 콘텐츠' }
@@ -92,17 +97,19 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	{ value: 'uploaded', label: '업로드' },
 	{ value: 'generated', label: '생성' }
 ];
-// ponytail: Krea2 R2I stays disabled until its dedicated style-reference LoRA is installed; add that workflow instead of routing it through generic VAE I2I.
-const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolean }[] = [
-	{ value: 'anima', label: 'ANIMA' },
-	{ value: 'illustrious', label: 'ILLUSTRIOUS' },
-	{ value: 'krea2', label: 'KREA2', disabled: true }
-];
+	const modelFamilyTabs: { value: ImageFamilyTab; label: string }[] = imageModelFamilyTabs.filter(
+		(tab): tab is { value: ImageFamilyTab; label: string } => tab.value !== 'krea2' && tab.value !== 'moss'
+	);
 
-	let family = $derived<ImageFamily>(page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima');
-	let familyLabel = $derived(family === 'illustrious' ? 'Illustrious' : 'Anima');
-	let routeTitle = $derived('I2I');
-	let presetType = $derived<ImagePresetType>(family === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima');
+	let family = $derived<ImageFamily>(
+		page.url.searchParams.get('family') === 'qwen_image_2_1' ? 'qwen_image_2_1'
+			: page.url.searchParams.get('family') === 'flux3_klein' ? 'flux3_klein'
+			: page.url.searchParams.get('family') === 'illustrious' ? 'illustrious' : 'anima'
+	);
+	let familyLabel = $derived(imageModelFamilyLabels[family]);
+	let isReferenceEdit = $derived(family === 'flux3_klein' || family === 'qwen_image_2_1');
+	let imageDimensionStep = $derived(isReferenceEdit ? 32 : 8);
+	let presetType = $derived<ImagePresetType>(`i2i_${family}`);
 	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
 	let storedImagePreset = $derived(imagePresetCategories.find((category) => category.value === storedImagePresetType) ?? imagePresetCategories[0]);
 
@@ -134,6 +141,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	let presetSuccess = $state('');
 	let positivePromptPrefix = $state('');
 	let prompt = $state('');
+	let promptEnhancementEnabled = $state(true);
 	let negativePromptPrefix = $state('');
 	let negativePrompt = $state('');
 	let checkpoint = $state('');
@@ -166,6 +174,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	let sourceImageUrl = $state('');
 	let sourceInput = $state<HTMLInputElement>();
 	let sourceSelectionOpen = $state(false);
+	let selectionTarget = $state<'source' | 'reference'>('source');
+	let referenceImages = $state<ReferenceImage[]>([]);
+	let routeTitle = $derived(family === 'qwen_image_2_1' && referenceImages.length ? 'R2I' : 'I2I');
 	let selectionSource = $state<SelectionSource>('device');
 	let storedAssetSource = $state<StoredSource>('uploaded');
 	let storedAssets = $state<StoredImageAsset[]>([]);
@@ -225,6 +236,10 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	});
 
 	async function initialize() {
+		if (page.url.searchParams.get('family') === 'moss') {
+			await goto('/generate/image?family=moss', { replaceState: true });
+			return;
+		}
 		await authStore.initialize();
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
@@ -237,7 +252,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	async function loadOptions(targetFamily: ImageFamily) {
 		const requestId = ++optionsRequestId;
-		const targetPresetType: ImagePresetType = targetFamily === 'illustrious' ? 'i2i_illustrious' : 'i2i_anima';
+		const targetPresetType: ImagePresetType = `i2i_${targetFamily}`;
 		optionsLoading = true;
 		optionsError = '';
 		checkpointModalOpen = false;
@@ -262,6 +277,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 			checkpoint = loaded.default_checkpoint;
 			samplerName = loaded.default_sampler;
 			scheduler = loaded.default_scheduler;
+			cfg = loaded.default_cfg;
+			steps = loaded.default_steps;
+			denoise = isReferenceEdit ? 1 : 0.65;
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 				regenerationParameters = null;
@@ -278,14 +296,15 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function applyGenerationParameters(parameters: ImageGenerationParameters) {
 		if (parameters.generation_mode !== 'i2i' || (parameters.model_family && parameters.model_family !== family)) return;
+		promptEnhancementEnabled = parameters.prompt_enhancement_enabled ?? true;
 		positivePromptPrefix = parameters.positive_prompt_prefix ?? '';
 		prompt = parameters.prompt;
 		negativePromptPrefix = parameters.negative_prompt_prefix ?? '';
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
 		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
-		cfg = parameters.cfg;
-		steps = parameters.steps;
+		cfg = family === 'qwen_image_2_1' ? 1 : parameters.cfg;
+		steps = family === 'qwen_image_2_1' ? 8 : parameters.steps;
 		samplerName = options.samplers.includes(parameters.sampler_name) ? parameters.sampler_name : options.default_sampler;
 		scheduler = options.schedulers.includes(parameters.scheduler) ? parameters.scheduler : options.default_scheduler;
 		width = parameters.width;
@@ -293,6 +312,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		seed = parameters.seed;
 		randomSeed = !parameters.seed.trim();
 		denoise = parameters.denoise ?? 0.65;
+		referenceImages = isReferenceEdit ? (parameters.reference_images ?? []).map((image) => ({ ...image })) : [];
 		sourceFileId = parameters.source_file_id ?? '';
 		sourceImageUrl = parameters.source_image_url ?? '';
 		sourceStoredAsset = null;
@@ -302,16 +322,17 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function imagePresetInitialValues(): PresetValues {
 		return {
+			...(family === 'qwen_image_2_1' ? { prompt_enhancement_enabled: promptEnhancementEnabled } : {}),
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
-			negative_prompt_prefix: negativePromptPrefix.trim(),
-			negative_prompt: negativePrompt.trim(),
+			negative_prompt_prefix: family === 'qwen_image_2_1' ? '' : negativePromptPrefix.trim(),
+			negative_prompt: family === 'qwen_image_2_1' ? '' : negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
 			aspect_ratio: 'custom',
 			width: Number(width),
 			height: Number(height),
-			denoise: Number(denoise),
+			denoise: isReferenceEdit ? 1 : Number(denoise),
 			cfg: Number(cfg),
 			steps: Number(steps),
 			sampler_name: samplerName,
@@ -342,6 +363,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function applyPreset(preset: Preset, announce = false) {
 		const values = preset.values;
+		if (family === 'qwen_image_2_1' && values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
 		if (values.positive_prompt_prefix !== undefined) positivePromptPrefix = values.positive_prompt_prefix;
 		if (values.prompt !== undefined) prompt = values.prompt;
 		if (values.negative_prompt_prefix !== undefined) negativePromptPrefix = values.negative_prompt_prefix;
@@ -351,8 +373,8 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
 		if (values.denoise !== undefined) denoise = values.denoise;
-		if (values.cfg !== undefined) cfg = values.cfg;
-		if (values.steps !== undefined) steps = values.steps;
+		if (values.cfg !== undefined) cfg = family === 'qwen_image_2_1' ? 1 : values.cfg;
+		if (values.steps !== undefined) steps = family === 'qwen_image_2_1' ? 8 : values.steps;
 		if (values.sampler_name !== undefined && options.samplers.includes(values.sampler_name)) samplerName = values.sampler_name;
 		if (values.scheduler !== undefined && options.schedulers.includes(values.scheduler)) scheduler = values.scheduler;
 		if (values.random_seed !== undefined) randomSeed = values.random_seed;
@@ -372,13 +394,14 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	}
 
 	function selectModelFamily(nextFamily: ImageFamilyTab) {
-		if (nextFamily === family || nextFamily === 'krea2') return false;
+		if (nextFamily === family) return false;
 		window.location.assign(`/generate/image-to-image?family=${nextFamily}`);
 		return false;
 	}
 
-	function openSourceSelection() {
-		if (generating) return;
+	function openSourceSelection(target: 'source' | 'reference' = 'source') {
+		if (generating || (target === 'reference' && referenceImages.length >= 9)) return;
+		selectionTarget = target;
 		selectionSource = 'stored';
 		storedAssetSource = 'generated';
 		storedImagePresetType = 't2i_anima';
@@ -411,14 +434,14 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	function selectStoredImageFamily(family: ImageModelFamily) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === family && category.generationMode === storedImagePreset.generationMode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === family)?.value;
 		if (type) selectStoredImagePresetType(type);
 	}
 
 	function selectStoredImageMode(mode: ImageGenerationMode) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === storedImagePreset.modelFamily && category.generationMode === mode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === 'anima' && category.generationMode === mode)?.value;
 		if (type) selectStoredImagePresetType(type);
 	}
 
@@ -461,6 +484,12 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	}
 
 	function selectStoredImage(asset: StoredImageAsset) {
+        if (selectionTarget === 'reference') {
+            if (referenceImages.length >= 9) return;
+            referenceImages = [...referenceImages, { file_id: asset.file_id, filename: asset.filename, url: asset.url }];
+            sourceSelectionOpen = false;
+            return;
+        }
 		sourceMetadataRequestId += 1;
 		sourceError = '';
 		sourceFile = null;
@@ -478,6 +507,21 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (!(event.currentTarget instanceof HTMLInputElement) || generating) return;
 		const files = event.currentTarget.files;
 		if (!files || files.length === 0) return;
+        if (selectionTarget === 'reference') {
+            const selected = Array.from(files);
+            if (referenceImages.length + selected.length > 9) {
+                sourceError = '추가 참조 이미지는 최대 9장입니다.';
+                return;
+            }
+            if (selected.some((file) => !file.type.startsWith('image/') || file.size <= 0 || file.size > 50 * 1024 * 1024)) {
+                sourceError = '각 참조 이미지는 50MB 이하의 비어 있지 않은 이미지여야 합니다.';
+                return;
+            }
+            referenceImages = [...referenceImages, ...selected.map((file) => ({ file, filename: file.name }))];
+            event.currentTarget.value = '';
+            sourceSelectionOpen = false;
+            return;
+        }
 		if (files.length !== 1) {
 			sourceError = '소스 이미지는 정확히 한 장만 선택해 주세요.';
 			return;
@@ -501,6 +545,14 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		sourceSelectionOpen = false;
 		void inspectSourceImage(file);
 	}
+
+    function moveReference(index: number, direction: number) {
+        const next = index + direction;
+        if (generating || next < 0 || next >= referenceImages.length) return;
+        const images = [...referenceImages];
+        [images[index], images[next]] = [images[next], images[index]];
+        referenceImages = images;
+    }
 
 	async function inspectSourceImage(source: File | string, expectedFileId = '') {
 		const requestId = ++sourceMetadataRequestId;
@@ -543,7 +595,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function normalizedImageDimensions(dimensions: ImageDimensions) {
 		const normalize = (value: number) => {
-			return Math.max(16, Math.min(16384, Math.round(value / imageDimensionStep) * imageDimensionStep));
+			return Math.max(imageDimensionStep, Math.min(16384, Math.round(value / imageDimensionStep) * imageDimensionStep));
 		};
 		return { width: normalize(dimensions.width), height: normalize(dimensions.height) };
 	}
@@ -611,6 +663,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 	}
 
 	function validateInputs() {
+		if (family === 'qwen_image_2_1' && promptEnhancementEnabled && !options.prompt_enhancer_available) return 'Qwen 프롬프트 강화 모델을 준비하거나 프롬프트 강화를 꺼 주세요.';
 		if (optionsLoading) return '모델 목록을 불러오는 중입니다.';
 		if (optionsError) return '모델 목록을 다시 불러온 뒤 시도해 주세요.';
 		if (!sourceFile && !sourceFileId) return '변환할 소스 이미지를 선택해 주세요.';
@@ -625,7 +678,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		if (!checkpoint || !options.checkpoints.includes(checkpoint)) return '체크포인트를 선택해 주세요.';
 		if (new Set(loras.map(({ name }) => name)).size !== loras.length) return 'LoRA 선택을 확인해 주세요.';
 		if (loras.some(({ name, strength }) => !name.trim() || !options.loras.includes(name) || !Number.isFinite(Number(strength)))) return 'LoRA와 Strength 값을 확인해 주세요.';
-		if (!isValidDimension(width) || !isValidDimension(height)) return '이미지 가로·세로는 16~16384 범위의 8의 배수여야 합니다.';
+		if (!isValidDimension(width) || !isValidDimension(height)) return `이미지 가로·세로는 ${imageDimensionStep}~16384 범위의 ${imageDimensionStep}의 배수여야 합니다.`;
 		if (!Number.isFinite(Number(denoise)) || Number(denoise) < 0 || Number(denoise) > 1) return 'Denoise는 0.0에서 1.0 사이로 입력해 주세요.';
 		if (!Number.isFinite(Number(cfg)) || Number(cfg) < 0 || Number(cfg) > 20) return 'CFG는 0에서 20 사이로 입력해 주세요.';
 		if (!Number.isInteger(Number(steps)) || Number(steps) < 1 || Number(steps) > 100) return 'Steps는 1에서 100 사이의 정수로 입력해 주세요.';
@@ -637,7 +690,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 	function isValidDimension(value: number) {
 		const parsed = Number(value);
-		return Number.isInteger(parsed) && parsed >= 16 && parsed <= 16384 && parsed % imageDimensionStep === 0;
+		return Number.isInteger(parsed) && parsed >= imageDimensionStep && parsed <= 16384 && parsed % imageDimensionStep === 0;
 	}
 
 	function isValidSeed(value: string) {
@@ -662,13 +715,26 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 
 		const requestFamily = family;
 		const form = new FormData();
-		form.append('payload', JSON.stringify({
+        const inputFiles: File[] = [];
+        function imageSource(image: ReferenceImage) {
+            if (image.file) {
+                const file_index = inputFiles.length;
+                inputFiles.push(image.file);
+                return { file_index };
+            }
+            return { file_id: image.file_id };
+        }
+        const source = sourceFile ? imageSource({ file: sourceFile, filename: sourceFile.name }) : { file_id: sourceFileId };
+        const references = isReferenceEdit ? referenceImages.map(imageSource) : [];
+		form.append('payload' , JSON.stringify({
 			model_family: requestFamily,
-			source: sourceFile ? { file_index: 0 } : { file_id: sourceFileId },
+			prompt_enhancement_enabled: family === 'qwen_image_2_1' && promptEnhancementEnabled,
+			source,
+			references,
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
-			negative_prompt_prefix: negativePromptPrefix.trim(),
-			negative_prompt: negativePrompt.trim(),
+			negative_prompt_prefix: family === 'qwen_image_2_1' ? '' : negativePromptPrefix.trim(),
+			negative_prompt: family === 'qwen_image_2_1' ? '' : negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength: Number(strength) })),
 			cfg: Number(cfg),
@@ -678,9 +744,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 			width: Number(width),
 			height: Number(height),
 			seed: randomSeed ? null : seed.trim(),
-			denoise: Number(denoise)
+			denoise: isReferenceEdit ? 1 : Number(denoise)
 		}));
-		if (sourceFile) form.append('files', sourceFile, sourceFile.name);
+		for (const file of inputFiles) form.append('files', file, file.name);
 
 		generating = true;
 		uploading = true;
@@ -845,7 +911,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
 							<span class="text-sm font-medium">소스 이미지</span>
-							<OutlinedButton type="button" class="w-full" disabled={generating} onclick={openSourceSelection}><HardDrive size={16} />소스 이미지 선택</OutlinedButton>
+							<OutlinedButton type="button" class="w-full" disabled={generating} onclick={() => openSourceSelection()}><HardDrive size={16} />소스 이미지 선택</OutlinedButton>
 							{#if sourceFile}
 								<div class="overflow-hidden rounded-xl border border-border bg-muted/30">
 									<div class="relative">
@@ -889,19 +955,44 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 							{/if}
 						</div>
 
+                        {#if family === 'qwen_image_2_1'}<p class="rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">공식 8스텝 Turbo · CFG 1 · Euler. 단일 이미지 수정과 최대 10장 참조 생성을 지원합니다.</p>{/if}
+                        {#if isReferenceEdit}
+                            <div class="space-y-3">
+                                <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">추가 참조 이미지 ({referenceImages.length}/9)</span><OutlinedButton type="button" disabled={generating || referenceImages.length >= 9} onclick={() => openSourceSelection('reference')}>참조 추가</OutlinedButton></div>
+                                <p class="text-xs text-muted-foreground">{family === 'qwen_image_2_1' ? '한 장은 I2I 수정, 참조를 추가하면 R2I 합성입니다. 원본은 <image1>, 추가 참조는 <image2>부터 지시하세요. 출력 구도와 크기는 첫 이미지가 기준입니다.' : '원본은 <ref_image_0>, 추가 참조는 <ref_image_1>부터 지시할 수 있습니다.'}</p>
+                                {#each referenceImages as reference, index}
+                                    <div class="flex flex-wrap items-center gap-3 rounded-xl border border-border p-3">
+                                        <div class="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-muted">
+                                            {#if reference.file}<ImageMedia source={reference.file} sourceType="local" alt={`참조 ${index + 1}`} class="h-full" />{:else if reference.url}<ImageMedia source={reference.url} sourceType={imageSourceType(reference.url)} alt={`참조 ${index + 1}`} class="h-full" />{/if}
+                                        </div>
+                                        <div class="min-w-0 flex-1"><p class="text-xs font-semibold">{family === 'qwen_image_2_1' ? `<image${index + 2}>` : `<ref_image_${index + 1}>`}</p><p class="truncate text-xs text-muted-foreground" title={reference.filename}>{reference.filename}</p></div>
+                                        <IconOutlinedButton type="button" ariaLabel={`참조 ${index + 1} 앞으로 이동`} disabled={generating || index === 0} onclick={() => moveReference(index, -1)}><ChevronLeft size={16} /></IconOutlinedButton>
+                                        <IconOutlinedButton type="button" ariaLabel={`참조 ${index + 1} 뒤로 이동`} disabled={generating || index === referenceImages.length - 1} onclick={() => moveReference(index, 1)}><ChevronRight size={16} /></IconOutlinedButton>
+                                        <IconOutlinedButton type="button" ariaLabel={`참조 ${index + 1} 삭제`} disabled={generating} onclick={() => (referenceImages = referenceImages.filter((_, current) => current !== index))}><X size={16} /></IconOutlinedButton>
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
+
 						<div class="space-y-2">
 							<label class="block space-y-2" for="i2i-positive-prompt-prefix">
 								<span class="text-sm font-medium">긍정 프롬프트 Prefix</span>
 								<textarea id="i2i-positive-prompt-prefix" bind:value={positivePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
 							</label>
 							<div class="flex items-center justify-between gap-3">
-								<label for="i2i-prompt" class="text-sm font-medium">긍정 프롬프트</label>
+								<label for="i2i-prompt" class="text-sm font-medium">{isReferenceEdit ? '수정 지시' : '긍정 프롬프트'}</label>
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
 							</div>
 							<textarea id="i2i-prompt" bind:value={prompt} rows="5" maxlength="5000" required disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+                            {#if family === 'qwen_image_2_1'}
+                                <label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-3 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} disabled={generating} class="size-4 accent-primary" /><span>LLM 프롬프트 강화</span></label>
+                                <p class="text-xs leading-5 text-muted-foreground">원본과 참조를 함께 읽어 수정 지시를 구체화합니다. 생성 시간이 추가되며, 끄면 입력한 지시를 그대로 사용합니다.</p>
+                                {#if promptEnhancementEnabled && !options.prompt_enhancer_available}<p class="text-xs text-amber-600" role="status">프롬프트 강화 모델을 준비 중입니다.</p>{/if}
+                            {/if}
 						</div>
 
 						<div class="space-y-2">
+							{#if !isReferenceEdit}
 							<label class="block space-y-2" for="i2i-negative-prompt-prefix">
 								<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
 								<textarea id="i2i-negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
@@ -911,6 +1002,7 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
 							</div>
 							<textarea id="i2i-negative-prompt" bind:value={negativePrompt} rows="3" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+							{/if}
 						</div>
 
 						<div class="space-y-2">
@@ -943,9 +1035,9 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 							{/if}
 						</div>
 
-						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={generating || optionsLoading || !samplerName || !scheduler} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
+						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={generating || optionsLoading || !samplerName || !scheduler || family === 'qwen_image_2_1'} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
 							<span class="text-sm font-medium">샘플러 / 스케줄러</span>
-							<span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName || '선택 필요'} / {scheduler || '선택 필요'}</span>
+							<span class="min-w-0 truncate text-xs text-muted-foreground">{family === 'qwen_image_2_1' ? 'Euler / 공식 8스텝' : `${samplerName || '선택 필요'} / ${scheduler || '선택 필요'}`}</span>
 						</button>
 
 						<div class="flex items-center justify-between gap-3">
@@ -953,19 +1045,21 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 							<IconOutlinedButton ariaLabel="가로와 세로 바꾸기" disabled={generating} onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton>
 						</div>
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="i2i-width"><span class="text-sm font-medium">가로</span><input id="i2i-width" type="number" min="16" max="16384" step="8" bind:value={width} disabled={generating} class={numberInputClass} /></label>
-							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" min="16" max="16384" step="8" bind:value={height} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-width"><span class="text-sm font-medium">가로</span><input id="i2i-width" type="number" min={imageDimensionStep} max="16384" step={imageDimensionStep} bind:value={width} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" min={imageDimensionStep} max="16384" step={imageDimensionStep} bind:value={height} disabled={generating} class={numberInputClass} /></label>
 						</div>
 
+						{#if !isReferenceEdit}
 						<label class="block space-y-2" for="i2i-denoise">
 							<span class="text-sm font-medium">Denoise</span>
 							<input id="i2i-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} disabled={generating} class={numberInputClass} />
 							<span class="block text-xs text-muted-foreground">0.0은 원본을 강하게 유지하고, 1.0은 프롬프트에 따라 크게 변경합니다.</span>
 						</label>
+						{/if}
 
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="i2i-cfg"><span class="text-sm font-medium">CFG</span><input id="i2i-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={generating} class={numberInputClass} /></label>
-							<label class="block space-y-2" for="i2i-steps"><span class="text-sm font-medium">Steps</span><input id="i2i-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-cfg"><span class="text-sm font-medium">CFG</span><input id="i2i-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={generating || isReferenceEdit} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-steps"><span class="text-sm font-medium">Steps</span><input id="i2i-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={generating || family === 'qwen_image_2_1'} class={numberInputClass} /></label>
 						</div>
 
 						<div class="grid gap-4 sm:grid-cols-2">
@@ -1050,18 +1144,18 @@ const modelFamilyTabs: { value: ImageFamilyTab; label: string; disabled?: boolea
 		</div>
 	</Modal>
 
-	<Modal bind:open={sourceSelectionOpen} title="소스 이미지 선택" description="기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.">
+	<Modal bind:open={sourceSelectionOpen} title={selectionTarget === 'reference' ? '참조 이미지 추가' : '소스 이미지 선택'} description={selectionTarget === 'reference' ? '원본과 함께 참고할 이미지를 선택해 주세요.' : '기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.'}>
 		<div class="space-y-5">
 			<Tab items={selectionSourceTabs} bind:value={selectionSource} ariaLabel="소스 이미지 선택 위치" onselect={selectSelectionSource} />
 			{#if selectionSource === 'device'}
-				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" class={fileInputClass} onchange={handleSourceFile} /></label>
+				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" multiple={selectionTarget === 'reference'} class={fileInputClass} onchange={handleSourceFile} /></label>
 			{:else}
 				<div class="space-y-4">
 					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 이미지 종류" onselect={selectStoredAssetSource} />
 					{#if storedAssetSource === 'generated'}
 						<div class="space-y-2" aria-label="생성 이미지 분류">
 							<Tab items={imageModelFamilyTabs} value={storedImagePreset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectStoredImageFamily} />
-							<Tab items={imageGenerationModeTabs} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
+							<Tab items={imageGenerationModeTabs.filter((tab) => (storedImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (storedImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
 						</div>
 					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

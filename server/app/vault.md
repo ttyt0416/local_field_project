@@ -11,3 +11,15 @@
 `DELETE /vault/images/bulk`와 단일·filtered 삭제 API는 기존 사용자 소유권·Storage 보존 규칙을 유지한다. 삭제 대상이 `queued` 또는 `processing`이면 image/video/3D의 기존 targeted Comfy cancel route를 먼저 완료한다. 취소에 실패하면 Storage와 DB를 유지한 채 delete를 실패시킨다. `DELETE /vault/images/filtered`와 `DELETE /vault/videos/filtered`는 현재 `search`·`favorites_only` 조건에 맞는 모든 page의 row를 snapshot으로 조회한다. `confirmed=true`와 화면에서 확인한 `expected_count`가 일치해야 삭제하며, 개수가 바뀌면 `409`로 중단한다.
 
 Bulk 삭제는 삭제 가능한 Storage 파일을 먼저 모두 지운 뒤 DB row를 삭제한다. Storage 삭제 하나라도 실패하면 DB row를 유지한다. 해당 파일이 `media_assets` 또는 snapshot 밖의 다른 image/video generation에서 참조되면 Storage 원본은 보존한다.
+
+FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
+
+이미지 detail의 reference_images는 저장된 추가 참조 목록과 사용자별 읽기 URL을 반환한다. 새 참조 컬럼이 비어 있는 기존 row는 빈 목록으로 처리한다.
+
+## MOSS SFT
+
+MOSS SFT 생성 기록을 family 필터에서 조회한다. 상세 응답의 moss 필드는 레이아웃과 참조 모드·강도·구도 유지 설정을 재생성 화면에 전달한다.
+
+Qwen 2.1 Turbo family(qwen_image_2_1)의 목록·상세·참조 이미지 조회를 지원한다.
+
+이미지 상세에 prompt_enhancement_enabled를 반환하며 기존 improved_prompt가 있는 기록도 강화 활성으로 읽는다. Qwen 생성 시 LLM 강화 상태를 재생성에 복원한다.

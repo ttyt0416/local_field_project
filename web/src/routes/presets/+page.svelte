@@ -36,7 +36,7 @@
 			? imagePresetCategories[0]
 			: imagePresetCategories.find((category) => category.value === activeType) ?? imagePresetCategories[0]
 	);
-	let isUnavailableKreaPreset = $derived(activeType !== 'video' && activeImagePreset.value === 'i2i_krea2');
+	let isUnavailableKreaPreset = $derived(activeType !== 'video' && activeImagePreset.modelFamily === 'krea2');
 	let options = $state<ImageOptions>({ checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' });
 	let editingPreset = $state<Preset | null>(null);
 	let imageEditorOpen = $state(false);
@@ -70,7 +70,7 @@
 	async function loadImageOptions(type: ImagePresetType) {
 		const family = imagePresetCategories.find((category) => category.value === type)?.modelFamily ?? 'anima';
 		optionsLoading = true;
-		if (type === 'i2i_krea2') {
+		if (type === 'i2i_krea2' || type === 't2i_krea2') {
 			options = { checkpoints: [], loras: [], samplers: [], schedulers: [], default_checkpoint: '', default_sampler: '', default_scheduler: '' };
 			optionsLoading = false;
 			return;
@@ -122,14 +122,14 @@
 	function selectImageFamily(family: ImageModelFamily) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === family && category.generationMode === activeImagePreset.generationMode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === family)?.value;
 		if (type) selectPresetType(type);
 	}
 
 	function selectImageMode(mode: ImageGenerationMode) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === activeImagePreset.modelFamily && category.generationMode === mode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === 'anima' && category.generationMode === mode)?.value;
 		if (type) selectPresetType(type);
 	}
 
@@ -141,7 +141,7 @@
 	}
 
 	function openEdit(preset: Preset) {
-		if (preset.type === 'i2i_krea2') return;
+		if (preset.type === 'i2i_krea2' || preset.type === 't2i_krea2') return;
 		editingPreset = preset;
 		if (preset.type !== 'video') imageEditorOpen = true;
 		else videoEditorOpen = true;
@@ -206,6 +206,7 @@
 		const labels: Record<string, string> =
 			preset.type !== 'video'
 				? {
+						moss: 'MOSS 레이아웃',
 						prompt: '긍정 프롬프트',
 						negative_prompt: '부정 프롬프트',
 						checkpoint: '체크포인트',
@@ -214,7 +215,7 @@
 						denoise: 'Denoise',
 						cfg: 'CFG',
 						steps: 'Steps',
-						prompt_enhancement_enabled: '프롬프트 개선 설정',
+						prompt_enhancement_enabled: preset.type === 'i2i_qwen_image_2_1' ? 'LLM 프롬프트 강화' : '프롬프트 개선 설정',
 						improved_prompt: '프롬프트 개선 설정'
 					}
 				: { prompt: '프롬프트', mode: '생성 방식', size: '영상 크기', duration: '길이(초)', fps: 'FPS', seed: 'Seed', random_seed: 'Seed' };
@@ -265,7 +266,7 @@
 				<Tab items={presetMediaTabs} value={activePresetMedia} ariaLabel="프리셋 콘텐츠 종류" onselect={selectPresetMedia} />
 				{#if activePresetMedia === 'image'}
 					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="IMAGE 모델 family" onselect={selectImageFamily} />
-					<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
+					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (activeImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
 				{/if}
 			</section>
 

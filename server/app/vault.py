@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
@@ -66,7 +66,7 @@ from .video import (
 router = APIRouter(prefix="/vault", tags=["vault"])
 VAULT_PAGE_SIZE = 10
 ImageGenerationMode = Literal["t2i", "i2i"]
-ImageModelFamily = Literal["anima", "illustrious", "krea2"]
+ImageModelFamily = Literal["anima", "illustrious", "krea2", "flux3_klein", "moss", "qwen_image_2_1"]
 
 
 class VaultImageSummary(BaseModel):
@@ -95,7 +95,16 @@ class VaultLora(BaseModel):
     strength: float
 
 
+class VaultImageReference(BaseModel):
+    file_id: str
+    filename: str
+    url: str | None
+
+
 class VaultImageDetail(VaultImageSummary):
+    prompt_enhancement_enabled: bool = False
+    moss: dict[str, Any] = Field(default_factory=dict)
+    reference_images: list[VaultImageReference] = Field(default_factory=list)
     improved_prompt: str | None
     negative_prompt: str
     positive_prompt_prefix: str
@@ -1015,9 +1024,17 @@ def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False
 
 
 def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
+    references = []
+    try:
+        for item in generation.get("reference_images", []):
+            url = storage_read_url(file_id=item["file_id"], owner_id=str(user_id)) if storage_enabled() else None
+            references.append(VaultImageReference(file_id=item["file_id"], filename=item["filename"], url=url))
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultImageDetail(
         **_summary(generation, user_id, include_file_size=True).model_dump(),
         improved_prompt=generation.get("improved_prompt"),
+        prompt_enhancement_enabled=bool(generation.get("prompt_enhancement_enabled") or generation.get("improved_prompt")),
         negative_prompt=generation["negative_prompt"],
         positive_prompt_prefix=generation["positive_prompt_prefix"],
         negative_prompt_prefix=generation["negative_prompt_prefix"],
@@ -1031,6 +1048,8 @@ def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
         seed=generation["seed"],
         source_file_id=generation["source_file_id"],
         source_filename=generation["source_filename"],
+        reference_images=references,
+        moss=generation.get("moss") or {},
         denoise=generation["denoise"],
         file_path=generation["file_path"],
         filename=generation["filename"],

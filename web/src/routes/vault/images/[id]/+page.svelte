@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { mossSettings, type MossSettings } from '$lib/types/moss';
+	import { imageModelFamilyLabels } from '$lib/types/presets';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -29,12 +31,15 @@
 		client_id: string;
 		prompt: string;
 		improved_prompt: string | null;
+		prompt_enhancement_enabled: boolean;
 		negative_prompt: string;
 		positive_prompt_prefix: string;
 		negative_prompt_prefix: string;
 		checkpoint: string;
-		model_family: 'anima' | 'illustrious' | 'krea2';
+		model_family: 'anima' | 'illustrious' | 'krea2' | 'flux3_klein' | 'moss' | 'qwen_image_2_1';
 		generation_mode: 't2i' | 'i2i';
+		moss: Partial<MossSettings>;
+		reference_images: { file_id: string; filename: string; url: string | null }[];
 		source_file_id: string | null;
 		source_filename: string | null;
 		source_image_url: string | null;
@@ -102,10 +107,12 @@
 			await generationJobStore.initialize();
 			generation = await apiJson<VaultImageDetail>(`vault/images/${generationId}`);
 			trackImageJob(generation);
-			try {
-				imageOptions = await apiJson<ImageOptions>(`generation/image/options?family=${generation.model_family}`);
-			} catch (reason) {
-				presetError = reason instanceof Error ? reason.message : '프리셋 저장 옵션을 불러오지 못했습니다.';
+			if (generation.model_family !== 'krea2') {
+				try {
+					imageOptions = await apiJson<ImageOptions>(`generation/image/options?family=${generation.model_family}`);
+				} catch (reason) {
+					presetError = reason instanceof Error ? reason.message : '프리셋 저장 옵션을 불러오지 못했습니다.';
+				}
 			}
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '콘텐츠 상세 정보를 불러오지 못했습니다.';
@@ -169,11 +176,14 @@
 	}
 
 	async function generateFromParameters() {
-		if (!generation) return;
+		if (!generation || generation.model_family === 'krea2') return;
 		imageGenerationStore.set({
 			model_family: generation.model_family,
+			moss: generation.moss,
+			prompt_enhancement_enabled: generation.prompt_enhancement_enabled,
 			generation_mode: generation.generation_mode,
 			source_file_id: generation.source_file_id,
+			reference_images: generation.reference_images,
 			source_image_url: generation.source_image_url,
 			denoise: generation.denoise,
 			positive_prompt_prefix: generation.positive_prompt_prefix,
@@ -216,6 +226,7 @@
 	function presetValues(): PresetValues {
 		if (!generation) return {};
 		return {
+			...(generation.model_family === 'moss' ? { moss: mossSettings(generation.moss) } : {}),
 			positive_prompt_prefix: generation.positive_prompt_prefix,
 			prompt: generation.prompt,
 			negative_prompt_prefix: generation.negative_prompt_prefix,
@@ -232,14 +243,12 @@
 			scheduler: generation.scheduler,
 			seed: String(generation.seed),
 			random_seed: false,
-			prompt_enhancement_enabled: false
+			prompt_enhancement_enabled: generation.prompt_enhancement_enabled
 		};
 	}
 
 	function imagePresetType(image: VaultImageDetail): ImagePresetType {
-		return image.generation_mode === 'i2i'
-			? image.model_family === 'illustrious' ? 'i2i_illustrious' : image.model_family === 'krea2' ? 'i2i_krea2' : 'i2i_anima'
-			: image.model_family === 'illustrious' ? 't2i_illustrious' : image.model_family === 'krea2' ? 't2i_krea2' : 't2i_anima';
+		return `${image.generation_mode}_${image.model_family}` as ImagePresetType;
 	}
 
 	function handlePresetSaved(preset: Preset) {
@@ -350,7 +359,7 @@
 						<Typography as="h2" variant="h2">생성 파라미터</Typography>
 					</div>
 					<dl class="mt-5 space-y-4 text-sm">
-						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.generation_mode.toUpperCase()} · {generation.model_family === 'illustrious' ? 'Illustrious' : generation.model_family === 'krea2' ? 'Krea2' : 'Anima'}</dd></div>
+						<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">{generation.generation_mode.toUpperCase()} · {imageModelFamilyLabels[generation.model_family]}</dd></div>
 						<div><dt class="text-muted-foreground">체크포인트</dt><dd class="mt-1 break-all font-medium">{generation.checkpoint}</dd></div>
 						<div>
 							<dt class="text-muted-foreground">LoRA</dt>
@@ -365,6 +374,7 @@
 							{/if}
 						</div>
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
+						{#if generation.model_family === 'qwen_image_2_1'}<div><dt class="text-muted-foreground">LLM 프롬프트 강화</dt><dd class="mt-1 font-medium">{generation.prompt_enhancement_enabled ? '사용' : '사용 안 함'}</dd></div>{/if}
 						<div><dt class="text-muted-foreground">샘플러 / 스케줄러</dt><dd class="mt-1 break-all font-medium">{generation.sampler_name} / {generation.scheduler}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						{#if generation.generation_mode === 'i2i'}<div><dt class="text-muted-foreground">Denoise</dt><dd class="mt-1 font-medium">{generation.denoise}</dd></div>{/if}
@@ -419,6 +429,20 @@
 				</div>
 			</section>
 
+            {#if generation.reference_images?.length}
+                <section class="rounded-2xl border border-border bg-card p-5 shadow-sm">
+                    <Typography as="h2" variant="h2">참조 이미지</Typography>
+                    <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                        {#each generation.reference_images as reference, index}
+                            <div class="overflow-hidden rounded-xl border border-border">
+                                {#if reference.url}<ImageMedia source={reference.url} sourceType={imageSourceType(reference.url)} alt={`참조 ${index + 1}`} class="h-40" />{/if}
+                                <p class="p-3 text-xs">{`<ref_image_${index + 1}>`} · {reference.filename}</p>
+                            </div>
+                        {/each}
+                    </div>
+                </section>
+            {/if}
+
 			<section class="flex flex-col justify-end gap-3 sm:flex-row">
 				<OutlinedButton disabled={imageOptions.checkpoints.length === 0} onclick={() => (presetOpen = true)}>
 					<Save size={16} strokeWidth={1.9} />
@@ -428,7 +452,7 @@
 					<Crop size={16} strokeWidth={1.9} />
 					<span>이미지 편집</span>
 				</OutlinedButton>
-				<PrimaryButton onclick={() => void generateFromParameters()}>
+				<PrimaryButton disabled={generation.model_family === 'krea2'} onclick={() => void generateFromParameters()}>
 					<Sparkles size={16} strokeWidth={1.9} />
 					<span>이 설정으로 다시 생성</span>
 				</PrimaryButton>

@@ -1,3 +1,7 @@
-# 프리셋 요청 테스트
+# 프리셋 회귀 검사
 
-`PresetCreateRequest`와 `PresetUpdateRequest`가 이름을 정리하고 선택된 값만 보존하는지, 기본 프리셋 여부를 수용하는지, 정의되지 않은 값과 `t2i` 외 타입을 거부하는지 확인한다. video preset은 steps와 `use_pdd`도 보존한다. 사용자·타입별 기본 프리셋 중복 방지는 PostgreSQL partial unique index가 담당한다.
+이미지 family·mode별 namespace와 사용자 ownership, 저장 필드·기본값 처리를 검사한다. FLUX 3 Klein의 `i2i_flux3_klein`을 독립 type으로 허용하며 기존 Krea2 데이터 타입을 보존한다.
+
+요청 이름 정리·선택 필드 보존·지원하지 않는 값 거부와 video steps·use_pdd 저장도 검사한다. 사용자·타입별 기본 프리셋 중복 방지는 PostgreSQL partial unique index가 담당한다.
+
+MOSS 레이아웃만 저장하는 프리셋, 빈 negative_prompt, Qwen LLM 강화의 true/false 저장을 검증한다.

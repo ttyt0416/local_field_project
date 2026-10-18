@@ -23,7 +23,9 @@
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 
-	type ModelFamily = 'anima' | 'illustrious' | 'krea2';
+	import MossControls from '../../../../components/media/moss-controls.svelte';
+	import { mossSettings, mossDmdLora, type MossSettings } from '$lib/types/moss';
+	type ModelFamily = 'anima' | 'illustrious' | 'moss';
 	type ModelFamilyTab = ModelFamily;
 	type ImageOptions = {
 		model_family: ModelFamily;
@@ -56,8 +58,10 @@
 		| 'steps'
 		| 'sampling'
 		| 'seed'
-		| 'prompt_enhancement';
+		| 'prompt_enhancement'
+		| 'moss';
 	type PresetValues = {
+		moss?: MossSettings;
 		positive_prompt_prefix?: string;
 		prompt?: string;
 		negative_prompt_prefix?: string;
@@ -78,7 +82,7 @@
 	};
 	type Preset = {
 		id: string;
-		type: 't2i_anima' | 't2i_illustrious' | 't2i_krea2';
+		type: 't2i_anima' | 't2i_illustrious' | 't2i_moss';
 		name: string;
 		values: PresetValues;
 		is_default: boolean;
@@ -92,14 +96,15 @@
 	type ImageSize = { width: number; height: number };
 
 	const requestedFamily = page.url.searchParams.get('family');
-	const modelFamily: ModelFamily = requestedFamily === 'illustrious' || requestedFamily === 'krea2' ? requestedFamily : 'anima';
-	const presetType: Preset['type'] = modelFamily === 'illustrious' ? 't2i_illustrious' : modelFamily === 'krea2' ? 't2i_krea2' : 't2i_anima';
-	const familyLabel = modelFamily === 'illustrious' ? 'Illustrious' : modelFamily === 'krea2' ? 'Krea2' : 'Anima';
+	const modelFamily: ModelFamily = requestedFamily === 'moss' || requestedFamily === 'illustrious' ? requestedFamily : 'anima';
+	const presetType: Preset['type'] = `t2i_${modelFamily}`;
+	const familyLabel = modelFamily === 'moss' ? 'MOSS SFT' : modelFamily === 'illustrious' ? 'Illustrious' : 'Anima';
+	const dimensionStep = modelFamily === 'moss' ? 16 : 8;
 	const pageTitle = 'T2I';
 	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
 		{ value: 'anima', label: 'ANIMA' },
 		{ value: 'illustrious', label: 'ILLUSTRIOUS' },
-		{ value: 'krea2', label: 'KREA2' }
+		{ value: 'moss', label: 'MOSS SFT' }
 	];
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
@@ -130,7 +135,8 @@
 		{ key: 'steps', label: 'Steps' },
 		{ key: 'sampling', label: '샘플러 / 스케줄러' },
 		{ key: 'seed', label: 'Seed' },
-		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
+		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' },
+		{ key: 'moss', label: 'MOSS 레이아웃' }
 	];
 	const defaultPresetFieldSelection: Record<PresetField, boolean> = {
 		positive_prompt_prefix: true,
@@ -144,6 +150,7 @@
 		steps: true,
 		sampling: true,
 		seed: true,
+		moss: true,
 		prompt_enhancement: true
 	};
 
@@ -221,6 +228,13 @@
 	let aspectRatio = $state<AspectRatio>('custom');
 	let width = $state(1024);
 	let height = $state(1024);
+	let moss = $state(mossSettings());
+	function applyMossDmd() {
+		if (!options.loras.includes(mossDmdLora)) return;
+		loras = [...loras.filter(({ name }) => name !== mossDmdLora), { name: mossDmdLora, strength: 0.7 }];
+		steps = 8;
+		cfg = 1;
+	}
 
 	let explicitAspectSize: ImageSize | null = null;
 
@@ -234,8 +248,8 @@
 			height = size.height;
 			return;
 		}
-		width = preset.width;
-		height = preset.height;
+		width = Math.round(preset.width / dimensionStep) * dimensionStep;
+		height = Math.round(preset.height / dimensionStep) * dimensionStep;
 	});
 
 	function toggleLora(name: string) {
@@ -266,7 +280,7 @@
 	}
 
 	function selectedPresetFieldCount() {
-		return presetFieldOptions.filter(({ key }) => selectedPresetFields[key]).length;
+		return presetFieldOptions.filter(({ key }) => (key === 'moss' ? modelFamily === 'moss' : key === 'prompt_enhancement' ? modelFamily !== 'moss' : true) && selectedPresetFields[key]).length;
 	}
 
 	function setPresetField(key: PresetField, checked: boolean) {
@@ -307,6 +321,7 @@
 
 	function buildPresetValues(): PresetValues {
 		const values: PresetValues = {};
+		if (modelFamily === 'moss' && selectedPresetFields.moss) values.moss = mossSettings(moss);
 		if (selectedPresetFields.positive_prompt_prefix) values.positive_prompt_prefix = positivePromptPrefix.trim();
 		if (selectedPresetFields.prompt) values.prompt = prompt.trim();
 		if (selectedPresetFields.negative_prompt_prefix) values.negative_prompt_prefix = negativePromptPrefix.trim();
@@ -330,7 +345,7 @@
 			values.random_seed = randomSeed;
 			if (!randomSeed && seed.trim()) values.seed = seed.trim();
 		}
-		if (selectedPresetFields.prompt_enhancement) {
+		if (modelFamily !== 'moss' && selectedPresetFields.prompt_enhancement) {
 			values.prompt_enhancement_enabled = promptEnhancementEnabled;
 			if (improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
 		}
@@ -383,11 +398,12 @@
 
 	function applyPreset(preset: Preset, announce = false) {
 		const values = preset.values;
+		if (modelFamily === 'moss' && values.moss) moss = mossSettings(values.moss);
 		if (values.positive_prompt_prefix !== undefined) positivePromptPrefix = values.positive_prompt_prefix;
 		if (values.prompt !== undefined) prompt = values.prompt;
 		if (values.negative_prompt_prefix !== undefined) negativePromptPrefix = values.negative_prompt_prefix;
 		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
-		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
+		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = modelFamily === 'moss' ? false : values.prompt_enhancement_enabled;
 		if (values.improved_prompt !== undefined) {
 			improvedPrompt = values.improved_prompt;
 		}
@@ -421,6 +437,7 @@
 	}
 
 	function applyGenerationParameters(parameters: ImageGenerationParameters) {
+		if (modelFamily === 'moss') moss = mossSettings(parameters.moss);
 		positivePromptPrefix = parameters.positive_prompt_prefix ?? '';
 		prompt = parameters.prompt;
 		negativePromptPrefix = parameters.negative_prompt_prefix ?? '';
@@ -552,8 +569,8 @@
 			generationError = '시드를 입력하거나 무작위 시드를 선택해 주세요.';
 			return;
 		}
-		if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16 || width > 16384 || height > 16384 || width % 8 !== 0 || height % 8 !== 0) {
-			generationError = '이미지 가로·세로 크기는 16~16384 범위의 8의 배수여야 합니다.';
+		if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16 || width > 16384 || height > 16384 || width % dimensionStep !== 0 || height % dimensionStep !== 0) {
+			generationError = `이미지 가로·세로 크기는 16~16384 범위의 ${dimensionStep}의 배수여야 합니다.`;
 			return;
 		}
 
@@ -564,6 +581,7 @@
 				method: 'POST',
 				json: {
 					model_family: modelFamily,
+					moss: modelFamily === 'moss' ? moss : null,
 					positive_prompt_prefix: positivePromptPrefix.trim(),
 					prompt: prompt.trim(),
 					prompt_enhancement_enabled: promptEnhancementEnabled,
@@ -768,6 +786,7 @@
 					</div>
 
 					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+						{#if modelFamily === 'moss'}<MossControls bind:value={moss} {width} {height} disabled={generating} dmdAvailable={options.loras.includes(mossDmdLora)} ondmd={applyMossDmd} />{/if}
 						<div class="space-y-3">
 							<label class="block space-y-2" for="positive-prompt-prefix">
 								<span class="text-sm font-medium">긍정 프롬프트 Prefix</span>
@@ -777,6 +796,7 @@
 								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
 								<div class="flex items-center gap-2">
 									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
+									{#if modelFamily !== 'moss'}
 									<label for="prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} class="peer sr-only" />
 										<span>프롬프트 개선</span>
@@ -792,6 +812,7 @@
 										<Sparkles size={14} strokeWidth={1.9} />
 										<span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
 									</OutlinedButton>
+									{/if}
 								</div>
 							</div>
 							<textarea id="prompt" bind:value={prompt} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
@@ -806,7 +827,6 @@
 							{/if}
 						</div>
 
-						{#if modelFamily !== 'krea2'}
 							<div class="space-y-2">
 								<label class="block space-y-2" for="negative-prompt-prefix">
 									<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
@@ -818,7 +838,7 @@
 								</div>
 								<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 							</div>
-						{/if}
+
 
 						<div class="space-y-2">
 							<span class="text-sm font-medium">체크포인트</span>
@@ -867,11 +887,11 @@
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="width">
 								<span class="text-sm font-medium">가로</span>
-								<input id="width" type="number" min="16" max="16384" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
+								<input id="width" type="number" min="16" max="16384" step={dimensionStep} bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 							<label class="block space-y-2" for="height">
 								<span class="text-sm font-medium">세로</span>
-								<input id="height" type="number" min="16" max="16384" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
+								<input id="height" type="number" min="16" max="16384" step={dimensionStep} bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 						</div>
 
@@ -1009,7 +1029,7 @@
 					<span class="text-xs text-muted-foreground">{selectedPresetFieldCount()}개 선택</span>
 				</div>
 				<div class="grid gap-2 sm:grid-cols-2">
-					{#each presetFieldOptions as field}
+					{#each presetFieldOptions.filter(({ key }) => key === 'moss' ? modelFamily === 'moss' : key === 'prompt_enhancement' ? modelFamily !== 'moss' : true) as field}
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">
 							<input type="checkbox" checked={selectedPresetFields[field.key]} onchange={(event) => setPresetField(field.key, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" />
 							<span>{field.label}</span>

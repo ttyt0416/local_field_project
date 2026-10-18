@@ -9,10 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .auth import UserResponse, current_user
 from .database import create_preset, delete_preset, list_presets, update_preset
+from .moss import MossSettings
 
 
 router = APIRouter(prefix="/presets", tags=["presets"])
-PresetType = Literal["t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2", "video"]
+PresetType = Literal["t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2", "i2i_flux3_klein", "t2i_moss", "i2i_qwen_image_2_1", "video"]
 PresetAspectRatio = Literal["custom", "2:3", "3:2", "1:1", "16:9", "9:16"]
 PresetVideoMode = Literal["i2v", "fl2v", "r2v"]
 
@@ -26,11 +27,12 @@ class PresetLora(BaseModel):
 
 class PresetValues(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    moss: MossSettings | None = None
 
     positive_prompt_prefix: str | None = Field(default=None, max_length=5000)
     prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     negative_prompt_prefix: str | None = Field(default=None, max_length=5000)
-    negative_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
+    negative_prompt: str | None = Field(default=None, max_length=5000)
     prompt_enhancement_enabled: bool | None = None
     improved_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     checkpoint: str | None = Field(default=None, min_length=1, max_length=255)

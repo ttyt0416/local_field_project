@@ -13,3 +13,11 @@
 `model_downloads`는 Civitai 모델 download job의 version ID, 모델 타입, 파일명, target path, 상태, 진행 바이트와 오류만 저장한다. `target_path`는 `COMFYUI_MODELS_PATH` 아래의 모델 타입 폴더와 사용자가 지정한 안전한 상대 `subfolder`를 합친 최종 저장 경로다. Civitai token과 signed download URL은 저장하지 않는다. 사용자별 version·타입·파일 active job은 unique index로 중복을 막으며, failed 또는 cancelled job은 retry API로 다시 queued 상태가 된다. cancel API는 queued/downloading job을 cancelled로 바꾸고 `.part` 파일을 삭제한다. startup worker는 `downloading` job을 `queued`로 되돌리고, `.part` 파일과 HTTP Range를 이용해 재시도한다. Download 목록은 기본적으로 최근 row를 반환하고 `active_only`일 때 SQL에서 `queued`·`downloading`만 제한한다.
 
 `api_error_logs.provider_response`는 failed provider call이 실제로 반환한 decoded JSON response를 JSONB로 저장한다. prompt and credential은 넣지 않으며, response의 `choices`, `finish_reason`, `usage`, incomplete structured content를 Error DB에서 같은 503 row와 함께 확인해 token budget 소진 위치를 진단한다.
+
+image_generations.reference_images JSONB는 추가 참조 이미지의 file_id·filename을 순서대로 저장한다. 시작 시 기존 row에 빈 배열로 컬럼을 추가하고, crop 편집 row도 이 목록을 복사한다. Storage 참조 검사에 JSONB file_id도 포함해 다른 결과가 참조 중인 파일의 삭제를 막는다.
+
+## MOSS SFT
+
+image_generations의 moss JSONB 열은 MOSS 생성 방식·레이아웃·참조 설정을 저장한다. 기본값은 빈 객체이고 기존 기록을 유지한다. 생성 insert/read와 편집본 복사에서 설정을 보존한다.
+
+이미지 생성 기록에 prompt_enhancement_enabled BOOLEAN 기본 FALSE를 추가하고 생성·상세·편집 복사에서 유지한다. Qwen의 i2i_qwen_image_2_1 분류를 위해 presets.type을 VARCHAR(32)로 확장하며 기존 16자 열에 대한 멱등 마이그레이션을 포함한다. 운영 반영 전 검증은 동일 스키마 임시 테이블과 롤백을 사용한다.

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { Check, Trash2 } from '@lucide/svelte';
+	import MossControls from '../media/moss-controls.svelte';
+	import { mossSettings, mossDmdLora } from '$lib/types/moss';
 	import Modal from '../modals/modal.svelte';
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import PrimaryButton from '../buttons/primary-button.svelte';
@@ -22,7 +24,8 @@
 		| 'steps'
 		| 'sampling'
 		| 'seed'
-		| 'prompt_enhancement';
+		| 'prompt_enhancement'
+		| 'moss';
 	type Props = {
 		open?: boolean;
 		preset: Preset | null;
@@ -34,7 +37,12 @@
 
 	let { open = $bindable(false), preset, initialValues = {}, presetType, options, onSaved }: Props = $props();
 	let isI2I = $derived(presetType.startsWith('i2i_'));
+	let isQwen = $derived(presetType === 'i2i_qwen_image_2_1');
+	let isMoss = $derived(presetType.endsWith('_moss'));
 	let isT2I = $derived(!isI2I);
+	let supportsPromptEnhancement = $derived((isT2I && !isMoss) || isQwen);
+	let isReferenceEdit = $derived((presetType === 'i2i_flux3_klein' || presetType === 'i2i_qwen_image_2_1'));
+	let dimensionStep = $derived(isMoss ? 16 : isReferenceEdit ? 32 : 8);
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
 		{ value: 'custom', label: '커스텀' },
@@ -65,7 +73,8 @@
 		{ key: 'steps', label: 'Steps' },
 		{ key: 'sampling', label: '샘플러 / 스케줄러' },
 		{ key: 'seed', label: 'Seed' },
-		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' }
+		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' },
+		{ key: 'moss', label: 'MOSS 레이아웃' }
 	];
 	const allFields: Record<PresetField, boolean> = {
 		positive_prompt_prefix: true,
@@ -80,6 +89,7 @@
 		steps: true,
 		sampling: true,
 		seed: true,
+		moss: true,
 		prompt_enhancement: true
 	};
 
@@ -94,6 +104,7 @@
 	let checkpoint = $state('');
 	let loras = $state<LoraSelection[]>([]);
 	let aspectRatio = $state<AspectRatio>('custom');
+	let moss = $state(mossSettings());
 	let width = $state(1024);
 	let height = $state(1024);
 	let denoise = $state(0.65);
@@ -120,14 +131,15 @@
 		if (!open) return;
 		const size = aspectRatioPresets[aspectRatio];
 		if (size) {
-			width = size.width;
-			height = size.height;
+			width = Math.round(size.width / dimensionStep) * dimensionStep;
+			height = Math.round(size.height / dimensionStep) * dimensionStep;
 		}
 	});
 
 	$effect(() => {
 		if (!open) return;
 		const values = preset?.values ?? initialValues;
+		moss = mossSettings(values.moss);
 		const fields = new Set(preset?.saved_fields ?? Object.keys(allFields));
 		editingId = preset?.id ?? null;
 		presetName = preset?.name ?? '';
@@ -135,18 +147,18 @@
 		prompt = values.prompt ?? '';
 		negativePromptPrefix = values.negative_prompt_prefix ?? '';
 		negativePrompt = values.negative_prompt ?? '';
-		promptEnhancementEnabled = values.prompt_enhancement_enabled ?? false;
+		promptEnhancementEnabled = values.prompt_enhancement_enabled ?? isQwen;
 		improvedPrompt = values.improved_prompt ?? '';
 		checkpoint = values.checkpoint ?? options.default_checkpoint;
 		loras = values.loras?.map(({ name, strength }) => ({ name, strength })) ?? [];
 		aspectRatio = values.aspect_ratio ?? 'custom';
 		width = values.width ?? 1024;
 		height = values.height ?? 1024;
-		denoise = values.denoise ?? 0.65;
-		cfg = values.cfg ?? 4;
-		steps = values.steps ?? 30;
-		samplerName = values.sampler_name ?? options.default_sampler;
-		scheduler = values.scheduler ?? options.default_scheduler;
+		denoise = isReferenceEdit ? 1 : values.denoise ?? 0.65;
+		cfg = (presetType === 'i2i_flux3_klein' || presetType === 'i2i_qwen_image_2_1') ? 1 : values.cfg ?? options.default_cfg ?? 4;
+		steps = presetType === 'i2i_qwen_image_2_1' ? 8 : values.steps ?? options.default_steps ?? 30;
+		samplerName = isQwen ? options.default_sampler : values.sampler_name ?? options.default_sampler;
+		scheduler = isQwen ? options.default_scheduler : values.scheduler ?? options.default_scheduler;
 		seed = values.seed ?? '';
 		randomSeed = values.random_seed ?? !values.seed;
 		selectedFields = {
@@ -157,12 +169,13 @@
 			checkpoint: fields.has('checkpoint'),
 			loras: fields.has('loras'),
 			aspect_ratio: fields.has('aspect_ratio'),
-			denoise: isI2I && fields.has('denoise'),
+			denoise: isI2I && !isReferenceEdit && fields.has('denoise'),
 			cfg: fields.has('cfg'),
 			steps: fields.has('steps'),
 			sampling: fields.has('sampler_name') || fields.has('scheduler') || fields.has('sampling'),
 			seed: fields.has('seed') || fields.has('random_seed'),
-			prompt_enhancement: isT2I && (fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt'))
+			moss: isMoss && fields.has('moss'),
+			prompt_enhancement: supportsPromptEnhancement && (fields.has('prompt_enhancement') || fields.has('prompt_enhancement_enabled') || fields.has('improved_prompt'))
 		};
 		checkpointFolder = '';
 		loraFolder = '';
@@ -180,12 +193,13 @@
 
 	function selectedFieldCount() {
 		return fieldOptions
-			.filter(({ key }) => (key === 'denoise' ? isI2I : key === 'prompt_enhancement' ? isT2I : true))
+			.filter(({ key }) => (key === 'denoise' ? isI2I && !isReferenceEdit : key === 'moss' ? isMoss : key === 'prompt_enhancement' ? supportsPromptEnhancement : true))
 			.filter(({ key }) => selectedFields[key]).length;
 	}
 
 	function buildValues(): PresetValues {
 		const values: PresetValues = {};
+		if (isMoss && selectedFields.moss) values.moss = mossSettings(moss);
 		if (selectedFields.positive_prompt_prefix) values.positive_prompt_prefix = positivePromptPrefix.trim();
 		if (selectedFields.prompt) values.prompt = prompt.trim();
 		if (selectedFields.negative_prompt_prefix) values.negative_prompt_prefix = negativePromptPrefix.trim();
@@ -211,9 +225,9 @@
 				values.seed = seed.trim();
 			}
 		}
-		if (isT2I && selectedFields.prompt_enhancement) {
+		if (supportsPromptEnhancement && selectedFields.prompt_enhancement) {
 			values.prompt_enhancement_enabled = promptEnhancementEnabled;
-			if (improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
+			if (!isQwen && improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
 		}
 		return values;
 	}
@@ -248,7 +262,7 @@
 			<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">저장할 설정</span><span class="text-xs text-muted-foreground">{selectedFieldCount()}개 선택</span></div>
 			<div class="grid gap-2 sm:grid-cols-2">
 				{#each fieldOptions as field}
-					{#if field.key === 'denoise' ? isI2I : field.key === 'prompt_enhancement' ? isT2I : true}
+					{#if field.key === 'denoise' ? isI2I && !isReferenceEdit : field.key === 'moss' ? isMoss : field.key === 'prompt_enhancement' ? supportsPromptEnhancement : true}
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted"><input type="checkbox" checked={selectedFields[field.key]} onchange={(event) => (selectedFields[field.key] = (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" /><span>{field.label}</span></label>
 					{/if}
 				{/each}
@@ -264,12 +278,13 @@
 				{#if loras.length === 0}<p class="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">사용할 LoRA가 없습니다.</p>{:else}{#each loras as lora, index (lora.name)}<div class="rounded-lg border border-border p-3"><div class="flex items-start gap-2"><p class="min-w-0 flex-1 break-all text-sm font-medium">{lora.name}</p><button type="button" aria-label={`${lora.name} 제거`} onclick={() => removeLora(index)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"><Trash2 size={15} strokeWidth={1.8} /></button></div><label class="mt-3 block space-y-2" for={`image-preset-lora-strength-${index}`}><span class="text-sm font-medium">Strength</span><input id={`image-preset-lora-strength-${index}`} type="number" step="0.05" bind:value={lora.strength} class={numberInputClass} /></label></div>{/each}{/if}
 			</div>
 		{/if}
-		{#if selectedFields.aspect_ratio}<Select id="image-preset-aspect" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} /><div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-width"><span class="text-sm font-medium">가로</span><input id="image-preset-width" type="number" min="16" max="16384" step="8" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label><label class="block space-y-2" for="image-preset-height"><span class="text-sm font-medium">세로</span><input id="image-preset-height" type="number" min="16" max="16384" step="8" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label></div>{/if}
-		{#if isI2I && selectedFields.denoise}<label class="block space-y-2" for="image-preset-denoise"><span class="text-sm font-medium">Denoise</span><input id="image-preset-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} class={numberInputClass} /></label>{/if}
-		{#if selectedFields.cfg || selectedFields.steps}<div class="grid gap-4 sm:grid-cols-2">{#if selectedFields.cfg}<label class="block space-y-2" for="image-preset-cfg"><span class="text-sm font-medium">CFG</span><input id="image-preset-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} /></label>{/if}{#if selectedFields.steps}<label class="block space-y-2" for="image-preset-steps"><span class="text-sm font-medium">Steps</span><input id="image-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} /></label>{/if}</div>{/if}
-		{#if selectedFields.sampling}<button type="button" onclick={() => (samplingOpen = true)} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{samplerName} / {scheduler}</span></button>{/if}
+		{#if selectedFields.aspect_ratio}<Select id="image-preset-aspect" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} /><div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-width"><span class="text-sm font-medium">가로</span><input id="image-preset-width" type="number" min={dimensionStep} max="16384" step={dimensionStep} bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label><label class="block space-y-2" for="image-preset-height"><span class="text-sm font-medium">세로</span><input id="image-preset-height" type="number" min={dimensionStep} max="16384" step={dimensionStep} bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label></div>{/if}
+		{#if isMoss && selectedFields.moss}<MossControls bind:value={moss} {width} {height} disabled={saving} dmdAvailable={options.loras.includes(mossDmdLora)} ondmd={() => { loras = [...loras.filter(({ name }) => name !== mossDmdLora), { name: mossDmdLora, strength: 0.7 }]; cfg = 1; steps = 8; }} />{/if}
+		{#if isI2I && !isReferenceEdit && selectedFields.denoise}<label class="block space-y-2" for="image-preset-denoise"><span class="text-sm font-medium">Denoise</span><input id="image-preset-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} class={numberInputClass} /></label>{/if}
+		{#if selectedFields.cfg || selectedFields.steps}<div class="grid gap-4 sm:grid-cols-2">{#if selectedFields.cfg}<label class="block space-y-2" for="image-preset-cfg"><span class="text-sm font-medium">CFG</span><input id="image-preset-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={(presetType === 'i2i_flux3_klein' || presetType === 'i2i_qwen_image_2_1')} class={numberInputClass} /></label>{/if}{#if selectedFields.steps}<label class="block space-y-2" for="image-preset-steps"><span class="text-sm font-medium">Steps</span><input id="image-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={presetType === 'i2i_qwen_image_2_1'} class={numberInputClass} /></label>{/if}</div>{/if}
+		{#if selectedFields.sampling}<button type="button" disabled={presetType === 'i2i_qwen_image_2_1'} onclick={() => (samplingOpen = true)} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{presetType === 'i2i_qwen_image_2_1' ? 'Euler / 공식 8스텝' : `${samplerName} / ${scheduler}`}</span></button>{/if}
 		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-seed"><span class="text-sm font-medium">Seed</span><input id="image-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="image-preset-random-seed"><input id="image-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
-		{#if isT2I && selectedFields.prompt_enhancement}<label class="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} class="size-4 accent-primary" /><span>프롬프트 개선 사용</span></label><label class="block space-y-2" for="image-preset-improved"><span class="text-sm font-medium">개선된 프롬프트</span><textarea id="image-preset-improved" bind:value={improvedPrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
+		{#if supportsPromptEnhancement && selectedFields.prompt_enhancement}<label class="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} class="size-4 accent-primary" /><span>{isQwen ? 'LLM 프롬프트 강화' : '프롬프트 개선 사용'}</span></label>{#if !isQwen}<label class="block space-y-2" for="image-preset-improved"><span class="text-sm font-medium">개선된 프롬프트</span><textarea id="image-preset-improved" bind:value={improvedPrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}{/if}
 		{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	</div>
 	{#snippet footer()}<OutlinedButton disabled={saving} onclick={() => (open = false)}>취소</OutlinedButton><PrimaryButton loading={saving} disabled={!presetName.trim() || !selectedFieldCount()} onclick={() => void save()}>{editingId ? '수정' : '저장'}</PrimaryButton>{/snippet}

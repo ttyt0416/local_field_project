@@ -34,6 +34,15 @@ class PresetRequestTest(unittest.TestCase):
         self.assertFalse(update_payload.is_default)
         self.assertEqual(update_payload.type, "t2i_anima")
 
+    def test_moss_layout_only_and_empty_negative_prompt_are_preserved(self) -> None:
+        payload = PresetCreateRequest(type="t2i_moss", name="layout", values={"negative_prompt": "", "moss": {"layout_enabled": True, "elements": []}})
+        values = payload.values.model_dump(exclude_none=True)
+        self.assertEqual(values["negative_prompt"], "")
+        self.assertTrue(values["moss"]["layout_enabled"])
+        for enabled in (True, False):
+            payload = PresetCreateRequest(type="i2i_qwen_image_2_1", name="turbo", values={"prompt_enhancement_enabled": enabled})
+            self.assertIs(payload.values.model_dump(exclude_none=True)["prompt_enhancement_enabled"], enabled)
+
     def test_unknown_value_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
             PresetCreateRequest.model_validate({"type": "t2i_anima", "name": "portrait", "values": {"unknown": "value"}})
@@ -113,7 +122,7 @@ class PresetRequestTest(unittest.TestCase):
         self.assertEqual(len(values.loras or []), 9)
 
     def test_all_image_namespaces_are_accepted(self) -> None:
-        preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2")
+        preset_types = ("t2i_anima", "i2i_anima", "t2i_illustrious", "i2i_illustrious", "t2i_krea2", "i2i_krea2", "i2i_flux3_klein")
         payload_types = [
             PresetCreateRequest.model_validate({"type": preset_type, "name": preset_type, "values": {"prompt": "portrait"}}).type
             for preset_type in preset_types

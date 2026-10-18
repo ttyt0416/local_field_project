@@ -1,11 +1,16 @@
+import type { MossSettings } from './moss';
+
 export type ImageGenerationMode = 't2i' | 'i2i';
-export type ImageModelFamily = 'anima' | 'illustrious' | 'krea2';
-export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_illustrious' | 'i2i_illustrious' | 't2i_krea2' | 'i2i_krea2';
+export type ImageModelFamily = 'anima' | 'illustrious' | 'krea2' | 'flux3_klein' | 'moss' | 'qwen_image_2_1';
+export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_illustrious' | 'i2i_illustrious' | 't2i_krea2' | 'i2i_krea2' | 'i2i_flux3_klein' | 't2i_moss' | 'i2i_qwen_image_2_1';
 export const imageModelFamilyTabs: { value: ImageModelFamily; label: string }[] = [
 	{ value: 'anima', label: 'ANIMA' },
 	{ value: 'illustrious', label: 'ILLUSTRIOUS' },
-	{ value: 'krea2', label: 'KREA2' }
+	{ value: 'moss', label: 'MOSS SFT' },
+	{ value: 'qwen_image_2_1', label: 'QWEN 2.1 TURBO' },
+	{ value: 'flux3_klein', label: 'FLUX 3 KLEIN' }
 ];
+export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2', flux3_klein: 'FLUX 3 Klein', moss: 'MOSS SFT', qwen_image_2_1: 'Qwen 2.1 Turbo' };
 export const imageGenerationModeTabs: { value: ImageGenerationMode; label: string }[] = [
 	{ value: 't2i', label: 'T2I' },
 	{ value: 'i2i', label: 'I2I' }
@@ -15,8 +20,11 @@ export const imagePresetCategories: { value: ImagePresetType; label: string; gen
 	{ value: 'i2i_anima', label: 'I2I (Anima)', generationMode: 'i2i', modelFamily: 'anima' },
 	{ value: 't2i_illustrious', label: 'T2I (Illustrious)', generationMode: 't2i', modelFamily: 'illustrious' },
 	{ value: 'i2i_illustrious', label: 'I2I (Illustrious)', generationMode: 'i2i', modelFamily: 'illustrious' },
+	{ value: 'i2i_qwen_image_2_1', label: 'I2I / R2I (Qwen 2.1 Turbo)', generationMode: 'i2i', modelFamily: 'qwen_image_2_1' },
+	{ value: 't2i_moss', label: 'T2I (MOSS SFT)', generationMode: 't2i', modelFamily: 'moss' },
 	{ value: 't2i_krea2', label: 'T2I (Krea2)', generationMode: 't2i', modelFamily: 'krea2' },
-	{ value: 'i2i_krea2', label: 'I2I (Krea2)', generationMode: 'i2i', modelFamily: 'krea2' }
+	{ value: 'i2i_krea2', label: 'I2I (Krea2)', generationMode: 'i2i', modelFamily: 'krea2' },
+	{ value: 'i2i_flux3_klein', label: 'I2I (FLUX 3 Klein)', generationMode: 'i2i', modelFamily: 'flux3_klein' }
 ];
 export type PresetType = ImagePresetType | 'video';
 export type VideoMode = 'i2v' | 'fl2v' | 'r2v';
@@ -25,6 +33,7 @@ export type AspectRatio = 'custom' | '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 export type LoraSelection = { name: string; strength: number };
 
 export type PresetValues = {
+	moss?: MossSettings;
 	positive_prompt_prefix?: string;
 	prompt?: string;
 	negative_prompt_prefix?: string;
@@ -64,6 +73,7 @@ export type Preset = {
 };
 
 export type ImageOptions = {
+	prompt_enhancer_available?: boolean;
 	checkpoints: string[];
 	loras: string[];
 	samplers: string[];
@@ -71,6 +81,8 @@ export type ImageOptions = {
 	default_checkpoint: string;
 	default_sampler: string;
 	default_scheduler: string;
+	default_cfg?: number;
+	default_steps?: number;
 };
 
 export type VideoGenerationOptions = {

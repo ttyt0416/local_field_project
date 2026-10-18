@@ -74,9 +74,11 @@ class VideoGenerationStatusTest(unittest.TestCase):
         self.assertIn("video_generations", connection.calls[0][0])
         parameters = connection.calls[0][1]
         self.assertEqual(parameters[0:2], ("file-1", "file-1"))
-        self.assertEqual(parameters[3], generation_ids)
-        self.assertEqual(parameters[6], generation_ids)
-        self.assertEqual(parameters[10], generation_ids)
+        self.assertIn("reference_images @>", connection.calls[0][0])
+        self.assertEqual(json.loads(parameters[2]), [{"file_id": "file-1"}])
+        self.assertEqual(parameters[4], generation_ids)
+        self.assertEqual(parameters[7], generation_ids)
+        self.assertEqual(parameters[11], generation_ids)
 
     def test_create_image_generation_reads_returning_cursor(self) -> None:
         generation_id = uuid4()
@@ -99,9 +101,17 @@ class VideoGenerationStatusTest(unittest.TestCase):
                 width=512,
                 height=512,
                 seed=1,
+                reference_images=[{"file_id": "reference-1", "filename": "reference.png"}],
+                moss={"layout_enabled": True, "elements": []},
+                prompt_enhancement_enabled=True,
             )
 
         self.assertEqual(result, (generation_id, created_at))
+        query, parameters = connection.calls[0]
+        self.assertEqual(query.count("%s"), len(parameters))
+        self.assertEqual(json.loads(parameters[-3]), [{"file_id": "reference-1", "filename": "reference.png"}])
+        self.assertEqual(json.loads(parameters[-2]), {"layout_enabled": True, "elements": []})
+        self.assertTrue(parameters[-1])
 
     def test_create_image_edit_copies_source_and_overrides_media_metadata(self) -> None:
         edited_id = uuid4()

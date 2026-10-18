@@ -20,7 +20,7 @@
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
-	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageModelFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType } from '$lib/types/presets';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
 	const vaultMediaTabs = [
@@ -232,14 +232,14 @@
 	function selectImageFamily(family: ImageModelFamily) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === family && category.generationMode === activeImagePreset.generationMode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === family)?.value;
 		if (type) selectImagePresetType(type);
 	}
 
 	function selectImageMode(mode: ImageGenerationMode) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === activeImagePreset.modelFamily && category.generationMode === mode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === 'anima' && category.generationMode === mode)?.value;
 		if (type) selectImagePresetType(type);
 	}
 
@@ -507,7 +507,7 @@
 	}
 
 	function modelFamilyLabel(family: ImageModelFamily) {
-		return { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2' }[family];
+		return imageModelFamilyLabels[family];
 	}
 
 	function statusLabel(status: string) {
@@ -543,7 +543,7 @@
 			{#if mediaTab === 'images'}
 				<section class="space-y-2" aria-label="이미지 생성 분류">
 					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
-					<Tab items={imageGenerationModeTabs} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
+					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (activeImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
 				</section>
 			{/if}
 		</div>

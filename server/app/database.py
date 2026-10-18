@@ -419,13 +419,26 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS presets (
         id UUID PRIMARY KEY,
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        type VARCHAR(16) NOT NULL,
+        type VARCHAR(32) NOT NULL,
         name VARCHAR(100) NOT NULL,
         values JSONB NOT NULL DEFAULT '{}'::jsonb,
         is_default BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+    """,
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'presets'
+              AND column_name = 'type' AND character_maximum_length < 32
+        ) THEN
+            ALTER TABLE presets ALTER COLUMN type TYPE VARCHAR(32);
+        END IF;
+    END
+    $$
     """,
     "CREATE INDEX IF NOT EXISTS presets_user_type_idx ON presets(user_id, type, updated_at DESC)",
     "CREATE UNIQUE INDEX IF NOT EXISTS presets_one_default_per_user_type_idx ON presets(user_id, type) WHERE is_default",
@@ -474,6 +487,9 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS generation_mode VARCHAR(8) NOT NULL DEFAULT 't2i'",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS source_file_id TEXT",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS source_filename VARCHAR(255)",
+    "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS reference_images JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS moss JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS prompt_enhancement_enabled BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS denoise DOUBLE PRECISION NOT NULL DEFAULT 1.0",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS positive_prompt_prefix TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS negative_prompt_prefix TEXT NOT NULL DEFAULT ''",
@@ -738,7 +754,7 @@ _IMAGE_GENERATION_FIELDS = (
     "loras, cfg, steps, sampler_name, scheduler, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
     "source_generation_id, is_edited, size_bytes, model_family, generation_mode, source_file_id, "
-    "source_filename, denoise"
+    "source_filename, denoise, reference_images, moss, prompt_enhancement_enabled"
 )
 
 
@@ -766,6 +782,9 @@ def create_image_generation(
     source_file_id: str | None = None,
     source_filename: str | None = None,
     denoise: float = 1.0,
+    reference_images: list[dict[str, str]] | None = None,
+    moss: dict[str, Any] | None = None,
+    prompt_enhancement_enabled: bool = False,
 ) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
@@ -774,9 +793,9 @@ def create_image_generation(
             INSERT INTO image_generations
                 (id, user_id, prompt_id, client_id, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, model_family,
-                 generation_mode, source_file_id, source_filename, denoise)
+                 generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
             RETURNING id, created_at
             """,
             (
@@ -803,6 +822,9 @@ def create_image_generation(
                 source_file_id,
                 source_filename,
                 denoise,
+                json.dumps(reference_images or [], ensure_ascii=False),
+                json.dumps(moss or {}, ensure_ascii=False),
+                prompt_enhancement_enabled,
             ),
         ).fetchone()
         if row is None:
@@ -831,10 +853,10 @@ def create_image_edit(
                 (id, user_id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, storage_file_id, filename, subfolder,
                  image_type, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes,
-                 model_family, generation_mode, source_file_id, source_filename, denoise)
+                 model_family, generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled)
             SELECT %s, user_id, %s, %s, 'completed', prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                    loras, cfg, steps, sampler_name, scheduler, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
-                   %s, %s, TRUE, %s, model_family, generation_mode, source_file_id, source_filename, denoise
+                   %s, %s, TRUE, %s, model_family, generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled
             FROM image_generations
             WHERE id = %s AND user_id = %s AND status = 'completed'
             RETURNING id
@@ -1075,7 +1097,7 @@ def has_generation_storage_reference_outside(
             """
             SELECT EXISTS (
                 SELECT 1 FROM image_generations
-                WHERE (storage_file_id = %s OR source_file_id = %s)
+                WHERE (storage_file_id = %s OR source_file_id = %s OR reference_images @> %s::jsonb)
                   AND user_id = %s AND NOT (id = ANY(%s))
                 UNION ALL
                 SELECT 1 FROM video_generations
@@ -1089,6 +1111,7 @@ def has_generation_storage_reference_outside(
             (
                 storage_file_id,
                 storage_file_id,
+                json.dumps([{"file_id": storage_file_id}]),
                 user_id,
                 excluded_generation_ids,
                 storage_file_id,

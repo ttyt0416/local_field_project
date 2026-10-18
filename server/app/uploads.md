@@ -7,3 +7,11 @@
 `GET /uploads/{file_id}/source`는 이미지 편집기에서 사용할 인증된 원본 bytes를 제공한다. `POST /uploads/{file_id}/edit`는 Canvas PNG와 최종 가로·세로를 받아 업로드 이미지의 편집 결과를 새 Storage 파일과 `media_assets` row(`source_type=edited_upload`)로 저장한다. `POST /uploads/{file_id}/edit/video`는 시작·종료 시간, crop 좌표, 90도 단위 회전을 받아 FFmpeg H.264/AAC MP4와 새 `media_assets` row를 만든다. 두 편집 API 모두 원본을 수정하지 않는다.
 
 `DELETE /uploads/{file_id}`는 소유권 확인 후 Storage 파일과 `media_assets` row를 삭제한다. Storage 삭제 실패 시 DB row를 유지해 재시도할 수 있다.
+
+FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
+
+## MOSS SFT
+
+저장된 생성 이미지 선택의 model_family에 moss를 지원한다. 기존 소유권 검사와 T2I/I2I 분류를 재사용한다.
+
+생성 이미지 필터에 qwen_image_2_1을 허용한다. Qwen 수정 결과도 기존 소스·참조 재사용 계약으로 선택한다.

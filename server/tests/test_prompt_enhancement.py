@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.configs.constants import DEFAULT_VLLM_MODEL, settings
@@ -96,13 +97,12 @@ class PromptEnhancementTest(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["system_prompt"], IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.6)
 
-    def test_krea_enhancement_uses_prompt_temperature(self) -> None:
-        with patch("app.comfyui._request_structured_content", return_value="soft studio lighting") as request:
-            result = _enhance_prompt("a red apple", "krea2")
-
-        self.assertEqual(result.improved_prompt.contents, "soft studio lighting")
-        request.assert_called_once()
-        self.assertEqual(request.call_args.kwargs["temperature"], 0.6)
+    def test_qwen_edit_enhancement_is_deferred_to_local_comfy_llm(self) -> None:
+        with patch("app.comfyui._request_structured_content") as request:
+            with self.assertRaises(HTTPException) as caught:
+                _enhance_prompt("a red apple", "qwen_image_2_1")
+        self.assertEqual(caught.exception.status_code, 422)
+        request.assert_not_called()
 
     def test_structured_output_uses_the_allowed_character_pattern(self) -> None:
         with patch(

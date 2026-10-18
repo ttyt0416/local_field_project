@@ -511,14 +511,14 @@
 	function selectStoredImageFamily(family: ImageModelFamily) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === family && category.generationMode === storedImagePreset.generationMode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === family)?.value;
 		if (type) selectStoredImagePresetType(type);
 	}
 
 	function selectStoredImageMode(mode: ImageGenerationMode) {
 		const type = imagePresetCategories.find(
 			(category) => category.modelFamily === storedImagePreset.modelFamily && category.generationMode === mode
-		)?.value;
+		)?.value ?? imagePresetCategories.find((category) => category.modelFamily === 'anima' && category.generationMode === mode)?.value;
 		if (type) selectStoredImagePresetType(type);
 	}
 
@@ -1434,7 +1434,7 @@
 					{#if storedAssetSource === 'generated' && selectionKind === 'image'}
 						<div class="space-y-2" aria-label="생성 이미지 분류">
 							<Tab items={imageModelFamilyTabs} value={storedImagePreset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectStoredImageFamily} />
-							<Tab items={imageGenerationModeTabs} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
+							<Tab items={imageGenerationModeTabs.filter((tab) => (storedImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (storedImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
 						</div>
 					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
