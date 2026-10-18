@@ -163,7 +163,7 @@
 
 <svelte:head>
 	<title>3D 모델 상세 · Local Field</title>
-	<meta name="description" content="생성된 TRELLIS.2 3D 모델 상세" />
+	<meta name="description" content="생성된 3D 모델 상세" />
 </svelte:head>
 
 {#if !ready}

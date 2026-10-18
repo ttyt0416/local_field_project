@@ -4,8 +4,9 @@ import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 import json
-from pathlib import Path
+import re
 import secrets
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode
 import uuid
@@ -19,6 +20,7 @@ from .comfyui import (
     _ComfyUIError,
     _VLLMError,
     _queue_position,
+    _node_choices,
     _request_bytes,
     _request_json,
     _request_structured_object,
@@ -42,10 +44,9 @@ from .storage import StorageError, enabled as storage_enabled, read_url as stora
 
 
 router = APIRouter(prefix="/generation/music", tags=["music generation"])
-_WORKFLOW_PATH = Path(__file__).with_name("workflows") / "music_t2m.json"
+_WORKFLOW_PATH = Path(__file__).with_name("workflows") / "music_yue2.json"
+_CHECKPOINT = "yue2_3b_int8_convrot.safetensors"
 _MAX_SEED = 2**53 - 1
-_MUSIC_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
-_MUSIC_PROMPT_NON_WHITESPACE_COMMON_CHARS = r"\x21-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E"
 _MUSIC_PROMPT_LANGUAGE_CHARS = {
     "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
     "en": r"A-Za-z",
@@ -56,14 +57,8 @@ _MUSIC_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS = {
     "ja": r"\u3001-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
 }
 _MUSIC_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
-_MUSIC_PROMPT_FIXED_TOKENS = "Verse|Pre-Chorus|Chorus|Bridge|Intro|Outro|Instrumental|Hook|Rap"
 _MUSIC_PROMPT_MAX_TOKENS = 4096
 _MUSIC_PROMPT_TIMEOUT_SECONDS = 300
-_MODEL_FILES = {
-    ("UNETLoader", "unet_name"): "minimax_music3_dit_fp16.safetensors",
-    ("CLIPLoader", "clip_name"): "minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
-    ("VAELoader", "vae_name"): "minimax_music3_dav.safetensors",
-}
 _AUDIO_TYPES = {
     ".flac": "audio/flac",
     ".mp3": "audio/mpeg",
@@ -74,18 +69,20 @@ _AUDIO_TYPES = {
 
 
 class MusicGenerationOptions(BaseModel):
-    model: Literal["MiniMax-Music3"]
+    model: str | None = None
     service_available: bool
     detail: str
-    default_duration_seconds: int = 60
-    max_duration_seconds: int = 300
+    default_duration_seconds: int = 120
+    max_duration_seconds: int = 900
 
 
 class MusicGenerationRequest(BaseModel):
     description: str = Field(min_length=1, max_length=5000)
     lyrics: str = Field(default="", max_length=5000)
-    duration_seconds: float = Field(default=60, ge=10, le=300)
+    duration_seconds: float = Field(default=120, ge=10, le=900)
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
+    planning_mode: Literal["full", "melody", "off"] = "full"
+    abc: str = Field(default="", max_length=20000)
 
     @field_validator("description")
     @classmethod
@@ -100,7 +97,7 @@ class MusicPromptEnhancementRequest(BaseModel):
     target: Literal["description", "lyrics"]
     description: str = Field(min_length=1, max_length=5000)
     lyrics: str = Field(default="", max_length=5000)
-    duration_seconds: float = Field(default=60, ge=10, le=300)
+    duration_seconds: float = Field(default=120, ge=10, le=900)
     prompt_output_languages: list[Literal["ko", "en", "ja"]] = Field(
         default_factory=lambda: ["en"], min_length=1, max_length=3
     )
@@ -125,6 +122,31 @@ class MusicPromptEnhancementResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contents: str = Field(min_length=1, max_length=5000)
+
+
+class MusicStyleEnhancement(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    language: str = Field(max_length=80)
+    genre: str = Field(min_length=1, max_length=160)
+    vocals: str = Field(max_length=160)
+    tempo_bpm: int | None = Field(ge=1, le=1000)
+    instruments: list[str] = Field(max_length=12)
+    mood: str = Field(max_length=160)
+    production: str = Field(max_length=240)
+
+
+class MusicLyricSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["Intro", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Outro", "Instrumental", "Hook", "Rap"]
+    lines: list[str] = Field(max_length=64)
+
+
+class MusicLyricsEnhancement(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    sections: list[MusicLyricSection] = Field(min_length=1, max_length=32)
 
 
 class MusicOutput(BaseModel):
@@ -162,18 +184,11 @@ class MusicGenerationStatus(BaseModel):
 @router.get("/options", response_model=MusicGenerationOptions)
 def music_options(_: UserResponse = Depends(current_user)) -> MusicGenerationOptions:
     try:
-        missing_nodes, missing_models = _readiness()
+        missing = _readiness()
     except _ComfyUIError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    missing = [*missing_nodes, *missing_models]
-    available = storage_enabled() and not missing
-    if missing:
-        detail = f"필요한 Music 3 항목이 없습니다: {', '.join(missing)}"
-    elif not storage_enabled():
-        detail = "스토리지 설정이 없습니다."
-    else:
-        detail = ""
-    return MusicGenerationOptions(model="MiniMax-Music3", service_available=available, detail=detail)
+        return MusicGenerationOptions(model="YuE2", service_available=False, detail=str(exc))
+    detail = f"YuE2 실행 항목이 준비되지 않았습니다: {', '.join(missing)}" if missing else "" if storage_enabled() else "스토리지 설정이 없습니다."
+    return MusicGenerationOptions(model="YuE2", service_available=not missing and storage_enabled(), detail=detail)
 
 
 @router.post("/enhance-prompt", response_model=MusicPromptEnhancementResponse)
@@ -194,9 +209,9 @@ def create_music(payload: MusicGenerationRequest, user: UserResponse = Depends(c
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     try:
-        missing_nodes, missing_models = _readiness()
-        if missing_nodes or missing_models:
-            raise _ComfyUIError(f"MiniMax-Music3 실행 파일이 준비되지 않았습니다: {', '.join([*missing_nodes, *missing_models])}")
+        missing = _readiness()
+        if missing:
+            raise _ComfyUIError(f"YuE2 실행 항목이 준비되지 않았습니다: {', '.join(missing)}")
         prompt, seed = _build_prompt(payload)
         client_id = str(uuid.uuid4())
         response = _request_json("POST", "/prompt", {"prompt": prompt, "client_id": client_id})
@@ -223,6 +238,7 @@ def create_music(payload: MusicGenerationRequest, user: UserResponse = Depends(c
         duration_seconds=payload.duration_seconds,
         created_at=created_at,
     )
+
 
 
 @router.get("/latest", response_model=MusicGenerationStatus | None)
@@ -314,32 +330,32 @@ async def _stream_events(prompt_id: str, user_id: uuid.UUID):
                 return
 
 
-def _music_prompt_pattern(languages: Sequence[str]) -> str:
+def _music_field_pattern(languages: Sequence[str], *, allow_empty: bool = False) -> str:
     if not languages or any(language not in _MUSIC_PROMPT_LANGUAGE_CHARS for language in languages):
         raise ValueError("지원하지 않는 음악 프롬프트 출력 언어입니다.")
     language_chars = "".join(_MUSIC_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
-    visible_language_chars = "".join(
-        _MUSIC_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages)
-    )
-    content = rf"(?:[{_MUSIC_PROMPT_COMMON_CHARS}{language_chars}]|{_MUSIC_PROMPT_FIXED_TOKENS})"
-    visible = rf"(?:[{_MUSIC_PROMPT_NON_WHITESPACE_COMMON_CHARS}{visible_language_chars}]|{_MUSIC_PROMPT_FIXED_TOKENS})"
-    return rf"^{visible}(?:{content}*{visible})?$"
+    visible_chars = "".join(_MUSIC_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
+    common = r"\x20-\x2F\x30-\x39\x3A-\x40\x5C\x5E-\x60\x7B-\x7E"
+    visible_common = r"\x21-\x2F\x30-\x39\x3A-\x40\x5C\x5E-\x60\x7B-\x7E"
+    visible = f"[{visible_common}{visible_chars}]"
+    body = f"{visible}(?:[{common}{language_chars}]*{visible})?"
+    return f"^(?:{body})?$" if allow_empty else f"^{body}$"
 
 
-def _music_prompt_schema(languages: Sequence[str]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "contents": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 5000,
-                "pattern": _music_prompt_pattern(languages),
-            }
-        },
-        "required": ["contents"],
-        "additionalProperties": False,
-    }
+def _music_prompt_schema(languages: Sequence[str], target: Literal["description", "lyrics"]) -> dict[str, Any]:
+    if target == "description":
+        schema = MusicStyleEnhancement.model_json_schema()
+        for name in ("language", "genre", "vocals", "mood", "production"):
+            schema["properties"][name]["pattern"] = _music_field_pattern(languages, allow_empty=name != "genre")
+        schema["properties"]["instruments"]["items"].update(
+            minLength=1, maxLength=80, pattern=_music_field_pattern(languages)
+        )
+    else:
+        schema = MusicLyricsEnhancement.model_json_schema()
+        schema["$defs"]["MusicLyricSection"]["properties"]["lines"]["items"].update(
+            minLength=1, maxLength=240, pattern=_music_field_pattern(languages)
+        )
+    return schema
 
 
 def _enhance_music_prompt(payload: MusicPromptEnhancementRequest) -> MusicPromptEnhancementResponse:
@@ -360,49 +376,68 @@ def _enhance_music_prompt(payload: MusicPromptEnhancementRequest) -> MusicPrompt
         max_tokens=_MUSIC_PROMPT_MAX_TOKENS,
         temperature=0.6,
         timeout_seconds=_MUSIC_PROMPT_TIMEOUT_SECONDS,
-        schema=_music_prompt_schema(payload.prompt_output_languages),
+        schema=_music_prompt_schema(payload.prompt_output_languages, payload.target),
         name=f"music_{payload.target}",
     )
     try:
-        response = MusicPromptEnhancementResponse.model_validate(result)
-    except ValidationError as exc:
-        raise _VLLMError("vLLM 구조화 음악 프롬프트에 contents가 없습니다.") from exc
-    return response.model_copy(update={"contents": response.contents.strip()})
+        pattern = _music_field_pattern(payload.prompt_output_languages)
+        if payload.target == "description":
+            style = MusicStyleEnhancement.model_validate(result)
+            fields = [style.language, style.genre, style.vocals, *style.instruments, style.mood, style.production]
+            for value in fields:
+                if value and not re.fullmatch(pattern, value):
+                    raise ValueError("음악 설명 필드의 언어 또는 형식이 올바르지 않습니다.")
+            if any(not value or len(value) > 80 for value in style.instruments):
+                raise ValueError("악기 필드가 올바르지 않습니다.")
+            parts = [style.language, style.genre, style.vocals]
+            if style.tempo_bpm is not None:
+                parts.append(f"{style.tempo_bpm} BPM")
+            parts.extend([*style.instruments, style.mood, style.production])
+            contents = ", ".join(value for value in parts if value)
+        else:
+            lyrics = MusicLyricsEnhancement.model_validate(result)
+            sections = []
+            for section in lyrics.sections:
+                if section.kind == "Instrumental" and section.lines:
+                    raise ValueError("Instrumental 구간에는 가사를 넣을 수 없습니다.")
+                for line in section.lines:
+                    if len(line) > 240 or not re.fullmatch(pattern, line):
+                        raise ValueError("가사 줄의 언어 또는 형식이 올바르지 않습니다.")
+                sections.append("\n".join([f"[{section.kind}]", *section.lines]))
+            contents = "\n\n".join(sections)
+        return MusicPromptEnhancementResponse(contents=contents)
+    except (ValidationError, ValueError) as exc:
+        raise _VLLMError("vLLM 음악 필드가 요청한 구조·언어·길이와 일치하지 않습니다.", provider_response=result) from exc
 
 
 def _build_prompt(request: MusicGenerationRequest) -> tuple[dict[str, Any], int]:
     try:
         prompt = json.loads(_WORKFLOW_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise _ComfyUIError("MiniMax-Music3 workflow를 읽을 수 없습니다.") from exc
+        raise _ComfyUIError("YuE2 workflow를 읽을 수 없습니다.") from exc
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
-    prompt["4"]["inputs"].update(
-        caption=request.description,
-        lyrics=request.lyrics,
-        seed=seed,
-        max_duration=request.duration_seconds,
-    )
-    prompt["7"]["inputs"]["seed"] = seed
-    prompt["9"]["inputs"]["filename_prefix"] = f"LocalField_Music3_{uuid.uuid4().hex[:12]}"
+    mode = "melody" if request.planning_mode == "melody" else "full"
+    for node_id in ("2", "3"):
+        prompt[node_id]["inputs"].update(style=request.description, lyrics=request.lyrics, seed=seed, mode=mode)
+    prompt["3"]["inputs"]["max_duration"] = request.duration_seconds
+    if request.planning_mode == "off" or request.abc.strip():
+        del prompt["2"]
+        prompt["3"]["inputs"]["abc"] = "" if request.planning_mode == "off" else request.abc.strip()
+    prompt["6"]["inputs"]["seed"] = seed
+    prompt["8"]["inputs"]["filename_prefix"] = f"audio/LocalField_YuE2_{uuid.uuid4().hex[:12]}"
     return prompt, seed
 
 
-def _readiness() -> tuple[list[str], list[str]]:
-    object_info = _request_json("GET", "/object_info")
+def _readiness() -> list[str]:
     try:
         workflow = json.loads(_WORKFLOW_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise _ComfyUIError("MiniMax-Music3 workflow를 읽을 수 없습니다.") from exc
-    missing_nodes = sorted({node["class_type"] for node in workflow.values()} - object_info.keys())
-    missing_models: list[str] = []
-    for (node_type, input_name), model_name in _MODEL_FILES.items():
-        try:
-            choices = object_info[node_type]["input"]["required"][input_name][0]
-        except (IndexError, KeyError, TypeError):
-            choices = []
-        if not isinstance(choices, list) or model_name not in choices:
-            missing_models.append(model_name)
-    return missing_nodes, missing_models
+        raise _ComfyUIError("YuE2 workflow를 읽을 수 없습니다.") from exc
+    object_info = _request_json("GET", "/object_info")
+    missing = sorted({node["class_type"] for node in workflow.values()} - object_info.keys())
+    if _CHECKPOINT not in _node_choices(object_info, "CheckpointLoaderSimple", "ckpt_name"):
+        missing.append(_CHECKPOINT)
+    return missing
 
 
 def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> MusicGenerationStatus:

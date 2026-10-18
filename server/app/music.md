@@ -1,13 +1,11 @@
-# Music generation API
+# YuE2 music API
 
-`music.py`는 shared local ComfyUI의 native MiniMax-Music3 node로 text-to-music generation을 실행한다.
+`GET /generation/music/options` checks native YuE2 nodes, `yue2_3b_int8_convrot.safetensors` and Storage. Unavailable dependencies return options with `service_available=false`; submit returns HTTP 503 before queue or generation DB writes.
 
-- `GET /generation/music/options`: required node, exact model filename, Storage readiness를 확인한다.
-- `POST /generation/music/enhance-prompt`: `description`과 `lyrics` target을 따로 개선한다. description target은 lyrics를 context로만 사용하고, lyrics target은 원문이 비어 있으면 description과 duration에 맞는 새 가사를 생성한다. `ko`, `en`, `ja` output language를 1개 이상 받고 strict `{contents}` schema를 사용한다.
-- `POST /generation/music`: description, optional lyrics, 10-300 second limit, optional seed를 official 30-step workflow에 넣고 `202`를 반환한다. 빈 lyrics는 instrumental generation이다.
-- `GET /generation/music/latest`: reload 뒤 latest result 또는 active job을 복구한다.
-- `GET /generation/music/{prompt_id}`와 `/events`: DB snapshot, progress, queue position, terminal output을 반환한다.
-- `POST /generation/music/{prompt_id}/cancel`: 해당 ComfyUI prompt만 native cancel한다.
-- 완료된 FLAC, WAV, MP3, OGG output은 Storage에 저장하고 signed URL만 client에 반환한다.
+`POST /generation/music` accepts style in `description`, optional section-tagged `lyrics`, `duration_seconds` (10–900, default 120), seed, `planning_mode` (`full`, `melody`, `off`; default `full`) and optional `abc` (up to 20,000 characters). `full` plans melody and chords, `melody` plans melody only, `off` skips ABC. A supplied score skips ABC generation. The generated semantic duration, rather than the requested ceiling, sizes the acoustic latent. Sampling follows the official 32-step `dpm_2` / `sgm_uniform` template. Output is FLAC. Existing status, latest, SSE, cancel, audio validation and Storage behavior remain.
 
-Runtime model은 `Comfy-Org/MiniMax-Music-3` revision `6baad88896848433857c170ba4f05d2ea9d5f218`의 FP16 DiT, pruned INT8 text encoder, DAV file을 사용한다. Source model은 `MiniMaxAI/MiniMax-Music3` revision `fbdf52fbaaca799592917417eb05f1899f1255ec`에 고정한다.
+The vLLM description enhancer writes concise YuE2 Style; the lyrics enhancer writes singable words and section tags, separating musical instructions from lyrics and ABC. Selected language, strict JSON schema and provider error auditing remain. Requested duration is an upper bound; prompt context and end tokens can shorten output.
+
+Model: `Comfy-Org/YuE2` revision `2f76ca75e6ee094169de899cc7fc99d6887e2196`. Native checkpoint contains the text, acoustic and audio decoder weights. SheetSage2 is only needed for audio-cover transcription, which this text-to-music screen does not implement.
+
+Music vLLM structured output: Style is `{language, genre, vocals, tempo_bpm, instruments, mood, production}`; Lyrics is `{sections: [{kind, lines}]}`. Extra keys, wrong types, tags/newlines in raw fields and unselected languages are rejected in server validation. The server orders Style fields, adds BPM, generates enum section tags and joins lyric lines/sections. The public response remains `{contents}` for editable UI proposals. Invalid provider output is attached to the existing error audit; no free-form fallback is used.

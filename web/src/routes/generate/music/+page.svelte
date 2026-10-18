@@ -14,7 +14,7 @@
 	import { downloadMedia } from '$lib/utils/download';
 
 	type MusicGenerationOptions = {
-		model: 'MiniMax-Music3';
+		model: string | null;
 		service_available: boolean;
 		detail: string;
 		default_duration_seconds: number;
@@ -57,10 +57,12 @@
 
 	let ready = $state(false);
 	let optionsLoading = $state(true);
-	let model = $state<MusicGenerationOptions['model']>('MiniMax-Music3');
+	let model = $state<MusicGenerationOptions['model']>(null);
 	let serviceAvailable = $state(false);
 	let serviceDetail = $state('');
-	let maxDurationSeconds = $state(300);
+	let maxDurationSeconds = $state(900);
+	let planningMode = $state<'full' | 'melody' | 'off'>('full');
+	let abc = $state('');
 	let description = $state('');
 	let lyrics = $state('');
 	let promptEnhancementEnabled = $state(false);
@@ -68,7 +70,7 @@
 	let improvedLyrics = $state('');
 	let promptOutputLanguages = $state<MusicPromptLanguage[]>(['en']);
 	let enhancingTarget = $state<MusicPromptTarget | null>(null);
-	let durationSeconds = $state(60);
+	let durationSeconds = $state(120);
 	let seed = $state<number | undefined>(undefined);
 	let generating = $state(false);
 	let cancelling = $state(false);
@@ -241,7 +243,9 @@
 					description: effectiveDescription,
 					lyrics: effectiveLyrics,
 					duration_seconds: durationSeconds,
-					seed: seed ?? null
+					seed: seed ?? null,
+					planning_mode: planningMode,
+					abc
 				}
 			});
 			seed = accepted.seed;
@@ -304,7 +308,7 @@
 
 <svelte:head>
 	<title>음악 생성 · Local Field</title>
-	<meta name="description" content="MiniMax-Music3 local 음악 생성" />
+	<meta name="description" content="음악 생성" />
 </svelte:head>
 
 {#if !ready}
@@ -324,11 +328,11 @@
 							<audio class="w-full max-w-2xl" src={audioUrl} controls preload="metadata"><track kind="captions" /></audio>
 							<OutlinedButton loading={downloading} disabled={downloading} onclick={() => void downloadMusic()}><Download size={16} strokeWidth={1.9} /><span>{downloading ? '음악 다운로드 중' : '음악 다운로드'}</span></OutlinedButton>
 						{:else if generating}
-							<LoadingSpinner size="lg" label="MiniMax-Music3 음악 생성 중" />
+							<LoadingSpinner size="lg" label="음악 생성 중" />
 							<div><p class="text-sm font-medium">{statusLabel(status)}</p><p class="mt-1 text-xs text-muted-foreground">{Math.round(progress)}% · 경과 {formatElapsed(elapsedSeconds)}{#if queuePosition !== null} · 대기 {queuePosition}번째{/if}</p></div>
 						{:else}
 							<div class="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Music size={26} strokeWidth={1.7} /></div>
-							{#if optionsLoading}<LoadingSpinner size="md" label="MiniMax-Music3 설정 확인 중" />{:else}<p class="text-sm font-medium">아직 생성된 음악이 없습니다.</p>{#if serviceDetail}<p class="max-w-sm text-xs leading-5 text-muted-foreground">{serviceDetail}</p>{/if}{/if}
+							{#if optionsLoading}<LoadingSpinner size="md" label="음악 설정 확인 중" />{:else}<p class="text-sm font-medium">아직 생성된 음악이 없습니다.</p>{#if serviceDetail}<p class="max-w-sm text-xs leading-5 text-muted-foreground">{serviceDetail}</p>{/if}{/if}
 						{/if}
 					</div>
 					{#if generating && jobKey}<OutlinedButton class="mt-4 w-full" loading={cancelling} disabled={cancelling} onclick={() => void cancelGeneration()}><X size={16} strokeWidth={1.9} /><span>{cancelling ? '음악 생성 취소 중' : '음악 생성 취소'}</span></OutlinedButton>{/if}
@@ -337,7 +341,7 @@
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="music-settings-title">
 					<div id="music-settings-title"><Typography as="h2" variant="h2">음악 생성 설정</Typography></div>
 					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
-						<div class="rounded-xl border border-border bg-muted/30 px-3 py-3"><span class="block text-xs font-medium text-muted-foreground">MODEL</span><span class="mt-1 block text-sm font-semibold text-foreground">{model}</span></div>
+						<div class="rounded-xl border border-border bg-muted/30 px-3 py-3"><span class="block text-xs font-medium text-muted-foreground">MODEL</span><span class="mt-1 block text-sm font-semibold text-foreground">{model ?? 'YuE2'}</span></div>
 						<div class="flex justify-end">
 							<label for="music-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 								<input id="music-prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} onchange={resetImprovedPrompts} disabled={generating || isPromptEnhancing} class="peer sr-only" />
@@ -363,7 +367,7 @@
 								<label class="text-sm font-medium" for="music-description">음악 설명</label>
 								{#if promptEnhancementEnabled}<OutlinedButton type="button" loading={enhancingTarget === 'description'} disabled={generating || isPromptEnhancing || !description.trim() || !promptOutputLanguages.length} class="min-h-9 px-3 text-xs" onclick={() => void enhanceMusicPrompt('description')}><Sparkles size={14} strokeWidth={1.9} /><span>{enhancingTarget === 'description' ? '개선 중' : '음악 설명 개선'}</span></OutlinedButton>{/if}
 							</div>
-							<textarea id="music-description" value={description} oninput={(event) => setDescription((event.currentTarget as HTMLTextAreaElement).value)} rows="6" maxlength="5000" disabled={generating || isPromptEnhancing} class={textareaClass} placeholder="장르, 분위기, 보컬, 악기, 곡 전개를 설명해 주세요."></textarea>
+							<textarea id="music-description" value={description} oninput={(event) => setDescription((event.currentTarget as HTMLTextAreaElement).value)} rows="6" maxlength="5000" disabled={generating || isPromptEnhancing} class={textareaClass} placeholder="노래 언어, 장르, 보컬, BPM, 악기와 분위기를 설명해 주세요."></textarea>
 							<span class="block text-right text-xs text-muted-foreground">{description.length.toLocaleString('ko-KR')} / 5,000</span>
 							{#if promptEnhancementEnabled && improvedDescription}<label class="block space-y-2" for="music-improved-description"><span class="text-sm font-medium text-primary">개선된 음악 설명</span><textarea id="music-improved-description" bind:value={improvedDescription} rows="6" maxlength="5000" disabled={generating || isPromptEnhancing} class={textareaClass}></textarea><span class="block text-right text-xs text-muted-foreground">{improvedDescription.length.toLocaleString('ko-KR')} / 5,000</span></label>{/if}
 						</div>
@@ -376,11 +380,17 @@
 							<span class="block text-right text-xs text-muted-foreground">{lyrics.length.toLocaleString('ko-KR')} / 5,000</span>
 							{#if promptEnhancementEnabled && improvedLyrics}<label class="block space-y-2" for="music-improved-lyrics"><span class="text-sm font-medium text-primary">개선된 가사</span><textarea id="music-improved-lyrics" bind:value={improvedLyrics} rows="10" maxlength="5000" disabled={generating || isPromptEnhancing} class={textareaClass}></textarea><span class="block text-right text-xs text-muted-foreground">{improvedLyrics.length.toLocaleString('ko-KR')} / 5,000</span></label>{/if}
 						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium" for="music-planning">작곡 방식</label>
+							<select id="music-planning" bind:value={planningMode} disabled={generating} class={inputClass}><option value="full">멜로디 + 코드 (권장)</option><option value="melody">멜로디 중심</option><option value="off">직접 생성</option></select>
+							<p class="text-xs leading-5 text-muted-foreground">YuE2가 악보를 계획한 뒤 노래를 만듭니다. 최대 길이는 상한이며, 곡이 먼저 끝나거나 긴 입력으로 생성 길이가 줄어들 수 있습니다.</p>
+						</div>
+						{#if planningMode !== 'off'}<details class="rounded-lg border border-border p-3"><summary class="cursor-pointer text-sm font-medium">ABC 악보 직접 입력 (선택)</summary><textarea id="music-abc" aria-label="ABC 악보" bind:value={abc} rows="5" maxlength="20000" disabled={generating} class={`${textareaClass} mt-3 font-mono`} placeholder="비워 두면 YuE2가 자동으로 작곡합니다."></textarea></details>{/if}
 						<div class="grid grid-cols-2 gap-3">
 							<label class="block space-y-2" for="music-duration"><span class="text-sm font-medium">최대 길이</span><input id="music-duration" class={inputClass} type="number" min="10" max={maxDurationSeconds} step="1" bind:value={durationSeconds} oninput={resetImprovedPrompts} disabled={generating || isPromptEnhancing} /><span class="block text-xs text-muted-foreground">초</span></label>
 							<label class="block space-y-2" for="music-seed"><span class="text-sm font-medium">Seed</span><input id="music-seed" class={inputClass} type="number" min="0" max="9007199254740991" step="1" bind:value={seed} disabled={generating} placeholder="랜덤" /></label>
 						</div>
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} deactive={!serviceAvailable} disabled={!description.trim() || isPromptEnhancing} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '음악 생성 중' : serviceAvailable ? '음악 생성' : 'MiniMax-Music3 연결 대기 중'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} deactive={!serviceAvailable} disabled={!description.trim() || isPromptEnhancing} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '음악 생성 중' : serviceAvailable ? '음악 생성' : 'YuE2 연결 대기 중'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>

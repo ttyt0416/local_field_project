@@ -22,10 +22,10 @@ IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT = (
 )
 
 MUSIC_DESCRIPTION_ENHANCEMENT_SYSTEM_PROMPT = (
-    "Rewrite the user's MiniMax-Music3 description while preserving the user's intent. "
-    "Return exactly one JSON object with a contents string. "
-    "Clearly specify genre, mood, tempo, instrumentation, vocal character when present, production style, and song progression. "
-    "Use the supplied lyrics only as context and do not include lyrics in the description. "
+    "Rewrite the user's music description for YuE2 Style while preserving the user's intent. "
+    "Return exactly the fields in the supplied JSON schema; never return final formatted text. "
+    "Fill language, genre, vocals, tempo_bpm (number or null), instruments (array), mood, and production separately. Use empty strings or an empty instruments array for genuinely unspecified details. Write concise musical fields: singing language, genre, vocal character or instrumental, tempo in BPM, instruments, mood, and production. Keep it within about 120 words and avoid unnecessary song narratives. "
+    "Use lyrics only as context. Never put lyrics, ABC notation, section tags, or technical sampling instructions in Style. "
     "Translate content outside the selected output languages into a selected output language while preserving meaning, tone, and names. "
     "Keep content already written in a selected output language in that language. "
     "Use only the selected output languages, digits, spaces, line breaks, and ASCII punctuation. "
@@ -33,13 +33,13 @@ MUSIC_DESCRIPTION_ENHANCEMENT_SYSTEM_PROMPT = (
 )
 
 MUSIC_LYRICS_ENHANCEMENT_SYSTEM_PROMPT = (
-    "Create or improve lyrics for the user's MiniMax-Music3 request. "
-    "Return exactly one JSON object with a contents string. "
+    "Create or improve singable lyrics for the user's YuE2 music request as a sections array. Each section has an enum kind and a lines array containing one sung line per item. Never write brackets, section tags or embedded newlines in line strings: the server adds all section tags and line breaks. "
+    "Return exactly the fields in the supplied JSON schema; never return final formatted text. "
     "When lyrics are provided, preserve their story, names, section order, section tags, and line breaks while improving phrasing, rhythm, rhyme, and singability. "
-    "When lyrics are empty, write complete new lyrics that match the music description and duration. "
+    "When lyrics are empty, write complete new lyrics that match the music description and duration. Use a compact structure for short durations, and allow time for breathing and instrumental passages. "
     "Translate content outside the selected output languages into a selected output language while preserving meaning, tone, names, section tags, and formatting. "
     "Keep content already written in a selected output language in that language. "
-    "Standard English section tags such as [Verse], [Chorus], and [Bridge] are allowed in every output language. "
+    "Choose the corresponding standard English kind enum for each section, in every output language; the server adds [Intro], [Verse], [Pre-Chorus], [Chorus], [Bridge], [Outro], or [Instrumental] tags. Put only words intended to be sung beneath tags; put musical directions in Style, never in lyrics. Do not generate ABC notation. If the user explicitly requests an instrumental without vocals, return one section with kind Instrumental and an empty lines array. Every Instrumental section must have empty lines. "
     "Use only the selected output languages, digits, spaces, line breaks, and ASCII punctuation. "
     "Do not add markdown fences, explanations, or extra JSON fields."
 )
@@ -50,7 +50,7 @@ MUSIC_PROMPT_ENHANCEMENT_USER_PROMPT = (
     "<lyrics>\n{lyrics}\n</lyrics>\n"
     "<duration_seconds>\n{duration}\n</duration_seconds>\n"
     "<output_languages>\n{languages}\n</output_languages>\n"
-    "<required_field>\ncontents\n</required_field>"
+    "<output_contract>\nReturn only schema fields. The server assembles the final Style or section-tagged Lyrics.\n</output_contract>"
 )
 
 VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (

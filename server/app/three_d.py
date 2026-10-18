@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 from datetime import datetime
 import json
 import re
@@ -19,6 +18,7 @@ from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
     _queue_position,
+    _node_choices,
     _request_bytes,
     _request_json,
     cancel_comfy_generation,
@@ -28,8 +28,8 @@ from .comfyui import (
 from .database import (
     create_media_asset,
     create_three_d_generation,
-    generation_elapsed_seconds,
     get_reusable_media,
+    generation_elapsed_seconds,
     get_three_d_generation,
     update_three_d_generation_status,
 )
@@ -41,56 +41,34 @@ from .storage import (
     read_url as storage_read_url,
     upload_file as storage_upload_file,
 )
+
 from .video import VideoAsset, _ResolvedAsset, _asset_cache_key, _safe_filename, _upload_to_comfy
 
 
 router = APIRouter(prefix="/generation/3d", tags=["3D generation"])
-_WORKFLOW_PATH = Path(__file__).with_name("workflows") / "trellis2.json"
+_WORKFLOW_PATH = Path(__file__).with_name("workflows") / "triposplat.json"
 _MAX_INPUT_SIZE = 50 * 1024 * 1024
-# ponytail: keep seeds JSON-safe until the API and UI carry them as strings end to end.
-_MAX_SEED = 2**53 - 1
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_MAX_SEED = 2**53 - 1
 
 _PRESETS: dict[str, dict[str, int | str]] = {
-    "preview": {
-        "target_resolution": "1024",
-        "target_face_count": 150_000,
-        "texture_resolution": 1024,
-        "remesh_resolution": 384,
-        "normal_resolution": 1024,
-        "ao_resolution": 512,
-    },
-    "standard": {
-        "target_resolution": "1024",
-        "target_face_count": 350_000,
-        "texture_resolution": 2048,
-        "remesh_resolution": 512,
-        "normal_resolution": 2048,
-        "ao_resolution": 1024,
-    },
-    "high": {
-        "target_resolution": "1536",
-        "target_face_count": 700_000,
-        "texture_resolution": 4096,
-        "remesh_resolution": 768,
-        "normal_resolution": 2048,
-        "ao_resolution": 1024,
-    },
+    "preview": {"steps": 12, "num_gaussians": 32768, "mesh_resolution": 192},
+    "standard": {"steps": 20, "num_gaussians": 131072, "mesh_resolution": 256},
+    "high": {"steps": 30, "num_gaussians": 262144, "mesh_resolution": 384},
 }
 _REQUIRED_MODELS = {
-    ("UNETLoader", "unet_name"): "trellis_2_int8_convrot.safetensors",
-    ("CLIPVisionLoader", "clip_name"): "dino_v3_vit_l.safetensors",
-    ("VAELoader", "vae_name"): "trellis_2_shape_vae_bf16.safetensors",
-    ("VAELoader", "vae_name#texture"): "trellis_2_texture_vae_bf16.safetensors",
+    ("UNETLoader", "unet_name"): "triposplat_fp16.safetensors",
+    ("CLIPVisionLoader", "clip_name"): "dino_v3_vit_h.safetensors",
+    ("VAELoader", "vae_name"): "flux2-vae.safetensors",
+    ("VAELoader", "vae_name#splat"): "triposplat_vae_decoder_fp16.safetensors",
     ("LoadBackgroundRemovalModel", "bg_removal_name"): "birefnet.safetensors",
 }
 _STAGE_BY_NODE = {
-    **{node: "background_cleanup" for node in ("122", "193", "28", "248", "312")},
-    **{node: "structure" for node in ("15", "20", "25", "40", "80", "81", "83", "3")},
-    **{node: "shape" for node in ("18", "22", "23", "64", "91", "92", "94", "117")},
-    **{node: "texture" for node in ("12", "93", "98", "118")},
+    **{node: "background_cleanup" for node in ("1", "2", "3", "4", "5", "6")},
+    **{node: "structure" for node in ("7", "8", "9", "10", "11")},
+    **{node: "shape" for node in ("12", "13")},
+    **{node: "mesh" for node in ("14", "15")},
 }
-
 
 class ThreeDSource(BaseModel):
     file_id: str | None = Field(default=None, max_length=64)
@@ -108,7 +86,6 @@ class ThreeDGenerationRequest(BaseModel):
     preset: Literal["preview", "standard", "high"] = "standard"
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
     remove_background: bool = True
-    padding: float = Field(default=1.1, ge=1.0, le=1.5)
 
 
 class ThreeDModelOutput(BaseModel):
@@ -146,6 +123,8 @@ class ThreeDOptions(BaseModel):
     missing_nodes: list[str]
     missing_models: list[str]
     presets: dict[str, dict[str, int | str]]
+    detail: str = ""
+    model: str = "TripoSplat"
 
 
 @router.get("/options", response_model=ThreeDOptions)
@@ -153,13 +132,11 @@ def three_d_options(_: UserResponse = Depends(current_user)) -> ThreeDOptions:
     try:
         missing_nodes, missing_models = _readiness()
     except _ComfyUIError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return ThreeDOptions(
-        ready=not missing_nodes and not missing_models,
-        missing_nodes=missing_nodes,
-        missing_models=missing_models,
-        presets=_PRESETS,
-    )
+        return ThreeDOptions(ready=False, missing_nodes=[], missing_models=[], presets=_PRESETS, detail=str(exc))
+    missing = [*missing_nodes, *missing_models]
+    detail = f"TripoSplat 실행 항목이 준비되지 않았습니다: {', '.join(missing)}" if missing else "" if storage_enabled() else "스토리지 설정이 없습니다."
+    return ThreeDOptions(ready=not missing and storage_enabled(), missing_nodes=missing_nodes,
+                         missing_models=missing_models, presets=_PRESETS, detail=detail)
 
 
 @router.post("", response_model=ThreeDGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
@@ -179,7 +156,7 @@ async def create_three_d(
         missing_nodes, missing_models = _readiness()
         if missing_nodes or missing_models:
             missing = ", ".join([*missing_nodes, *missing_models])
-            raise _ComfyUIError(f"TRELLIS.2 실행 파일이 준비되지 않았습니다: {missing}")
+            raise _ComfyUIError(f"TripoSplat 실행 항목이 준비되지 않았습니다: {missing}")
         resolved = await _resolve_source(request.source, files, user)
         source_asset = VideoAsset(
             kind="image", file_id=request.source.file_id, file_index=request.source.file_index
@@ -202,7 +179,7 @@ async def create_three_d(
         preset=request.preset,
         seed=seed,
         remove_background=request.remove_background,
-        padding=request.padding,
+        padding=1.2,
         source_file_id=resolved.file_id,
         source_filename=resolved.filename,
     )
@@ -215,6 +192,7 @@ async def create_three_d(
         seed=seed,
         created_at=created_at,
     )
+
 
 
 @router.get("/{prompt_id}", response_model=ThreeDGenerationStatus)
@@ -235,7 +213,7 @@ def cancel_three_d(
     user: UserResponse = Depends(current_user),
 ) -> ThreeDGenerationStatus:
     generation = _require_generation(prompt_id, user.id)
-    if generation["status"] == "cancelled":
+    if generation["status"] in {"completed", "failed", "cancelled"}:
         return _status_from_row(generation, user.id)
     if generation["status"] not in {"queued", "processing"}:
         return _history_status(generation, user.id)
@@ -370,55 +348,32 @@ def _build_prompt(request: ThreeDGenerationRequest, comfy_filename: str) -> tupl
     try:
         prompt = json.loads(_WORKFLOW_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise _ComfyUIError("TRELLIS.2 workflow를 읽을 수 없습니다.") from exc
-    prompt = copy.deepcopy(prompt)
-    preset = _PRESETS[request.preset]
+        raise _ComfyUIError("TripoSplat workflow를 읽을 수 없습니다.") from exc
     seed = request.seed if request.seed is not None else secrets.randbelow(_MAX_SEED + 1)
-    prompt["122"]["inputs"]["image"] = comfy_filename
-    prompt["248"]["inputs"]["switch"] = request.remove_background
-    prompt["312"]["inputs"]["pad_factor"] = request.padding
-    prompt["94"]["inputs"]["target_resolution"] = preset["target_resolution"]
-    prompt["186"]["inputs"]["target_face_count"] = preset["target_face_count"]
-    prompt["288"]["inputs"]["value"] = preset["texture_resolution"]
-    prompt["241"]["inputs"]["resolution"] = preset["remesh_resolution"]
-    prompt["224"]["inputs"]["resolution"] = preset["normal_resolution"]
-    prompt["233"]["inputs"]["resolution"] = preset["ao_resolution"]
-    prompt["900"]["inputs"]["filename_prefix"] = f"LocalField_3D_{uuid.uuid4().hex[:12]}"
-    for node in prompt.values():
-        if node.get("class_type") == "KSampler":
-            node["inputs"]["seed"] = seed
+    preset = _PRESETS[request.preset]
+    prompt["1"]["inputs"]["image"] = comfy_filename
+    prompt["5"]["inputs"]["switch"] = request.remove_background
+    prompt["11"]["inputs"].update(seed=seed, steps=preset["steps"])
+    prompt["13"]["inputs"].update(seed=seed, num_gaussians=preset["num_gaussians"])
+    prompt["14"]["inputs"]["resolution"] = preset["mesh_resolution"]
+    prompt["15"]["inputs"]["filename_prefix"] = f"3d/LocalField_TripoSplat_{uuid.uuid4().hex[:12]}"
     return prompt, seed
 
 
 def _readiness() -> tuple[list[str], list[str]]:
-    object_info = _request_json("GET", "/object_info")
     try:
         workflow = json.loads(_WORKFLOW_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise _ComfyUIError("TRELLIS.2 workflow를 읽을 수 없습니다.") from exc
-    required_nodes = sorted({node["class_type"] for node in workflow.values()})
-    missing_nodes = [node for node in required_nodes if node not in object_info]
-    missing_models: list[str] = []
-    for (node_type, input_key), model_name in _REQUIRED_MODELS.items():
-        schema_key = input_key.split("#", 1)[0]
-        node = object_info.get(node_type)
-        try:
-            specification = node["input"]["required"][schema_key] if isinstance(node, dict) else []
-            if isinstance(specification[0], list):
-                choices = specification[0]
-            elif len(specification) > 1 and isinstance(specification[1], dict):
-                choices = specification[1].get("options", [])
-            else:
-                choices = []
-        except (IndexError, KeyError, TypeError):
-            choices = []
-        if not isinstance(choices, list) or model_name not in choices:
-            missing_models.append(model_name)
-    return missing_nodes, list(dict.fromkeys(missing_models))
+        raise _ComfyUIError("TripoSplat workflow를 읽을 수 없습니다.") from exc
+    object_info = _request_json("GET", "/object_info")
+    missing_nodes = sorted({node["class_type"] for node in workflow.values()} - object_info.keys())
+    missing_models = [name for (kind, key), name in _REQUIRED_MODELS.items()
+                      if name not in _node_choices(object_info, kind, key.split("#")[0])]
+    return missing_nodes, missing_models
 
 
 def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> ThreeDGenerationStatus:
-    if generation["status"] == "cancelled":
+    if generation["status"] in {"completed", "failed", "cancelled"}:
         return _status_from_row(generation, user_id)
     prompt_id = generation["prompt_id"]
     history = _request_json("GET", f"/history/{prompt_id}")

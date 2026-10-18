@@ -13,7 +13,7 @@
 	import Typography from '../../../../components/typography/typography.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { generationJobStore, type GenerationJobStatus } from '$lib/stores/generation-jobs.svelte';
-	import { apiForm } from '$lib/utils/api';
+	import { apiForm, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 
 	type ModelPreset = 'preview' | 'standard' | 'high';
@@ -36,9 +36,9 @@
 		{ value: 'high' as const, label: '고품질' }
 	];
 	const presetDescriptions: Record<ModelPreset, string> = {
-		preview: '형태와 구도를 빠르게 확인합니다.',
-		standard: '품질과 생성 시간의 균형을 맞춥니다.',
-		high: '더 세밀한 3D 결과를 생성합니다.'
+		preview: '32,768개 포인트 · 12단계 · 빠른 형태 확인',
+		standard: '131,072개 포인트 · 20단계 · 기본 품질',
+		high: '262,144개 포인트 · 30단계 · 세밀한 형태'
 	};
 	const stageLabels: Record<string, string> = {
 		queued: '생성 대기 중',
@@ -63,13 +63,14 @@
 	const fileClass = 'block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary';
 
 	let ready = $state(false);
+	let serviceAvailable = $state(false);
+	let serviceDetail = $state('');
 	let sourceFile = $state<File | null>(null);
 	let sourceInput = $state<HTMLInputElement>();
 	let preset = $state<ModelPreset>('standard');
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let removeBackground = $state(true);
-	let padding = $state(1.1);
 	let generating = $state(false);
 	let uploading = $state(false);
 	let cancelling = $state(false);
@@ -121,7 +122,15 @@
 			return;
 		}
 		await generationJobStore.initialize();
-		ready = true;
+		try {
+			const options = await apiJson<{ ready: boolean; detail: string }>('generation/3d/options');
+			serviceAvailable = options.ready;
+			serviceDetail = options.detail;
+		} catch (reason) {
+			error = reason instanceof Error ? reason.message : '3D 생성 설정을 불러오지 못했습니다.';
+		} finally {
+			ready = true;
+		}
 	}
 
 	function handleSourceFile(event: Event) {
@@ -143,6 +152,7 @@
 	}
 
 	async function generate() {
+		if (!serviceAvailable) return;
 		jobKey = '';
 		announcedTerminal = '';
 		error = '';
@@ -160,11 +170,6 @@
 			error = 'Seed는 0 이상의 정수로 입력해 주세요.';
 			return;
 		}
-		const parsedPadding = Number(padding);
-		if (!Number.isFinite(parsedPadding) || parsedPadding < 1 || parsedPadding > 1.5) {
-			error = '여백은 1.0에서 1.5 사이로 입력해 주세요.';
-			return;
-		}
 
 		const form = new FormData();
 		form.append('files', sourceFile, sourceFile.name);
@@ -172,8 +177,7 @@
 			source: { file_index: 0 },
 			preset,
 			seed: parsedSeed,
-			remove_background: removeBackground,
-			padding: parsedPadding
+			remove_background: removeBackground
 		}));
 		generating = true;
 		uploading = true;
@@ -221,7 +225,7 @@
 
 <svelte:head>
 	<title>3D 모델 생성 · Local Field</title>
-	<meta name="description" content="TRELLIS.2 이미지 기반 3D 모델 생성" />
+	<meta name="description" content="이미지 기반 3D 모델 생성" />
 </svelte:head>
 
 {#if !ready}
@@ -263,7 +267,8 @@
 				</section>
 
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="model-settings-title">
-					<div id="model-settings-title"><Typography as="h2" variant="h2">3D 생성 설정</Typography></div>
+					<div id="model-settings-title"><Typography as="h2" variant="h2">3D 생성 설정</Typography></div><p class="mt-2 text-xs leading-5 text-muted-foreground">TripoSplat · 단일 이미지에서 컬러 3D 모델을 생성합니다. GLB 메시 변환은 실험적이며 얇은 부분이나 작은 요소가 생략될 수 있습니다. 입력 여백은 모델이 자동으로 맞춥니다.</p>
+					{#if serviceDetail}<p class="text-sm text-muted-foreground">{serviceDetail}</p>{/if}
 					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
 							<label for="model-source" class="text-sm font-medium">소스 이미지</label>
@@ -287,11 +292,11 @@
 
 						<label class="flex items-center justify-between gap-4 rounded-xl border border-border px-3 py-3 text-sm" for="model-remove-background"><span><span class="block font-medium">배경 제거</span><span class="mt-1 block text-xs text-muted-foreground">오브젝트 중심의 3D 모델을 만들도록 배경을 제거합니다.</span></span><input id="model-remove-background" type="checkbox" bind:checked={removeBackground} disabled={generating} class="size-4 accent-primary" /></label>
 
-						<label class="block space-y-2" for="model-padding"><span class="text-sm font-medium">오브젝트 여백</span><input id="model-padding" type="number" min="1" max="1.5" step="0.01" bind:value={padding} disabled={generating} class={inputClass} /><span class="block text-xs text-muted-foreground">배경 제거 후 오브젝트 주변에 적용할 여백입니다. (1.0–1.5)</span></label>
+
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="model-seed"><span class="text-sm font-medium">Seed</span><input id="model-seed" type="number" min="0" step="1" bind:value={seed} disabled={generating || randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-model-seed"><input id="random-model-seed" type="checkbox" bind:checked={randomSeed} disabled={generating} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!sourceFile} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '3D 생성 중' : '3D 모델 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} deactive={!serviceAvailable} disabled={!sourceFile} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '3D 생성 중' : serviceAvailable ? '3D 모델 생성' : 'TripoSplat 연결 대기 중'}</span></PrimaryButton></div>
 					</form>
 				</section>
 			</div>
