@@ -2,9 +2,8 @@
 	import OutlinedButton from '../buttons/outlined-button.svelte';
 	import { mossSettings, type MossSettings, type MossLayoutElement } from '$lib/types/moss';
 
-	let { value = $bindable(mossSettings()), width, height, disabled = false, dmdAvailable = false, ondmd }: {
+	let { value = $bindable(mossSettings()), width, height, disabled = false }: {
 		value?: MossSettings; width: number; height: number; disabled?: boolean;
-		dmdAvailable?: boolean; ondmd?: () => void;
 	} = $props();
 	let canvas = $state<HTMLDivElement>();
 	let selected = $state(0);
@@ -60,13 +59,8 @@
 
 <svelte:window onpointermove={move} onpointerup={end} onpointercancel={end} />
 
-<fieldset disabled={disabled} class="min-w-0 space-y-4 rounded-xl border border-border p-4">
-	<legend class="px-2 text-sm font-semibold">MOSS 설정</legend>
-	<div class="flex flex-wrap items-center gap-3">
-		<OutlinedButton type="button" disabled={disabled || !dmdAvailable} onclick={ondmd}>8스텝 DMD 적용</OutlinedButton>
-		<span class="text-xs text-muted-foreground">DMD LoRA 0.7 · 8 steps · CFG 1</span>
-	</div>
-	<label class="flex items-center gap-2 text-sm font-medium"><input type="checkbox" bind:checked={value.layout_enabled} />레이아웃 지정</label>
+<fieldset disabled={disabled} class="min-w-0 space-y-4">
+	<OutlinedButton type="button" {disabled} active={value.layout_enabled} onclick={() => (value.layout_enabled = !value.layout_enabled)}>레이아웃</OutlinedButton>
 	{#if value.layout_enabled}
 		<p class="text-xs leading-5 text-muted-foreground">박스를 이동하고 오른쪽 아래 모서리로 크기를 조절하세요. 위치는 생성 가이드이며 결과가 정확히 일치하지 않을 수 있습니다.</p>
 		<div class="flex flex-wrap gap-2"><OutlinedButton type="button" disabled={disabled || value.elements.length >= 32} onclick={() => add('object')}>사물 추가</OutlinedButton><OutlinedButton type="button" disabled={disabled || value.elements.length >= 32} onclick={() => add('character')}>인물 추가</OutlinedButton><OutlinedButton type="button" disabled={disabled || value.elements.length >= 32} onclick={() => add('text')}>텍스트 추가</OutlinedButton></div>

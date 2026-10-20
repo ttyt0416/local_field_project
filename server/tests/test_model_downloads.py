@@ -151,10 +151,13 @@ class ModelDownloadsTest(unittest.TestCase):
             ("Checkpoint", "MiniMax H3", "checkpoint", "diffusion_model", "MiniMaxH3"),
             ("Checkpoint", "Illustrious", "checkpoint", "checkpoint", "Illustrious"),
             ("LORA", "Illustrious", "checkpoint", "lora", "Illustrious"),
+            ("LORA", "MOSS-Image-SFT-8-steps-dmd", "checkpoint", "lora", "MOSS"),
+            ("LORA", "MOSS Image", "checkpoint", "lora", "MOSS"),
+            ("Checkpoint", "MOSS Image SFT", "checkpoint", "diffusion_model", "MOSS"),
         )
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            for folder in ("diffusion_models/Anima", "diffusion_models/MiniMaxH3", "checkpoints/Illustrious", "loras/Illustrious"):
+            for folder in ("diffusion_models/Anima", "diffusion_models/MiniMaxH3", "checkpoints/Illustrious", "loras/Illustrious", "loras/MOSS", "diffusion_models/MOSS"):
                 (root / folder).mkdir(parents=True)
             with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
                 for civitai_type, base_model, fallback_type, expected_type, expected_folder in cases:

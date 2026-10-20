@@ -10,6 +10,7 @@ export const imageModelFamilyTabs: { value: ImageModelFamily; label: string }[] 
 	{ value: 'qwen_image_2_1', label: 'QWEN 2.1 TURBO' },
 	{ value: 'flux3_klein', label: 'FLUX 3 KLEIN' }
 ];
+export const imageGenerationFamilyTabs = imageModelFamilyTabs.filter((tab) => tab.value !== 'flux3_klein');
 export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2', flux3_klein: 'FLUX 3 Klein', moss: 'MOSS SFT', qwen_image_2_1: 'Qwen 2.1 Turbo' };
 export const imageGenerationModeTabs: { value: ImageGenerationMode; label: string }[] = [
 	{ value: 't2i', label: 'T2I' },

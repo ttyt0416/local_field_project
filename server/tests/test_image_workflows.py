@@ -216,6 +216,22 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(flux.default_steps, 16)
         self.assertEqual(flux.loras, [])
 
+    def test_missing_illustrious_checkpoint_keeps_preset_options_available(self) -> None:
+        object_info = {
+            "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["yue2.safetensors"]]}}},
+            "LoraLoader": {"input": {"required": {"lora_name": [["Illustrious/style.safetensors"]]}}},
+            "KSampler": {"input": {"required": {"sampler_name": [["euler"]], "scheduler": [["normal"]]}}},
+        }
+        with patch.object(comfyui, "_request_json", return_value=object_info):
+            options = comfyui._image_options("illustrious")
+
+        self.assertEqual(options.checkpoints, [])
+        self.assertEqual(options.default_checkpoint, "")
+        self.assertEqual(options.loras, ["Illustrious/style.safetensors"])
+        with self.assertRaises(HTTPException) as caught:
+            comfyui._validate_model_choice(self._request("illustrious"), options)
+        self.assertEqual(caught.exception.status_code, 422)
+
     def test_embedding_options_are_scoped_to_family_folder(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory) / "embeddings"

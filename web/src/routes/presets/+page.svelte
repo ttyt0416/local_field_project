@@ -15,7 +15,7 @@
 	import VideoPresetModal from '../../../components/presets/video-preset-modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
-	import { imageGenerationModeTabs, imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageGenerationFamilyTabs as imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
 
 	type PresetMediaTab = 'image' | 'video';
 	const presetMediaTabs: { value: PresetMediaTab; label: string }[] = [
@@ -46,6 +46,7 @@
 	let deleting = $state(false);
 	let defaultUpdatingId = $state<string | null>(null);
 	let presetRequestId = 0;
+	let optionsRequestId = 0;
 
 	onMount(() => {
 		void initialize();
@@ -68,6 +69,7 @@
 	}
 
 	async function loadImageOptions(type: ImagePresetType) {
+		const requestId = ++optionsRequestId;
 		const family = imagePresetCategories.find((category) => category.value === type)?.modelFamily ?? 'anima';
 		optionsLoading = true;
 		if (type === 'i2i_krea2' || type === 't2i_krea2') {
@@ -76,11 +78,12 @@
 			return;
 		}
 		try {
-			options = await apiJson<ImageOptions>(`generation/image/options?family=${family}`);
+			const loaded = await apiJson<ImageOptions>(`generation/image/options?family=${family}`);
+			if (requestId === optionsRequestId && activeType === type) options = loaded;
 		} catch (reason) {
-			error = getErrorMessage(reason);
+			if (requestId === optionsRequestId && activeType === type) error = getErrorMessage(reason);
 		} finally {
-			optionsLoading = false;
+			if (requestId === optionsRequestId && activeType === type) optionsLoading = false;
 		}
 	}
 
@@ -269,6 +272,10 @@
 					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (activeImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
 				{/if}
 			</section>
+
+			{#if activeType !== 'video' && !optionsLoading && options.checkpoints.length === 0 && !error}
+				<p role="status" class="text-sm text-muted-foreground">설치된 체크포인트가 없습니다. 저장된 프리셋은 계속 확인·수정할 수 있습니다.</p>
+			{/if}
 
 			<div class="flex justify-end">
 				<PrimaryButton onclick={openNew} disabled={activeType !== 'video' && (optionsLoading || isUnavailableKreaPreset)} deactive={isUnavailableKreaPreset}>

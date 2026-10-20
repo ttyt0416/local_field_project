@@ -41,3 +41,9 @@ Qwen Image 2.1 Turbo는 qwen_image_2_1 family로 I2I·다중 참조 생성을 �
 Qwen 기본 요청은 LLM 강화가 켜진다. qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors를 TextGenerate(type qwen_image)에 연결하고 공식 I2I 시스템 프롬프트, thinking=true, 최대 4096 tokens, temperature 1·top_k 20·top_p .95를 사용한다. 원본·추가 참조를 같은 순서로 1024 정사각형에 패딩해 배치 전달한다. 강화 출력이 TextEncodeQwenImage21의 prompt 입력으로 연결되며 끄면 원문을 사용한다. 준비 여부를 옵션으로 제공하고 누락 시 해당 실행만 차단한다. 별도 텍스트 전용 enhance-prompt API는 Qwen에서 거부하며 생성 그래프에서 이미지와 함께 처리한다. 강화 활성 여부는 생성 기록·프리셋·재생성에 보존한다. 요청 유효성 오류는 직렬화 가능한 context 제외 형식으로 반환한다.
 
 LLM이 토큰 제한 등으로 빈 문자열을 반환하면 StringCompare/ComfySwitchNode가 원래 수정 지시를 유지한다. 추론 과정 텍스트를 이미지 프롬프트에 넣지 않는다.
+
+
+Illustrious 체크포인트가 설치되지 않은 경우 옵션 API는 빈 checkpoints와 빈 default_checkpoint를 반환한다. 프리셋 조회·편집은 유지하고 실제 생성 요청은 기존 모델 검증에서 422로 차단한다. ComfyUI 연결 장애는 기존 오류로 처리한다.
+
+
+MOSS DMD LoRA의 설치 경로는 MOSS/lora_latest.safetensors로 통합한다. 원본 Hugging Face 저장소 이름은 MOSS-Image-SFT-8-steps-dmd이며 로컬 분류 이름과 구분한다.

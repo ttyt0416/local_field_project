@@ -100,7 +100,7 @@ ModelFamily = Literal["anima", "illustrious", "flux3_klein", "moss", "qwen_image
 _MOSS_CHECKPOINT = "moss_image_sft_bf16.safetensors"
 _MOSS_ENCODER = "qwen3.5_9b_int8_convrot.safetensors"
 _MOSS_VAE = "flux2-vae_small.safetensors"
-_MOSS_DMD_LORA = "MOSS-Image-SFT-8-steps-dmd/lora_latest.safetensors"
+_MOSS_DMD_LORA = "MOSS/lora_latest.safetensors"
 
 
 class ImageSource(BaseModel):
@@ -966,11 +966,11 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
     if model_family == "qwen_image_2_1":
         samplers, schedulers = ["euler"], [_QWEN21_TURBO_SCHEDULER]
     embeddings = _installed_family_files("embeddings", f"{model_family.title()}/")
-    if not checkpoints:
+    if not checkpoints and model_family != "illustrious":
         raise _ComfyUIError(f"ComfyUI에서 {model_family.title()} 체크포인트를 찾을 수 없습니다.")
     if not samplers or not schedulers:
         raise _ComfyUIError("ComfyUI에서 sampler 또는 scheduler 목록을 찾을 수 없습니다.")
-    default_checkpoint = preferred_checkpoint if preferred_checkpoint in checkpoints else checkpoints[0]
+    default_checkpoint = preferred_checkpoint if preferred_checkpoint in checkpoints else next(iter(checkpoints), "")
     return ImageGenerationOptions(
         model_family=model_family,
         prompt_enhancer_available=model_family == "qwen_image_2_1" and _QWEN21_PROMPT_ENHANCER in _node_choices(data, "CLIPLoader", "clip_name") and all(name in data for name in _QWEN21_PE_NODES),

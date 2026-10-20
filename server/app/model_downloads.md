@@ -9,3 +9,6 @@
 `GET /models/folders`는 모델 종류별 기존 폴더를 반환하고 hidden 경로는 제외한다. `POST /models/folders`는 선택한 기존 parent 아래에 slash·backslash·hidden name이 없는 단일 폴더 이름만 새로 만든다. symlink와 root 탈출, 존재하지 않는 parent, 중복 폴더를 거부한다.
 
 `GET /models/installed`는 여섯 ComfyUI 모델 폴더의 현재 파일 목록을 반환하고, `DELETE /models/installed/{model_type}/{filename}`는 허용된 모델 폴더 안의 설치 파일을 삭제한다. 삭제 endpoint는 로그인과 모델 확장자를 확인하고 경로 탈출을 차단한다. `GET /models/downloads`는 로그인한 사용자의 최근 download job을 반환하며 `active_only=true`이면 `queued`와 `downloading`만 반환한다. 실제 Civitai 파일 다운로드는 server worker가 수행하며, 이 구현 검증에서는 대용량 모델 파일을 받거나 ComfyUI inference를 실행하지 않는다.
+
+
+MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model 표기는 MOSS family로 통합한다. MOSS checkpoint는 Diffusion Model로 분류하고, 타입별로 기존 MOSS 폴더가 있으면 자동 선택한다. LoRA는 loras/MOSS를 공통 저장 폴더로 사용한다.

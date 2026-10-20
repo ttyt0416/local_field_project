@@ -5,3 +5,6 @@ Anima·Illustrious의 기존 loader·LoRA·I2I·prefix·source ownership 계약�
 다중 참조의 두 모델 간 슬롯 순서, 혼합된 file_id·file_index, 업로드 index 누락·중복과 Anima 추가 참조 거부를 검사한다.
 
 편집 family 공통 검증은 모델별 스텝·스케줄을 사용해 Qwen Turbo의 고정 샘플링과 기존 FLUX 검증을 함께 유지한다.
+
+
+Illustrious 체크포인트 미설치 상태에서도 옵션 조회가 성공하고, 설치된 LoRA·샘플러 목록은 유지하며 없는 체크포인트로 생성하면 422가 발생하는 회귀 검증을 포함한다.
