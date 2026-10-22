@@ -636,6 +636,9 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         size_bytes BIGINT NOT NULL DEFAULT 0
     )
     """,
+    "ALTER TABLE three_d_generations ADD COLUMN IF NOT EXISTS generation_mode VARCHAR(16) NOT NULL DEFAULT 'mesh'",
+    "ALTER TABLE three_d_generations ADD COLUMN IF NOT EXISTS rigging_options JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE three_d_generations ADD COLUMN IF NOT EXISTS error_message TEXT",
     "CREATE INDEX IF NOT EXISTS three_d_generations_user_created_idx ON three_d_generations(user_id, created_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS model_downloads (
@@ -1939,7 +1942,7 @@ def _video_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
 _THREE_D_FIELDS = (
     "id, user_id, prompt_id, client_id, status, stage, preset, seed, remove_background, padding, "
     "source_file_id, source_filename, storage_file_id, filename, subfolder, model_type, view_count, "
-    "is_favorite, created_at, completed_at, elapsed_seconds, size_bytes"
+    "is_favorite, created_at, completed_at, elapsed_seconds, size_bytes, generation_mode, rigging_options, error_message"
 )
 
 
@@ -1954,6 +1957,8 @@ def create_three_d_generation(
     padding: float,
     source_file_id: str,
     source_filename: str,
+    generation_mode: str = 'mesh',
+    rigging_options: dict[str, Any] | None = None,
 ) -> tuple[uuid.UUID, datetime]:
     generation_id = uuid.uuid4()
     with get_connection() as connection:
@@ -1961,8 +1966,8 @@ def create_three_d_generation(
             """
             INSERT INTO three_d_generations
                 (id, user_id, prompt_id, client_id, preset, seed, remove_background, padding,
-                 source_file_id, source_filename)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 source_file_id, source_filename, generation_mode, rigging_options)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
@@ -1976,6 +1981,8 @@ def create_three_d_generation(
                 padding,
                 source_file_id,
                 source_filename,
+                generation_mode,
+                json.dumps(rigging_options or {}),
             ),
         ).fetchone()
         if row is None:
@@ -2131,12 +2138,14 @@ def update_three_d_generation_status(
     subfolder: str = "",
     model_type: str = "output",
     size_bytes: int | None = None,
+    error_message: str | None = None,
 ) -> None:
     with get_connection() as connection:
         connection.execute(
             """
             UPDATE three_d_generations
             SET status = %s,
+                error_message = COALESCE(%s, error_message),
                 stage = COALESCE(%s, stage),
                 storage_file_id = COALESCE(%s, storage_file_id),
                 filename = COALESCE(%s, filename),
@@ -2151,6 +2160,7 @@ def update_three_d_generation_status(
             """,
             (
                 status,
+                error_message,
                 stage,
                 storage_file_id,
                 filename,

@@ -48,10 +48,12 @@ services:
       EMBEDDING_URL: http://embedding:30005
       HARDWARE_MONITOR_URL: http://host.docker.internal:8091
       COMFYUI_URL: http://host.docker.internal:8188
+      RIGGING_URL: http://host.docker.internal:8190
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /home/yoon/ComfyUI/models:/comfyui-models
+      - ./rigging/.runtime/token:/run/secrets/rigging_token:ro
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

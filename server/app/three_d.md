@@ -7,3 +7,5 @@ Presets: preview = 12 steps / 32,768 Gaussians / mesh resolution 192; standard =
 The output path is native Gaussian-to-coloured-mesh extraction followed by SaveGLB. GLB conversion is experimental, uses vertex colours and can lose thin or small geometry; it does not guarantee UV textures, watertightness, rigging or print-ready meshes. Stage mapping covers input/background, conditioning/sampling, decode and mesh export. Existing GLB validation, Storage upload, status, SSE, cancel and Vault remain. Terminal DB results do not depend on retained ComfyUI history.
 
 Model: `VAST-AI/TripoSplat` revision `56a96e603204ec410c4da60c13ea4fa09a2169a9`. Reuses shared BiRefNet; adds only the diffusion model, ViT-H vision encoder, Flux2 VAE and splat decoder. Shared services and upstream ComfyUI core are unchanged.
+
+3D API는 generation_mode=rigging row의 상태 조회·SSE·취소를 rigging.py에 위임한다. MESH의 TripoSplat graph는 변경하지 않는다. 리깅 status에는 generation_mode와 nullable message를 포함하고, ComfyUI queue 조회를 사용하지 않는다.

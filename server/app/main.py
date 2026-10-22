@@ -19,6 +19,7 @@ from .model_downloads import router as model_downloads_router, run_model_downloa
 from .music import router as music_router
 from .presets import router as presets_router
 from .three_d import router as three_d_router
+from .rigging import router as rigging_router
 from .uploads import router as uploads_router
 from .vault import router as vault_router
 from .video import router as video_router
@@ -150,6 +151,7 @@ app.include_router(hardware_router)
 app.include_router(model_downloads_router)
 app.include_router(music_router)
 app.include_router(presets_router)
+app.include_router(rigging_router)
 app.include_router(three_d_router)
 app.include_router(uploads_router)
 app.include_router(vault_router)

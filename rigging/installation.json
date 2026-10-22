@@ -1,0 +1,23 @@
+{
+  "source": "https://github.com/VAST-AI-Research/SkinTokens",
+  "commit": "273b691d35989d71cd17ff2895fdc735097b92d1",
+  "installed_path": "/home/yoon/dev/SkinTokens",
+  "architecture": "aarch64",
+  "gpu": "NVIDIA GB10",
+  "python": "3.12.3",
+  "torch": "2.14.0+cu130",
+  "transformers": "4.57.6",
+  "diffusers": "0.36.0",
+  "attention": "PyTorch SDPA",
+  "input_format": "GLB 2.0",
+  "checkpoints": {
+    "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt": {
+      "bytes": 1131603979,
+      "sha256": "f4e4706a11cfb520cdde65156a0358545e4fbf8f36237aca01ea5e79d5cb5692"
+    },
+    "experiments/skin_vae_2_10_32768/last.ckpt": {
+      "bytes": 487311745,
+      "sha256": "4843f49e58afff88345806b94ca82e6cc9d8def6e7432e2853c677b154de0ed4"
+    }
+  }
+}

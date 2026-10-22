@@ -25,6 +25,7 @@ VideoMode = Literal["i2v", "fl2v", "r2v"]
 
 
 class ActiveGeneration(BaseModel):
+    generation_mode: Literal['mesh', 'rigging'] | None = None
     kind: GenerationKind
     prompt_id: str
     client_id: str
@@ -89,6 +90,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
         *(
             {
                 "kind": "3d",
+                "generation_mode": generation.get('generation_mode', 'mesh'),
                 "prompt_id": generation["prompt_id"],
                 "client_id": generation["client_id"],
                 "generation_id": str(generation["id"]),

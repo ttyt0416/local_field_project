@@ -11,3 +11,5 @@ FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i
 MOSS 분류는 T2I 전용이며 선택 시 I2I 방식 탭을 표시하지 않는다.
 
 Qwen 2.1 Turbo 분류는 I2I/R2I 전용이므로 T2I 방식 탭을 표시하지 않는다.
+
+3D 카드에 MESH와 RIGGING을 구분해 표시한다. RIGGING 카드에는 메시 생성용 프리셋·Seed 대신 SkinTokens 자동 리깅을 표시하며, 리깅 모델 로딩·뼈대 생성·스킨 가중치 단계를 표시한다.

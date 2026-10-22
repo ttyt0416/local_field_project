@@ -191,6 +191,9 @@ class VaultVideoDetail(VaultVideoSummary):
 
 
 class VaultThreeDSummary(BaseModel):
+    generation_mode: str = 'mesh'
+    source_model_url: str | None = None
+    rigging_options: dict = {}
     id: UUID
     prompt_id: str = ""
     client_id: str = ""
@@ -571,8 +574,14 @@ def delete_vault_three_d(
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
     _cancel_active_generation(generation, "3d", user)
-    storage_file_id = generation.get("storage_file_id")
-    if storage_file_id and not has_media_asset(storage_file_id, user.id):
+    if generation.get('generation_mode') == 'rigging':
+        generation = get_three_d_generation_by_id(generation_id, user.id) or generation
+    candidates = [generation.get('storage_file_id')]
+    if generation.get('generation_mode') == 'rigging':
+        candidates.append(generation.get('source_file_id'))
+    for storage_file_id in dict.fromkeys(candidates):
+        if not storage_file_id or has_media_asset(storage_file_id, user.id) or has_generation_storage_reference_outside(storage_file_id, user.id, [generation_id]):
+            continue
         if not storage_enabled():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
         try:
@@ -699,15 +708,24 @@ def _delete_generation_rows(
         return 0
     for generation in generations:
         _cancel_active_generation(generation, media_type, user)
+    if media_type == '3d':
+        generations = [
+            (get_three_d_generation_by_id(generation['id'], user.id) or generation)
+            if generation.get('generation_mode') == 'rigging' else generation
+            for generation in generations
+        ]
     storage_file_ids = list(
         dict.fromkeys(
-            generation["storage_file_id"]
+            file_id
             for generation in generations
-            if isinstance(generation.get("storage_file_id"), str)
-            and generation["storage_file_id"]
-            and not has_media_asset(generation["storage_file_id"], user.id)
+            for file_id in ([generation.get('storage_file_id'), generation.get('source_file_id')]
+                            if media_type == '3d' and generation.get('generation_mode') == 'rigging'
+                            else [generation.get('storage_file_id')])
+            if isinstance(file_id, str)
+            and file_id
+            and not has_media_asset(file_id, user.id)
             and not has_generation_storage_reference_outside(
-                generation["storage_file_id"], user.id, generation_ids
+                file_id, user.id, generation_ids
             )
         )
     )
@@ -933,7 +951,11 @@ def _three_d_summary(
         )
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    is_rigging = generation.get('generation_mode') == 'rigging'
     return VaultThreeDSummary(
+        generation_mode=generation.get('generation_mode', 'mesh'),
+        rigging_options=generation.get('rigging_options') or {},
+        source_model_url=source_image_url if is_rigging else None,
         id=generation["id"],
         prompt_id=str(generation.get("prompt_id") or ""),
         client_id=str(generation.get("client_id") or ""),
@@ -943,7 +965,7 @@ def _three_d_summary(
         preset=generation["preset"],
         seed=generation["seed"],
         model_url=model_url,
-        source_image_url=source_image_url,
+        source_image_url=None if is_rigging else source_image_url,
         view_count=generation["view_count"],
         is_favorite=generation["is_favorite"],
         created_at=generation["created_at"],

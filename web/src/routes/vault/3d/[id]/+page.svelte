@@ -23,6 +23,9 @@
 		prompt_id: string;
 		client_id: string;
 		media_type: '3d';
+		generation_mode?: 'mesh' | 'rigging';
+		source_model_url?: string | null;
+		rigging_options?: { temperature?: number; num_beams?: number };
 		status: string;
 		stage?: string;
 		preset: 'preview' | 'standard' | 'high';
@@ -90,6 +93,7 @@
 		if (generationJobStore.jobs[threeDJobKey]) return;
 		generationJobStore.track({
 			kind: '3d',
+			generationMode: model.generation_mode ?? 'mesh',
 			promptId: model.prompt_id,
 			clientId: model.client_id,
 			generationId: model.id,
@@ -152,7 +156,7 @@
 
 	function stageLabel(stage: string) {
 		return {
-			queued: '생성 대기 중', preparing: '작업 준비 중', preprocessing: '소스 이미지 전처리 중', background_removal: '배경 제거 중', background_cleanup: '배경과 오브젝트 경계 정리 중', conditioning: '3D 조건 분석 중', structure: '3D 구조 생성 중', shape: '3D 형상 생성 중', sampling: '3D 구조 생성 중', decoding: '3D 표현 변환 중', texture: '텍스처 생성 중', mesh: '메시 생성 중', mesh_extraction: '메시 추출 중', texture_baking: '텍스처 생성 중', storage: '모델 파일 저장 중', exporting: '모델 파일 내보내는 중', completed: '3D 모델 생성 완료'
+			loading_model: '리깅 모델 준비 중', rigging: '뼈대와 스킨 가중치 생성 중', skinning: '스킨 가중치 적용 중', queued: '생성 대기 중', preparing: '작업 준비 중', preprocessing: '소스 이미지 전처리 중', background_removal: '배경 제거 중', background_cleanup: '배경과 오브젝트 경계 정리 중', conditioning: '3D 조건 분석 중', structure: '3D 구조 생성 중', shape: '3D 형상 생성 중', sampling: '3D 구조 생성 중', decoding: '3D 표현 변환 중', texture: '텍스처 생성 중', mesh: '메시 생성 중', mesh_extraction: '메시 추출 중', texture_baking: '텍스처 생성 중', storage: '모델 파일 저장 중', exporting: '모델 파일 내보내는 중', completed: '3D 모델 생성 완료'
 		}[stage] ?? '3D 모델 생성 중';
 	}
 
@@ -206,14 +210,23 @@
 						<dl class="mt-5 space-y-4 text-sm">
 							<div><dt class="text-muted-foreground">타입</dt><dd class="mt-1 font-medium">3D</dd></div>
 							<div><dt class="text-muted-foreground">상태</dt><dd class="mt-1 font-medium">{threeDActive ? stageLabel(threeDStage) : statusLabel(threeDStatus)}</dd></div>
+							{#if generation.generation_mode === 'rigging'}
+								<div><dt class="text-muted-foreground">작업</dt><dd class="mt-1 font-medium">RIGGING · SkinTokens</dd></div>
+								<div><dt class="text-muted-foreground">Temperature</dt><dd class="mt-1 font-medium">{generation.rigging_options?.temperature ?? 1}</dd></div>
+								<div><dt class="text-muted-foreground">Beam 수</dt><dd class="mt-1 font-medium">{generation.rigging_options?.num_beams ?? 10}</dd></div>
+							{:else}
 							<div><dt class="text-muted-foreground">품질 프리셋</dt><dd class="mt-1 font-medium">{presetLabel(generation.preset)}</dd></div>
 							<div><dt class="text-muted-foreground">Seed</dt><dd class="mt-1 break-all font-medium">{generation.seed ?? '무작위'}</dd></div>
 							<div><dt class="text-muted-foreground">배경 제거</dt><dd class="mt-1 font-medium">{generation.remove_background ? '사용' : '사용 안 함'}</dd></div>
 							<div><dt class="text-muted-foreground">오브젝트 여백</dt><dd class="mt-1 font-medium">{generation.padding}</dd></div>
+							{/if}
 							<div><dt class="text-muted-foreground">소스 파일</dt><dd class="mt-1 break-all font-medium">{generation.source_filename}</dd></div>
 							<div><dt class="text-muted-foreground">파일 용량</dt><dd class="mt-1 font-medium">{formatFileSize(generation.file_size_bytes)}</dd></div>
 						</dl>
 					</div>
+					{#if generation.source_model_url}
+						<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6"><Typography as="h2" variant="h2">원본 메시</Typography><ModelViewer source={generation.source_model_url} sourceType="server" alt="리깅 전 원본 메시" class="mt-4 h-64" /></div>
+					{/if}
 					{#if generation.source_image_url}
 						<div class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6"><Typography as="h2" variant="h2">소스 이미지</Typography><ImageMedia source={generation.source_image_url} sourceType={imageSourceType(generation.source_image_url)} alt="3D 모델 소스 이미지" class="mt-4 max-h-72" /></div>
 					{/if}

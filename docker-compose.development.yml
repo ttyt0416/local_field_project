@@ -46,10 +46,12 @@ services:
       - /home/yoon/.civita.env
     environment:
       EMBEDDING_URL: http://embedding:30005
+      RIGGING_URL: http://host.docker.internal:8190
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /home/yoon/ComfyUI/models:/comfyui-models
+      - ./rigging/.runtime/token:/run/secrets/rigging_token:ro
     ports:
       - "8080:8080"
     depends_on:

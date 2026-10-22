@@ -23,3 +23,5 @@ MOSS SFT 생성 기록을 family 필터에서 조회한다. 상세 응답의 mos
 Qwen 2.1 Turbo family(qwen_image_2_1)의 목록·상세·참조 이미지 조회를 지원한다.
 
 이미지 상세에 prompt_enhancement_enabled를 반환하며 기존 improved_prompt가 있는 기록도 강화 활성으로 읽는다. Qwen 생성 시 LLM 강화 상태를 재생성에 복원한다.
+
+3D summary/detail은 generation_mode, rigging_options, source_model_url을 포함한다. 리깅 source GLB는 source_image_url에 넣지 않는다. 리깅 결과와 업로드 원본을 삭제할 때 다른 generation의 참조를 확인하고, MESH 결과를 리깅 원본으로 사용 중이면 원본 Storage 파일을 보존한다. 진행 중인 리깅 삭제는 취소 후 현재 row를 다시 읽어 완료와 취소의 경합도 처리한다.

@@ -7,6 +7,7 @@ export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'faile
 export type GenerationJob = {
 	key: string;
 	kind: GenerationJobKind;
+	generationMode?: 'mesh' | 'rigging';
 	promptId: string;
 	clientId: string;
 	generationId: string;
@@ -34,6 +35,7 @@ export type GenerationJob = {
 
 type ActiveGenerationResponse = {
 	kind: GenerationJobKind;
+	generation_mode?: 'mesh' | 'rigging';
 	prompt_id: string;
 	client_id: string;
 	generation_id: string;
@@ -115,6 +117,7 @@ class GenerationJobStore {
 				this.jobs[key] = {
 					key,
 					kind: active.kind,
+					generationMode: active.generation_mode,
 					promptId: active.prompt_id,
 					clientId: active.client_id,
 					generationId: active.generation_id,
@@ -230,9 +233,13 @@ class GenerationJobStore {
 				: job.kind === 'music'
 					? `generation/music/${job.promptId}/cancel`
 				: `generation/video/${job.mode}/${job.promptId}/cancel`;
-		await apiJson(path, { method: 'POST' });
-		this.update(key, { status: 'cancelled', queuePosition: null, error: undefined });
-		this.streams.get(key)?.abort();
+		const result = await apiJson<{ status?: GenerationJobStatus }>(path, { method: 'POST' });
+		if (job.kind === '3d') {
+			this.applyEvent(key, result.status ?? 'status', JSON.stringify(result));
+		} else {
+			this.update(key, { status: 'cancelled', queuePosition: null, error: undefined });
+		}
+		if (isTerminal(this.jobs[key]?.status ?? 'failed')) this.streams.get(key)?.abort();
 	}
 
 	private update(key: string, changes: Partial<GenerationJob>) {

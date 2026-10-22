@@ -1,0 +1,9 @@
+transformers>=4.57,<5
+diffusers>=0.35,<0.37
+python-box
+lightning
+addict
+trimesh
+fast-simplification
+pygltflib
+rtree

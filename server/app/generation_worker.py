@@ -171,6 +171,8 @@ async def run_generation_reconciler(stop_event: asyncio.Event) -> None:
                 active = await asyncio.to_thread(_active_generations)
                 active_keys = set()
                 for kind, generation in active:
+                    if kind == '3d' and generation.get('generation_mode') == 'rigging':
+                        continue
                     key = generation_key(kind, generation["user_id"], generation["prompt_id"])
                     active_keys.add(key)
                     task = listeners.get(key)

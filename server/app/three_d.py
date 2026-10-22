@@ -95,6 +95,7 @@ class ThreeDModelOutput(BaseModel):
 
 
 class ThreeDGenerationAccepted(BaseModel):
+    generation_mode: Literal['mesh', 'rigging'] = 'mesh'
     prompt_id: str
     client_id: str
     generation_id: str
@@ -108,6 +109,8 @@ class ThreeDGenerationAccepted(BaseModel):
 
 
 class ThreeDGenerationStatus(BaseModel):
+    generation_mode: Literal['mesh', 'rigging'] = 'mesh'
+    message: str | None = None
     prompt_id: str
     status: str
     stage: str
@@ -213,6 +216,9 @@ def cancel_three_d(
     user: UserResponse = Depends(current_user),
 ) -> ThreeDGenerationStatus:
     generation = _require_generation(prompt_id, user.id)
+    if generation.get('generation_mode') == 'rigging':
+        from .rigging import cancel_rigging
+        return cancel_rigging(generation, user.id)
     if generation["status"] in {"completed", "failed", "cancelled"}:
         return _status_from_row(generation, user.id)
     if generation["status"] not in {"queued", "processing"}:
@@ -375,6 +381,9 @@ def _readiness() -> tuple[list[str], list[str]]:
 def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> ThreeDGenerationStatus:
     if generation["status"] in {"completed", "failed", "cancelled"}:
         return _status_from_row(generation, user_id)
+    if generation.get('generation_mode') == 'rigging':
+        from .rigging import history_status
+        return history_status(generation, user_id)
     prompt_id = generation["prompt_id"]
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
@@ -499,13 +508,15 @@ def _status_from_row(
         )
     created_at = generation.get("created_at")
     return ThreeDGenerationStatus(
+        generation_mode=generation.get('generation_mode', 'mesh'),
+        message=generation.get('error_message'),
         prompt_id=generation["prompt_id"],
         status=generation["status"],
         stage=generation["stage"],
         progress=100 if generation["status"] == "completed" else float(progress.get("progress", 0)),
         queue_position=progress.get("queue_position") or (
             _queue_position(generation["prompt_id"])
-            if generation["status"] in {"queued", "processing"}
+            if generation["status"] in {"queued", "processing"} and generation.get('generation_mode') != 'rigging'
             else None
         ),
         created_at=created_at,

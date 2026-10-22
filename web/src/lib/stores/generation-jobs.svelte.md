@@ -8,3 +8,5 @@
 - terminal event는 메모리 상태에 반영한다. `completed`, `failed`, `cancelled`는 terminal 상태로 취급하며 생성 화면의 대기 promise와 SSE 연결을 종료한다. 생성 화면은 store의 가장 최근 job을 결과 패널에 가져오지 않고, 해당 화면에서 새로 등록한 job만 표시해 완료된 이전 결과가 새 생성 전 결과물로 보이지 않게 한다.
 - 3D job은 `generation/3d/{prompt_id}/events`를 구독하고 같은 경로의 cancel API를 사용한다. SSE의 `stage`와 완료된 `model` URL·파일 정보를 보관해 TRELLIS.2 화면이 단계 중심 진행 상태와 결과 모델을 표시한다.
 - 음악 job은 `generation/music/{prompt_id}/events`를 구독하고 같은 경로의 cancel API를 사용한다. 완료된 audio URL·filename·size를 store에 보관한다.
+
+3D job의 generationMode(mesh|rigging)를 생성 응답과 active snapshot에서 보존한다. RIGGING 탭은 해당 모드의 최근 메모리 job을 복원하고 MESH 탭은 진행 중인 메시 작업을 복원한다. 탭 전환으로 컴포넌트가 unmount되어도 전역 SSE는 유지된다. 3D 취소 응답의 실제 terminal 상태와 결과를 반영해 완료와 취소가 경합할 때 완료 결과를 잃지 않는다.

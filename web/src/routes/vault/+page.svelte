@@ -75,6 +75,7 @@
 		prompt_id: string;
 		client_id: string;
 		media_type: '3d';
+		generation_mode?: 'mesh' | 'rigging';
 		status: string;
 		stage?: string;
 		preset: 'preview' | 'standard' | 'high';
@@ -521,7 +522,7 @@
 
 	function threeDStageLabel(stage: string | undefined) {
 		return {
-			queued: '생성 대기 중', preparing: '작업 준비 중', preprocessing: '소스 이미지 전처리 중', background_removal: '배경 제거 중', background_cleanup: '배경과 오브젝트 경계 정리 중', conditioning: '3D 조건 분석 중', structure: '3D 구조 생성 중', shape: '3D 형상 생성 중', sampling: '3D 구조 생성 중', decoding: '3D 표현 변환 중', texture: '텍스처 생성 중', mesh: '메시 생성 중', mesh_extraction: '메시 추출 중', texture_baking: '텍스처 생성 중', storage: '모델 파일 저장 중', exporting: '모델 파일 내보내는 중'
+			loading_model: '리깅 모델 준비 중', rigging: '뼈대와 스킨 가중치 생성 중', skinning: '스킨 가중치 적용 중', queued: '생성 대기 중', preparing: '작업 준비 중', preprocessing: '소스 이미지 전처리 중', background_removal: '배경 제거 중', background_cleanup: '배경과 오브젝트 경계 정리 중', conditioning: '3D 조건 분석 중', structure: '3D 구조 생성 중', shape: '3D 형상 생성 중', sampling: '3D 구조 생성 중', decoding: '3D 표현 변환 중', texture: '텍스처 생성 중', mesh: '메시 생성 중', mesh_extraction: '메시 추출 중', texture_baking: '텍스처 생성 중', storage: '모델 파일 저장 중', exporting: '모델 파일 내보내는 중'
 	}[stage ?? ''] ?? '3D 모델 생성 중';
 	}
 </script>
@@ -750,8 +751,8 @@
 								</div>
 								<div class="space-y-3 p-4">
 									<a href={`/vault/3d/${model.id}`} aria-label={`${modelPresetLabel(model.preset)} 3D 모델 상세 보기`} class="block space-y-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>3D · {statusLabel(job?.status ?? model.status)}</span><span>{formatKstDateTime(model.created_at)}</span></div>
-										<p class="text-sm font-medium text-foreground transition hover:text-primary">{modelPresetLabel(model.preset)} 프리셋 · Seed {model.seed ?? '무작위'}</p>
+										<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground"><span>{model.generation_mode === 'rigging' ? 'RIGGING' : 'MESH'} · {statusLabel(job?.status ?? model.status)}</span><span>{formatKstDateTime(model.created_at)}</span></div>
+										<p class="text-sm font-medium text-foreground transition hover:text-primary">{#if model.generation_mode === 'rigging'}SkinTokens · 자동 리깅{:else}{modelPresetLabel(model.preset)} 프리셋 · Seed {model.seed ?? '무작위'}{/if}</p>
 									</a>
 									<div class="flex items-end justify-between gap-3">
 										<div class="min-w-0 space-y-0.5 text-xs text-muted-foreground"><p>소요 {formatElapsedSeconds(job ? generationJobStore.elapsedSeconds(job, generationJobStore.now) : model.elapsed_seconds)}</p><p>용량 {formatFileSize(model.file_size_bytes)}</p><p>조회 {model.view_count}</p></div>
