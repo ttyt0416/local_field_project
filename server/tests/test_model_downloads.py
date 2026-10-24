@@ -45,6 +45,12 @@ from app.model_downloads import (
 
 
 class ModelDownloadsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from app import model_downloads as models
+        patcher = patch("app.model_downloads.get_effective_token", side_effect=lambda _user, provider: models.settings.civitai_token if provider == "civitai" else models.settings.hugging_face_token)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_model_page_source_and_version_paths_are_distinct(self) -> None:
         self.assertEqual(
             _parse_civitai_source("https://civitai.red/models/1145743/example"),

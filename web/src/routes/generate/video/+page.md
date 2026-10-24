@@ -15,3 +15,5 @@ FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i
 저장 이미지 소스에서 Qwen 2.1 Turbo 생성물을 선택할 수 있으며 해당 family는 I2I 분류만 표시한다.
 
 MOSS 생성물 소스 선택은 T2I 방식만 표시해 Qwen의 I2I/R2I 분류와 구분한다.
+
+전체 스타일·배경과 각 장면에 동영상 PromptLibrary를 연결한다. 저장 문장을 뒤에 추가할 때 setPrompt/updateScenePrompt를 통해 기존 개선 결과를 초기화해 변경된 원문과 맞지 않는 개선문이 남지 않도록 한다.

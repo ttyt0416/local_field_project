@@ -35,6 +35,11 @@ class Response(io.BytesIO):
 
 
 class HuggingFaceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = patch("app.model_downloads.get_effective_token", side_effect=lambda _user, provider: models.settings.civitai_token if provider == "civitai" else models.settings.hugging_face_token)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_parses_repository_file_folder_and_encoded_revision_links(self) -> None:
         for source, revision, path, file in (
             ("owner/repo", "main", "", False),
@@ -141,6 +146,9 @@ class HuggingFaceTest(unittest.TestCase):
 
 class HuggingFaceWorkerTest(unittest.TestCase):
     def setUp(self) -> None:
+        patcher = patch("app.model_downloads.get_effective_token", return_value="")
+        patcher.start()
+        self.addCleanup(patcher.stop)
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.target = Path(temporary.name) / "checkpoints/model.safetensors"

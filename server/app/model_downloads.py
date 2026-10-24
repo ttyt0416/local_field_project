@@ -9,6 +9,8 @@ import shutil
 import time
 import uuid
 from dataclasses import dataclass
+from contextvars import ContextVar
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -26,6 +28,7 @@ from pydantic import BaseModel, Field
 from .auth import UserResponse, current_user
 from .configs.constants import settings
 from . import hugging_face as hf
+from .download_tokens import CredentialError, get_effective_token
 from .database import (
     cancel_model_download,
     claim_model_download,
@@ -61,6 +64,23 @@ _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 _DOWNLOAD_PROGRESS_INTERVAL = 1.0
 _DOWNLOAD_MAX_REDIRECTS = 5
 _MODEL_FILES_LOCK = RLock()
+_CIVITAI_REQUEST_TOKEN: ContextVar[str] = ContextVar("civitai_request_token", default="")
+
+
+def _user_token(user_id: uuid.UUID | None, provider: Literal["civitai", "hugging_face"]) -> str:
+    try:
+        return get_effective_token(user_id, provider)
+    except CredentialError as exc:
+        raise CivitaiError(str(exc), 503) from None
+
+
+@contextmanager
+def _civitai_token_scope(token: str):
+    scope = _CIVITAI_REQUEST_TOKEN.set(token)
+    try:
+        yield
+    finally:
+        _CIVITAI_REQUEST_TOKEN.reset(scope)
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -547,10 +567,11 @@ def lookup_civitai_model(
     source: str = Query(min_length=1, max_length=2048),
     model_type: ModelType = "checkpoint",
     file_index: int | None = Query(default=None, ge=0),
-    _: UserResponse = Depends(current_user),
+    user: UserResponse = Depends(current_user),
 ) -> CivitaiLookupResponse:
     try:
-        version, target_model_type, selected_index, versions = _resolve_civitai_source(source, model_type, file_index)
+        with _civitai_token_scope(_user_token(user.id, "civitai")):
+            version, target_model_type, selected_index, versions = _resolve_civitai_source(source, model_type, file_index)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return _lookup_response(version, target_model_type, selected_index, versions)
@@ -561,13 +582,15 @@ def download_civitai_model(
     payload: ModelDownloadRequest,
     user: UserResponse = Depends(current_user),
 ) -> ModelDownloadResponse:
-    if not settings.civitai_token.strip():
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Civitai 토큰이 설정되지 않았습니다.")
     root = Path(settings.comfyui_models_path)
     if not root.is_dir():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더를 찾을 수 없습니다.")
     try:
-        version, target_model_type, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index)
+        token = _user_token(user.id, "civitai")
+        if not token:
+            raise CivitaiError("다운로드 관리에서 Civitai API 토큰을 저장해 주세요.", 503)
+        with _civitai_token_scope(token):
+            version, target_model_type, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index)
         selected_file = version.files[selected_index]
         filename = _safe_filename(selected_file.name)
     except CivitaiError as exc:
@@ -600,15 +623,15 @@ def download_civitai_model(
 def lookup_hugging_face_model(
     source: str = Query(min_length=1, max_length=2048),
     revision: str = Query(default="", max_length=200),
-    _: UserResponse = Depends(current_user),
+    user: UserResponse = Depends(current_user),
 ) -> HuggingFaceLookupResponse:
     try:
         parsed = hf.parse_source(source, revision)
-        repository = hf.fetch_repository(parsed.repo_id, parsed.revision, settings.hugging_face_token.strip(), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        repository = hf.fetch_repository(parsed.repo_id, parsed.revision, _user_token(user.id, "hugging_face"), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
         files = [file for file in repository.files if not parsed.path or (file.path == parsed.path if parsed.is_file else file.path.startswith(f"{parsed.path}/"))]
         if not files:
             raise hf.HuggingFaceError("이 위치에서 다운로드할 수 있는 모델 파일을 찾지 못했습니다.", 404)
-    except hf.HuggingFaceError as exc:
+    except (hf.HuggingFaceError, CivitaiError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return HuggingFaceLookupResponse(
         repo_id=repository.repo_id,
@@ -623,7 +646,7 @@ def lookup_hugging_face_model(
 def download_hugging_face_model(payload: HuggingFaceDownloadRequest, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
     try:
         hf.safe_repo_path(payload.filename)
-        repository = hf.fetch_repository(payload.repo_id, payload.revision, settings.hugging_face_token.strip(), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        repository = hf.fetch_repository(payload.repo_id, payload.revision, _user_token(user.id, "hugging_face"), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
         if not any(file.path == payload.filename for file in repository.files):
             raise hf.HuggingFaceError("선택한 리비전에 모델 파일이 없습니다. 다시 조회해 주세요.", 404)
         filename = _safe_filename(Path(payload.filename).name)
@@ -903,8 +926,11 @@ def _fetch_civitai_payload(path: str, not_found_message: str) -> dict[str, Any]:
         f"{_CIVITAI_API_BASE}/{path}",
         headers={"Accept": "application/json", "User-Agent": "LocalField/0.1"},
     )
+    token = _CIVITAI_REQUEST_TOKEN.get()
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urlopen(request, timeout=30) as response:
+        with (_NO_REDIRECT_OPENER.open(request, timeout=30) if token else urlopen(request, timeout=30)) as response:
             payload = json.loads(response.read())
     except UrlHTTPError as exc:
         if exc.code == 404:
@@ -1064,25 +1090,28 @@ def _open_download(url: str, token: str, resume_from: int):
 
 def _process_model_download(job: dict[str, Any]) -> None:
     if job.get("provider", "civitai") == "hugging_face":
+        token = _user_token(job.get("user_id"), "hugging_face")
         repo = hf.safe_repo_id(job["source_repo"])
         commit = hf.safe_revision(job["source_revision"], pinned=True)
         path = hf.safe_repo_path(job["source_filename"])
-        repository = hf.fetch_repository(repo, commit, settings.hugging_face_token.strip(), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        repository = hf.fetch_repository(repo, commit, token, _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
         selected = next((file for file in repository.files if file.path == path), None)
         if selected is None:
             raise hf.HuggingFaceError("선택한 Hugging Face 파일을 찾을 수 없습니다.", 404)
         url = hf.file_url(repo, commit, path)
-        _transfer_model_download(job, selected.size_bytes, selected.sha256, lambda resume: hf.open_download(url, settings.hugging_face_token.strip(), resume, _NO_REDIRECT_OPENER))
+        _transfer_model_download(job, selected.size_bytes, selected.sha256, lambda resume: hf.open_download(url, token, resume, _NO_REDIRECT_OPENER))
         return
     if job.get("provider", "civitai") != "civitai":
         raise CivitaiError("지원하지 않는 다운로드 출처입니다.")
-    if not settings.civitai_token.strip():
+    token = _user_token(job.get("user_id"), "civitai")
+    if not token:
         raise CivitaiError("Civitai 토큰이 설정되지 않았습니다.")
-    version = _fetch_version(int(job["version_id"]))
+    with _civitai_token_scope(token):
+        version = _fetch_version(int(job["version_id"]))
     model_type = cast(ModelType, job["model_type"])
     selected_index = _select_file_index(version, model_type, int(job["file_index"]))
     selected_file = version.files[selected_index]
-    _transfer_model_download(job, selected_file.size_bytes, selected_file.sha256, lambda resume: _open_download(selected_file.download_url, settings.civitai_token.strip(), resume))
+    _transfer_model_download(job, selected_file.size_bytes, selected_file.sha256, lambda resume: _open_download(selected_file.download_url, token, resume))
 
 
 def _transfer_model_download(job: dict[str, Any], expected_size: int | None, sha256: str | None, open_stream: Callable[[int], Any]) -> None:

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import PromptLibrary from '../prompts/prompt-library.svelte';
 	import { goto } from '$app/navigation';
 	import { ArrowLeftRight, Check, FolderOpen, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../media/image.svelte';
@@ -810,6 +811,7 @@
 								</div>
 							</div>
 							<textarea id="prompt" bind:value={prompt} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+							<PromptLibrary kind="image" value={prompt} disabled={generating || enhancingPrompt} onchange={(value) => { prompt = value; improvedPrompt = ''; }} />
 							{#if promptEnhancementEnabled}
 								<div class="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
 									<label class="block space-y-2" for="improved-prompt">
@@ -831,6 +833,7 @@
 									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
 								</div>
 								<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+								<PromptLibrary kind="image" value={negativePrompt} disabled={generating || enhancingPrompt} onchange={(value) => (negativePrompt = value)} />
 							</div>
 
 

@@ -15,6 +15,7 @@
 	import type { DownloadJob, DownloadProvider } from '$lib/types/model-downloads';
 	import Tab from '../../../components/tabs/tab.svelte';
 	import HuggingFaceDownload from '../../../components/downloads/hugging-face-download.svelte';
+	import DownloadToken from '../../../components/downloads/download-token.svelte';
 
 	type FileInfo = {
 		index: number;
@@ -330,6 +331,7 @@
 			</div>
 
 			<Tab items={providerTabs} value={provider} onselect={chooseProvider} ariaLabel="다운로드 출처" />
+			<DownloadToken {provider} />
 
 			{#if provider === 'civitai'}
 			<section class="space-y-4 rounded-2xl border border-border bg-card p-5 shadow-sm">

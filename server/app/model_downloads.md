@@ -20,3 +20,5 @@ Hugging Face 전송은 공용 worker의 크기 검사·Range·진행률·SHA 검
 
 
 MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model 표기는 MOSS family로 통합한다. MOSS checkpoint는 Diffusion Model로 분류하고, 타입별로 기존 MOSS 폴더가 있으면 자동 선택한다. LoRA는 loras/MOSS를 공통 저장 폴더로 사용한다.
+
+조회·enqueue·worker는 사용자별 저장 토큰을 우선하고 없으면 서버 기본 토큰을 사용한다. Civitai metadata의 인증 헤더는 ContextVar로 요청별 격리하며 scope 종료 시 초기화한다. 인증 metadata 요청은 자동 리디렉션을 허용하지 않는다.

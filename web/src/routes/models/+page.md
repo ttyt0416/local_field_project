@@ -14,3 +14,5 @@ base model에 Anima, MiniMax, Illustrious가 있고 selected model type root 아
 MOSS LoRA의 폴더 선택·설치 목록 필터는 공통 MOSS 폴더를 사용한다. Civitai base model의 MOSS Image/SFT/DMD 변형도 MOSS family로 자동 분류한다.
 
 Hugging Face 탭은 공용 HuggingFaceDownload 패널을 사용한다. 저장소·파일·폴더 링크와 선택 리비전을 조회해 모델 파일을 검색·선택하고 공용 폴더 모달로 저장 위치를 선택한다. 조회한 commit에 고정해 enqueue하고, 두 출처의 작업은 탭 변경 후에도 같은 진행 목록에 표시한다. 작업 요청 중 탭 전환을 막으며 Civitai URL·타입·탭 변경 후 이전 조회 응답은 적용하지 않는다.
+
+각 provider 탭 아래 DownloadToken에서 해당 서비스 API 토큰을 개인 계정에 별도로 저장·교체·삭제한다. 원문을 브라우저에 저장하지 않고 등록 상태만 조회한다.

@@ -2,6 +2,7 @@
 	import {
 		Archive,
 		Bookmark,
+		MessageSquareText,
 		Box,
 		Download,
 		HardDrive,
@@ -160,6 +161,7 @@
 			<Bookmark size={18} strokeWidth={1.8} />
 			<span>프리셋 관리</span>
 		</a>
+		<a href="/prompts" class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" onclick={close}><MessageSquareText size={18} strokeWidth={1.8} /><span>프롬프트 관리</span></a>
 	</nav>
 
 </aside>

@@ -110,7 +110,7 @@ def open_download(url: str, token: str, resume_from: int, opener: Any):
                 current = urljoin(current, location)
                 continue
             if code in {401, 403}:
-                raise HuggingFaceError("Hugging Face 접근 권한이 없습니다. 비공개·제한 모델은 서버 HF_TOKEN과 저장소 접근 승인을 확인해 주세요.", 403) from exc
+                raise HuggingFaceError("Hugging Face 접근 권한이 없습니다. 다운로드 관리의 API 토큰과 저장소 접근 승인을 확인해 주세요.", 403) from exc
             if code == 404:
                 raise HuggingFaceError("Hugging Face 저장소·리비전 또는 파일을 찾을 수 없습니다.", 404) from exc
             if code == 429:

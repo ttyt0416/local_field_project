@@ -671,6 +671,27 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "DROP INDEX IF EXISTS model_downloads_active_unique_idx",
     """
+    CREATE TABLE IF NOT EXISTS download_tokens (
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(16) NOT NULL CHECK (provider IN ('civitai', 'hugging_face')),
+        encrypted_token TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, provider)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS saved_prompts (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind VARCHAR(8) NOT NULL CHECK (kind IN ('image', 'video')),
+        name VARCHAR(100) NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS saved_prompts_user_kind_idx ON saved_prompts(user_id, kind, updated_at DESC)",
+    """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
         method VARCHAR(16) NOT NULL,

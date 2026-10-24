@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import PromptLibrary from '../../../../components/prompts/prompt-library.svelte';
 	import { goto } from '$app/navigation';
 	import { AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Plus, Save, Sparkles, Trash2, Video, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
@@ -1157,6 +1158,7 @@
 							{/if}
 							<div class="space-y-4">
 								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={(event) => setPrompt((event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
+								<PromptLibrary kind="video" value={prompt} disabled={generating || isPromptEnhancing} onchange={setPrompt} />
 								{#if segmentCount > 1}
 									<div class="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
 										<span class="text-sm font-medium">다음 구간 마지막 프레임 연결</span>
@@ -1179,6 +1181,7 @@
 													<IconOutlinedButton variant="destructive" ariaLabel={`구간 ${index + 1} 장면 ${sceneIndex + 1} 삭제`} title="장면 삭제" disabled={isPromptEnhancing || generating || scenes.length === 1} onclick={() => deleteScene(index, sceneIndex)}><Trash2 size={16} strokeWidth={2} /></IconOutlinedButton>
 												</div>
 												<textarea id={`video-segment-${index}-scene-${sceneIndex}`} value={scene} oninput={(event) => updateScenePrompt(index, sceneIndex, (event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+												<PromptLibrary kind="video" value={scene} disabled={generating || isPromptEnhancing} onchange={(value) => updateScenePrompt(index, sceneIndex, value)} />
 											</div>
 										{/each}
 										{#if promptEnhancementEnabled}

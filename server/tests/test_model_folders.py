@@ -26,6 +26,10 @@ from app.model_downloads import (
 
 class ModelFoldersTest(unittest.TestCase):
     def setUp(self) -> None:
+        from app import model_downloads as models
+        patcher = patch("app.model_downloads.get_effective_token", side_effect=lambda _user, provider: models.settings.civitai_token if provider == "civitai" else models.settings.hugging_face_token)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)

@@ -7,3 +7,5 @@
 네트워크 요청은 HTTPS Hugging Face 도메인과 공식 hf.co/huggingface.co 하위 CDN만 허용하고 최대 다섯 번의 리디렉션을 따른다. 토큰은 huggingface.co 요청에만 보내고 CDN에는 보내지 않는다. 서명 URL과 토큰은 응답·DB·오류 메시지에 저장하지 않는다. 공개 저장소는 토큰 없이 사용하며 제한·비공개 저장소는 서버 HF_TOKEN과 저장소 접근 승인이 필요하다. 접근 승인을 자동으로 처리하지 않는다.
 
 기준: [공식 API 클라이언트의 model_info](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/hf_api.py), [공식 다운로드/CDN 문서](https://huggingface.co/docs/hub/models-downloading).
+
+토큰은 다운로드 관리에서 사용자별 저장이 가능하며 제한 모델 오류는 해당 화면의 API 토큰과 저장소 접근 승인을 안내한다.

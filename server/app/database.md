@@ -25,3 +25,5 @@ image_generations의 moss JSONB 열은 MOSS 생성 방식·레이아웃·참조 
 이미지 생성 기록에 prompt_enhancement_enabled BOOLEAN 기본 FALSE를 추가하고 생성·상세·편집 복사에서 유지한다. Qwen의 i2i_qwen_image_2_1 분류를 위해 presets.type을 VARCHAR(32)로 확장하며 기존 16자 열에 대한 멱등 마이그레이션을 포함한다. 운영 반영 전 검증은 동일 스키마 임시 테이블과 롤백을 사용한다.
 
 3D row는 `generation_mode=mesh|rigging`, `rigging_options` JSONB와 `error_message`를 추가로 저장한다. 기존 row는 `mesh`로 유지한다. 리깅 source_file_id는 원본 GLB이고 storage_file_id는 리깅 결과 GLB다. 리깅은 품질 프리셋·Seed·배경 제거를 사용하지 않으며 기존 필수 컬럼에는 standard·0·false를 기록한다.
+
+사용자별 download_tokens는 provider와 암호문·수정 시각을 저장한다. saved_prompts는 image/video 문장만 저장하며 두 테이블 모두 사용자 삭제 시 함께 제거한다. 스키마 추가는 IF NOT EXISTS로 반복 실행 가능하다.

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import PromptLibrary from '../prompts/prompt-library.svelte';
 	import { goto } from '$app/navigation';
 	import { ArrowLeftRight, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../media/image.svelte';
@@ -975,6 +976,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
 							</div>
 							<textarea id="i2i-prompt" bind:value={prompt} rows="5" maxlength="5000" required disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+							<PromptLibrary kind="image" value={prompt} disabled={generating} onchange={(value) => (prompt = value)} />
                             {#if family === 'qwen_image_2_1'}
                                 <label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-3 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} disabled={generating} class="size-4 accent-primary" /><span>LLM 프롬프트 강화</span></label>
                                 <p class="text-xs leading-5 text-muted-foreground">원본과 참조를 함께 읽어 수정 지시를 구체화합니다. 생성 시간이 추가되며, 끄면 입력한 지시를 그대로 사용합니다.</p>
@@ -993,6 +995,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
 							</div>
 							<textarea id="i2i-negative-prompt" bind:value={negativePrompt} rows="3" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+							<PromptLibrary kind="image" value={negativePrompt} disabled={generating} onchange={(value) => (negativePrompt = value)} />
 							{/if}
 						</div>
 
