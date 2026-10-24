@@ -136,7 +136,7 @@
 	}
 </script>
 
-<p class="text-sm text-muted-foreground">{label} 로컬 태그 · {totalCount.toLocaleString('ko-KR')}개</p>
+<p class="text-sm text-muted-foreground">{totalCount.toLocaleString('ko-KR')}개</p>
 <div class="space-y-3">
 				<div class="flex flex-col gap-3 sm:flex-row"><SearchBar id="danbooru-tag-search" bind:value={searchQuery} placeholder="tag 또는 별칭 검색" label={`${label} 태그 검색`} class="min-w-0 flex-1" oninput={handleSearchInput} /><div class="sm:w-40"><label for="danbooru-tag-sort" class="sr-only">태그 정렬</label><select id="danbooru-tag-sort" bind:value={sort} onchange={changeSort} class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20">{#each sortOptions.filter((option) => source === 'danbooru' || option.value !== 'similarity') as option}<option value={option.value}>{option.label}</option>{/each}</select></div></div>
 				{#if sort === 'similarity' && !searchQuery.trim()}<p class="text-xs text-muted-foreground">정확도순은 검색어를 입력하면 pgvector로 정렬합니다.</p>{/if}

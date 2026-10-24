@@ -34,7 +34,7 @@
 	}
 </script>
 
-<svelte:head><title>태그 탐색기 · Local Field</title><meta name="description" content="Danbooru·Gelbooru 태그와 캐릭터·아티스트·시리즈 로컬 검색" /></svelte:head>
+<svelte:head><title>태그 탐색기 · Local Field</title><meta name="description" content="Danbooru·Gelbooru 태그와 캐릭터·아티스트·시리즈 검색" /></svelte:head>
 <Layout>
 	<div class="space-y-6">
 		<Typography as="h1" variant="display">태그 탐색기</Typography>

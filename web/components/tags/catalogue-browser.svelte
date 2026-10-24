@@ -48,12 +48,12 @@
 	}
 </script>
 
-<section class="space-y-4" aria-label={`로컬 ${label} 탐색`}>
+<section class="space-y-4" aria-label={`${label} 탐색`}>
 	<div class="flex flex-col gap-3 sm:flex-row"><SearchBar id={`catalogue-${kind}-search`} bind:value={search} label={`${label} 검색`} placeholder={kind === 'characters' ? '캐릭터명, 작품명 또는 태그로 검색' : `${label} 이름으로 검색`} class="min-w-0 flex-1" oninput={schedule} /><label class="sm:w-40"><span class="sr-only">{label} 정렬</span><select bind:value={sort} onchange={() => void load()} class="h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="count">{kind === 'series' ? '캐릭터 수순' : '사용순'}</option><option value="name">이름순</option></select></label></div>
-	<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><p>AnimaDex 로컬 카탈로그</p>{#if result}<span>{result.total_count.toLocaleString('ko-KR')}개 · 갱신 {new Date(result.imported_at).toLocaleDateString('ko-KR')}</span>{/if}</div>
-	{#if result?.warning}<p class="rounded-lg border border-border bg-muted p-3 text-xs text-muted-foreground">{result.warning} 마지막으로 가져온 로컬 데이터로 검색합니다.</p>{/if}
+	{#if result}<p class="text-xs text-muted-foreground">{result.total_count.toLocaleString('ko-KR')}개 · 갱신 {new Date(result.imported_at).toLocaleDateString('ko-KR')}</p>{/if}
+	{#if result?.warning}<p class="rounded-lg border border-border bg-muted p-3 text-xs text-muted-foreground">{result.warning} 마지막으로 가져온 데이터로 검색합니다.</p>{/if}
 	{#if loading}<div class="flex min-h-64 items-center justify-center"><LoadingSpinner label={`${label} 검색 중`} /></div>
-	{:else if error && !result}<div class="space-y-3 rounded-xl border border-destructive/30 bg-card p-5"><h2 class="text-sm font-semibold">로컬 카탈로그를 사용할 수 없습니다.</h2><p class="text-sm text-destructive" role="alert">{error}</p><OutlinedButton loading={loading} onclick={() => void load()}>다시 확인</OutlinedButton></div>
+	{:else if error && !result}<div class="space-y-3 rounded-xl border border-destructive/30 bg-card p-5"><h2 class="text-sm font-semibold">카탈로그를 사용할 수 없습니다.</h2><p class="text-sm text-destructive" role="alert">{error}</p><OutlinedButton loading={loading} onclick={() => void load()}>다시 확인</OutlinedButton></div>
 	{:else if !result?.items.length}<p class="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">검색 결과가 없습니다. 다른 이름이나 태그를 입력해 주세요.</p>
 	{:else}
 		<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
