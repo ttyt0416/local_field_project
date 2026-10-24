@@ -1,19 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Download, FileDown, Folder, FolderInput, FolderUp, Plus, RefreshCw, Trash2 } from '@lucide/svelte';
+	import { Download, FileDown, RefreshCw } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
-	import PrimaryButton from '../../../components/buttons/primary-button.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import Modal from '../../../components/modals/modal.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { apiDelete, apiJson } from '$lib/utils/api';
-	import { filterModelFolder, modelFolders as modelPathFolders, parentModelFolder as parentInstalledModelFolder } from '$lib/utils/model-folders';
+	import { apiJson } from '$lib/utils/api';
+	import ModelFolderPicker from '../../../components/models/model-folder-picker.svelte';
+	import { modelTypes, type ModelType } from '$lib/types/model-storage';
 
-	type ModelType = 'checkpoint' | 'diffusion_model' | 'lora' | 'text_encoder' | 'vae' | 'embedding';
 	type FileInfo = {
 		index: number;
 		name: string;
@@ -52,31 +51,8 @@
 		total_bytes: number | null;
 		created_at: string;
 	};
-	type InstalledModel = {
-		model_type: ModelType;
-		filename: string;
-		size_bytes: number;
-		modified_at: string;
-	};
-	type ModelFolder = { model_type: ModelType; subfolder: string };
 	type ToastData = { state: 'positive' | 'negative' | 'info'; title: string; message: string };
 
-	const modelTypes: { value: ModelType; label: string }[] = [
-		{ value: 'checkpoint', label: '체크포인트' },
-		{ value: 'diffusion_model', label: 'Diffusion Model' },
-		{ value: 'lora', label: 'LoRA' },
-		{ value: 'text_encoder', label: '텍스트 인코더' },
-		{ value: 'vae', label: 'VAE' },
-		{ value: 'embedding', label: '임베딩' }
-	];
-	const modelFolders: Record<ModelType, string> = {
-		checkpoint: 'checkpoints',
-		diffusion_model: 'diffusion_models',
-		lora: 'loras',
-		text_encoder: 'text_encoders',
-		vae: 'vae',
-		embedding: 'embeddings'
-	};
 	const statusLabels: Record<string, string> = {
 		queued: '대기 중',
 		downloading: '다운로드 중'
@@ -95,64 +71,66 @@
 	let downloadLoading = $state(false);
 	let jobs = $state<DownloadJob[]>([]);
 	let folderModalOpen = $state(false);
-	let folderModalMode = $state<'download' | 'move'>('download');
-	let folderModelType = $state<ModelType>('checkpoint');
-	let folderView = $state('');
-	let folders = $state<ModelFolder[]>([]);
-	let foldersLoading = $state(false);
-	let creatingFolder = $state(false);
-	let folderCreating = $state(false);
-	let moveTarget = $state<InstalledModel | null>(null);
-	let moveLoading = $state(false);
-	let visibleFolders = $derived(folders.filter((folder) => folder.subfolder && folderParent(folder.subfolder) === folderView));
-	let newFolderName = $state('');
-	let installed = $state<InstalledModel[]>([]);
-	let installedFolder = $state('');
-	let installedFolders = $derived(modelPathFolders(installed.map((model) => model.filename)));
-	let visibleInstalled = $derived(installed.filter((model) => filterModelFolder([model.filename], installedFolder).length > 0));
-	let deleteTarget = $state<InstalledModel | null>(null);
-	let deleteModalOpen = $state(false);
-	let deleteLoading = $state<string | null>(null);
+	let refreshing = $state(false);
+	let jobsLoading = false;
 	let cancelLoadingId = $state('');
 	let error = $state('');
 	let toast = $state<ToastData | null>(null);
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
+	let active = true;
 
 	onMount(() => {
 		void initialize();
 		return () => {
+			active = false;
 			if (pollTimer) clearInterval(pollTimer);
 		};
 	});
 
 	async function initialize() {
 		await authStore.initialize();
+		if (!active) return;
 		if (!authStore.isAuthenticated) {
 			await goto('/login');
 			return;
 		}
 		try {
 			await refresh();
+			if (!active) return;
 			pollTimer = setInterval(() => {
 				if (jobs.length > 0) void loadJobs();
 			}, 2000);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '모델 정보를 불러오지 못했습니다.';
+			showToast('negative', '모델 정보 조회 실패', error);
 		} finally {
 			ready = true;
 		}
 	}
 
 	async function refresh() {
-		await Promise.all([loadJobs(), loadInstalled()]);
+		if (refreshing) return;
+		refreshing = true;
+		try {
+			await loadJobs();
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	async function loadJobs() {
-		jobs = await apiJson<DownloadJob[]>('models/downloads?active_only=true');
-	}
-
-	async function loadInstalled() {
-		installed = await apiJson<InstalledModel[]>('models/installed');
+		if (jobsLoading) return;
+		jobsLoading = true;
+		try {
+			const result = await apiJson<DownloadJob[]>('models/downloads?active_only=true');
+			if (active) jobs = result;
+		} catch (reason) {
+			if (!active) return;
+			error = reason instanceof Error ? reason.message : '다운로드 목록을 불러오지 못했습니다.';
+			showToast('negative', '다운로드 목록 조회 실패', error);
+		} finally {
+			jobsLoading = false;
+		}
 	}
 
 	async function lookupModel() {
@@ -173,6 +151,7 @@
 		} catch (reason) {
 			lookup = null;
 			error = reason instanceof Error ? reason.message : 'Civitai 모델 정보를 조회하지 못했습니다.';
+			showToast('negative', '모델 조회 실패', error);
 		} finally {
 			lookupLoading = false;
 		}
@@ -219,14 +198,14 @@
 		}
 	}
 
-	async function startDownload() {
+	async function startDownload(folder: string) {
 		if (!lookup || selectedFileIndex === null) return;
 		downloadLoading = true;
 		error = '';
 		try {
 			const job = await apiJson<DownloadJob>('models/civitai/download', {
 				method: 'POST',
-				json: { source: String(lookup.version_id), model_type: modelType, file_index: selectedFileIndex, subfolder: subfolder.trim() }
+				json: { source: String(lookup.version_id), model_type: modelType, file_index: selectedFileIndex, subfolder: folder }
 			});
 			jobs = [job, ...jobs.filter((item) => item.id !== job.id)];
 			lookup = null;
@@ -238,108 +217,15 @@
 			showToast('positive', '다운로드 요청 완료', '모델 다운로드가 대기열에 추가되었습니다.');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '모델 다운로드를 요청하지 못했습니다.';
+			showToast('negative', '다운로드 요청 실패', error);
 		} finally {
 			downloadLoading = false;
 		}
 	}
 
-	function folderParent(folder: string) {
-		return folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '';
-	}
-
-	function selectFolder(folder: string) {
-		subfolder = folder;
-		folderView = folder;
-		creatingFolder = false;
-	}
-
-	async function loadFolders(targetType: ModelType) {
-		foldersLoading = true;
-		error = '';
-		try {
-			const loaded = await apiJson<ModelFolder[]>(`models/folders?model_type=${targetType}`);
-			if (folderModelType !== targetType) return;
-			folders = loaded;
-			if (!loaded.some((folder) => folder.subfolder === subfolder)) selectFolder('');
-		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '모델 폴더를 불러오지 못했습니다.';
-			folderModalOpen = false;
-		} finally {
-			if (folderModelType === targetType) foldersLoading = false;
-		}
-	}
-
-	async function openFolderModal() {
+	function openFolderModal() {
 		if (!lookup || selectedFileIndex === null) return;
-		folderModalMode = 'download';
-		folderModelType = modelType;
-		moveTarget = null;
-		folderView = subfolder;
-		creatingFolder = false;
-		newFolderName = '';
 		folderModalOpen = true;
-		await loadFolders(folderModelType);
-	}
-
-	async function openMoveFolderModal(model: InstalledModel) {
-		if (moveLoading || deleteLoading !== null) return;
-		folderModalMode = 'move';
-		folderModelType = model.model_type;
-		moveTarget = model;
-		subfolder = folderParent(model.filename);
-		folderView = subfolder;
-		creatingFolder = false;
-		newFolderName = '';
-		folderModalOpen = true;
-		await loadFolders(folderModelType);
-	}
-
-	function closeFolderModal() {
-		if (downloadLoading || folderCreating || moveLoading) return;
-		folderModalOpen = false;
-		moveTarget = null;
-	}
-
-	async function createFolder() {
-		if (!newFolderName.trim() || folderCreating) return;
-		folderCreating = true;
-		error = '';
-		try {
-			const folder = await apiJson<ModelFolder>('models/folders', {
-				method: 'POST',
-				json: { model_type: folderModelType, parent: folderView, name: newFolderName.trim() }
-			});
-			folders = [...folders.filter((item) => item.subfolder !== folder.subfolder), folder].sort((a, b) => a.subfolder.localeCompare(b.subfolder));
-			selectFolder(folder.subfolder);
-			newFolderName = '';
-		} catch (reason) {
-			error = reason instanceof Error ? reason.message : '새 모델 폴더를 만들지 못했습니다.';
-		} finally {
-			folderCreating = false;
-		}
-	}
-
-	async function moveInstalledModel() {
-		const model = moveTarget;
-		if (!model || moveLoading) return;
-		moveLoading = true;
-		error = '';
-		try {
-			const moved = await apiJson<InstalledModel>(`models/installed/${encodeURIComponent(model.model_type)}/move`, {
-				method: 'POST',
-				json: { filename: model.filename, subfolder }
-			});
-			installed = [...installed.filter((item) => item !== model), moved].sort((a, b) => `${a.model_type}/${a.filename}`.localeCompare(`${b.model_type}/${b.filename}`));
-			folderModalOpen = false;
-			moveTarget = null;
-			showToast('positive', '모델 이동 완료', `${moved.filename} 위치로 이동했습니다.`);
-		} catch (reason) {
-			const message = reason instanceof Error ? reason.message : '모델 파일을 이동하지 못했습니다.';
-			error = message;
-			showToast('negative', '모델 이동 실패', message);
-		} finally {
-			moveLoading = false;
-		}
 	}
 
 	async function cancelJob(downloadId: string) {
@@ -356,40 +242,6 @@
 			showToast('negative', '다운로드 중단 실패', message);
 		} finally {
 			cancelLoadingId = '';
-		}
-	}
-
-	function requestDeleteInstalledModel(model: InstalledModel) {
-		if (deleteLoading !== null) return;
-		deleteTarget = model;
-		deleteModalOpen = true;
-	}
-
-	function cancelDelete() {
-		if (deleteLoading !== null) return;
-		deleteModalOpen = false;
-		deleteTarget = null;
-	}
-
-	async function deleteInstalledModel() {
-		const model = deleteTarget;
-		if (!model) return;
-		const key = `${model.model_type}:${model.filename}`;
-		deleteLoading = key;
-		error = '';
-		try {
-			const encodedFilename = model.filename.split('/').map(encodeURIComponent).join('/');
-			await apiDelete(`models/installed/${encodeURIComponent(model.model_type)}/${encodedFilename}`);
-			installed = installed.filter((item) => `${item.model_type}:${item.filename}` !== key);
-			deleteModalOpen = false;
-			deleteTarget = null;
-			showToast('positive', '모델 삭제 완료', `${model.filename}을(를) 삭제했습니다.`);
-		} catch (reason) {
-			const message = reason instanceof Error ? reason.message : '모델을 삭제하지 못했습니다.';
-			error = message;
-			showToast('negative', '모델 삭제 실패', message);
-		} finally {
-			deleteLoading = null;
 		}
 	}
 
@@ -446,8 +298,9 @@
 			<div class="flex flex-wrap items-end justify-between gap-4">
 				<div>
 					<Typography as="h1" variant="display">CIVITAI 다운로드</Typography>
+					<p class="mt-2 text-sm text-muted-foreground">모델을 찾아 다운로드하세요. 저장된 파일은 <a href="/files" class="font-medium text-primary hover:underline">파일 관리</a>에서 정리할 수 있습니다.</p>
 				</div>
-				<OutlinedButton class="gap-2" onclick={() => void refresh()}><RefreshCw size={16} />새로고침</OutlinedButton>
+				<OutlinedButton class="gap-2" loading={refreshing} onclick={() => void refresh()}><RefreshCw size={16} />새로고침</OutlinedButton>
 			</div>
 
 			<section class="space-y-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -503,34 +356,6 @@
 								{/if}
 			</section>
 
-			<section class="space-y-3">
-				<div class="flex items-center justify-between"><Typography as="h2" variant="h2">설치된 모델</Typography><span class="text-xs text-muted-foreground">{visibleInstalled.length}{installedFolder ? ` / ${installed.length}` : ''}개</span></div>
-				{#if installed.length === 0}
-					<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">ComfyUI 모델 폴더에 설치된 모델이 없습니다.</div>
-				{:else}
-					<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="설치된 모델 폴더 filter">
-						<OutlinedButton class="min-h-9 px-3 text-xs" active={installedFolder === ''} onclick={() => (installedFolder = '')}>전체</OutlinedButton>
-						{#if installedFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (installedFolder = parentInstalledModelFolder(installedFolder))}>바로 위 폴더</OutlinedButton>{/if}
-						{#each installedFolders as folder}
-							<OutlinedButton class="min-h-9 px-3 text-xs" active={installedFolder === folder} onclick={() => (installedFolder = folder)}>{folder}</OutlinedButton>
-						{/each}
-					</div>
-					{#if visibleInstalled.length === 0}
-						<div class="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">선택한 폴더에 설치된 모델이 없습니다.</div>
-					{:else}
-						<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-							{#each visibleInstalled as model}
-								<article class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3">
-									<Folder size={18} class="shrink-0 text-primary" />
-									<div class="min-w-0 flex-1"><p class="truncate text-sm font-medium" title={model.filename}>{model.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(model.model_type)} · {formatSize(model.size_bytes)}</p></div>
-									<button type="button" aria-label={`${model.filename} 폴더 이동`} title="폴더 이동" disabled={deleteLoading !== null || moveLoading} onclick={() => void openMoveFolderModal(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"><FolderInput size={16} /></button>
-									<button type="button" aria-label={`${model.filename} 삭제`} title="삭제" disabled={deleteLoading !== null || moveLoading} onclick={() => requestDeleteInstalledModel(model)} class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">{#if deleteLoading === `${model.model_type}:${model.filename}`}<LoadingSpinner size="sm" label="삭제 중" />{:else}<Trash2 size={16} />{/if}</button>
-								</article>
-							{/each}
-						</div>
-					{/if}
-				{/if}
-			</section>
 		</div>
 	</Layout>
 	{#if toast}<div class="fixed right-4 top-4 z-50"><Toast state={toast.state} title={toast.title} message={toast.message} onclose={() => (toast = null)} /></div>{/if}
@@ -555,65 +380,12 @@
 	{/snippet}
 </Modal>
 
-<Modal
+<ModelFolderPicker
 	bind:open={folderModalOpen}
-	title={folderModalMode === 'move' ? '모델 이동 폴더 선택' : '저장 폴더 선택'}
-	description={`${modelFolders[folderModelType]} 아래에서 현재 folder를 선택하거나 새 하위 folder를 만드세요.`}
-	closeOnBackdrop={!downloadLoading && !folderCreating && !moveLoading}
-	onclose={closeFolderModal}
->
-	{#if foldersLoading}
-		<div class="flex min-h-40 items-center justify-center"><LoadingSpinner size="lg" label="폴더를 불러오는 중" /></div>
-	{:else}
-		<div class="space-y-4">
-			<div class="flex flex-wrap items-center gap-2">
-				<OutlinedButton class="px-3 text-xs" active={folderView === ''} onclick={() => selectFolder('')}>전체</OutlinedButton>
-				{#if folderView}
-					<OutlinedButton class="px-3 text-xs" onclick={() => selectFolder(folderParent(folderView))}><FolderUp size={15} />상위 폴더</OutlinedButton>
-				{/if}
-				<span class="min-w-0 truncate text-xs text-muted-foreground">선택: {subfolder || '전체'}</span>
-			</div>
-			{#if visibleFolders.length === 0}
-				<p class="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">이 folder 안에 하위 folder가 없습니다.</p>
-			{:else}
-				<div class="grid max-h-[40dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-					{#each visibleFolders as folder (folder.subfolder)}
-						<button type="button" onclick={() => selectFolder(folder.subfolder)} class={`flex min-w-0 items-center gap-2 rounded-xl border p-3 text-left transition ${subfolder === folder.subfolder ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'border-border hover:bg-muted'}`}>
-							<Folder size={17} class="shrink-0 text-primary" />
-							<span class="truncate text-sm font-medium" title={folder.subfolder}>{folder.subfolder.slice(folderView ? folderView.length + 1 : 0)}</span>
-						</button>
-					{/each}
-				</div>
-			{/if}
-			{#if creatingFolder}
-				<form class="space-y-3 rounded-xl border border-border bg-muted/30 p-3" onsubmit={(event) => { event.preventDefault(); void createFolder(); }}>
-					<label class="block space-y-2" for="new-model-folder"><span class="text-sm font-semibold">{folderView ? `${folderView} 아래 새 폴더 이름` : '새 폴더 이름'}</span><input id="new-model-folder" bind:value={newFolderName} maxlength="120" placeholder="예: anime" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
-					<div class="flex justify-end gap-2"><OutlinedButton disabled={folderCreating} onclick={() => (creatingFolder = false)}>취소</OutlinedButton><PrimaryButton type="submit" loading={folderCreating} disabled={!newFolderName.trim()}>폴더 추가</PrimaryButton></div>
-				</form>
-			{:else}
-				<button type="button" onclick={() => (creatingFolder = true)} class="inline-flex items-center gap-2 rounded-lg border border-dashed border-primary px-3 py-2 text-sm font-semibold text-primary hover:bg-primary/10"><Plus size={16} />현재 폴더에 하위 폴더 추가</button>
-			{/if}
-		</div>
-	{/if}
-	{#snippet footer()}
-		<OutlinedButton disabled={downloadLoading || folderCreating || moveLoading} onclick={closeFolderModal}>취소</OutlinedButton>
-		{#if folderModalMode === 'move'}
-			<PrimaryButton loading={moveLoading} disabled={foldersLoading || folderCreating} onclick={() => void moveInstalledModel()}><FolderInput size={16} /><span>선택한 폴더로 이동</span></PrimaryButton>
-		{:else}
-			<PrimaryButton loading={downloadLoading} disabled={foldersLoading || folderCreating} onclick={() => void startDownload()}><FileDown size={16} /><span>선택한 폴더에 다운로드</span></PrimaryButton>
-		{/if}
-	{/snippet}
-</Modal>
-
-{#if deleteTarget}
-	<Modal bind:open={deleteModalOpen} title="설치된 모델을 삭제하시겠습니까?" description="삭제한 모델 파일은 복구할 수 없습니다." closeOnBackdrop={!deleteLoading} onclose={cancelDelete}>
-		<p class="text-sm leading-6 text-muted-foreground"><strong class="font-semibold text-foreground">{deleteTarget.filename}</strong> 파일을 ComfyUI 모델 폴더에서 삭제합니다.</p>
-		{#snippet footer()}
-			<OutlinedButton disabled={deleteLoading !== null} onclick={cancelDelete}>취소</OutlinedButton>
-			<PrimaryButton loading={deleteLoading !== null} variant="destructive" onclick={() => void deleteInstalledModel()}>
-				<Trash2 size={16} strokeWidth={2} />
-				<span>삭제</span>
-			</PrimaryButton>
-		{/snippet}
-	</Modal>
-{/if}
+	{modelType}
+	initialFolder={subfolder}
+	title="저장 폴더 선택"
+	confirmLabel="선택한 폴더에 다운로드"
+	loading={downloadLoading}
+	onconfirm={(folder) => void startDownload(folder)}
+/>

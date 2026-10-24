@@ -4,6 +4,7 @@
 		Bookmark,
 		Box,
 		Download,
+		HardDrive,
 		Heart,
 		ImagePlus,
 		Library,
@@ -142,6 +143,14 @@
 		>
 			<Download size={18} strokeWidth={1.8} />
 			<span>CIVITAI 다운로드</span>
+		</a>
+		<a
+			href="/files"
+			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+			onclick={close}
+		>
+			<HardDrive size={18} strokeWidth={1.8} />
+			<span>파일 관리</span>
 		</a>
 		<a
 			href="/presets"
