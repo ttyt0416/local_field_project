@@ -27,3 +27,5 @@ image_generations의 moss JSONB 열은 MOSS 생성 방식·레이아웃·참조 
 3D row는 `generation_mode=mesh|rigging`, `rigging_options` JSONB와 `error_message`를 추가로 저장한다. 기존 row는 `mesh`로 유지한다. 리깅 source_file_id는 원본 GLB이고 storage_file_id는 리깅 결과 GLB다. 리깅은 품질 프리셋·Seed·배경 제거를 사용하지 않으며 기존 필수 컬럼에는 standard·0·false를 기록한다.
 
 사용자별 download_tokens는 provider와 암호문·수정 시각을 저장한다. saved_prompts는 image/video 문장만 저장하며 두 테이블 모두 사용자 삭제 시 함께 제거한다. 스키마 추가는 IF NOT EXISTS로 반복 실행 가능하다.
+
+Gelbooru 태그와 AnimaDex 엔트리는 별도 로컬 테이블과 trigram 검색 인덱스를 사용한다. tag_catalogue_imports는 출처별 원본 버전·마지막 성공 시각·최근 실패 원인을 보관한다. 기존 Danbooru 테이블과 벡터에는 영향을 주지 않는다.

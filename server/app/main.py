@@ -12,6 +12,8 @@ from .comfyui import router as comfyui_router
 from .configs.constants import APP_TITLE, APP_VERSION, HEALTH_STATUS, settings
 from .database import initialize_database, record_api_call, record_api_error, record_web_event
 from .danbooru import router as danbooru_router
+from .animadex import router as animadex_router
+from .gelbooru import router as gelbooru_router
 from .download_tokens import router as download_tokens_router
 from .saved_prompts import router as saved_prompts_router
 from .generation_worker import run_generation_reconciler
@@ -148,6 +150,8 @@ async def health() -> dict[str, str]:
 app.include_router(auth_router)
 app.include_router(comfyui_router)
 app.include_router(danbooru_router)
+app.include_router(animadex_router)
+app.include_router(gelbooru_router)
 app.include_router(download_tokens_router)
 app.include_router(saved_prompts_router)
 app.include_router(generations_router)

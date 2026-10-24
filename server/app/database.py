@@ -388,6 +388,41 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS danbooru_tags_normalized_idx ON danbooru_tags(normalized_tag)",
     "CREATE INDEX IF NOT EXISTS danbooru_tags_aliases_gin_idx ON danbooru_tags USING gin (aliases)",
     """
+    CREATE TABLE IF NOT EXISTS gelbooru_tags (
+        tag TEXT PRIMARY KEY,
+        normalized_tag TEXT NOT NULL,
+        category SMALLINT NOT NULL,
+        post_count INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS gelbooru_tags_search_idx ON gelbooru_tags USING gin (normalized_tag gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS gelbooru_tags_usage_idx ON gelbooru_tags(post_count DESC, tag)",
+    """
+    CREATE TABLE IF NOT EXISTS tag_catalogue_imports (
+        source TEXT PRIMARY KEY,
+        version TEXT NOT NULL DEFAULT '',
+        imported_at TIMESTAMPTZ,
+        last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        error_message TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS animadex_entries (
+        kind TEXT NOT NULL CHECK (kind IN ('characters', 'artists', 'series')),
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        tags TEXT[] NOT NULL DEFAULT '{}',
+        copyright TEXT,
+        copyright_name TEXT,
+        post_count INTEGER NOT NULL DEFAULT 0,
+        search_text TEXT NOT NULL,
+        PRIMARY KEY(kind, slug)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS animadex_entries_search_idx ON animadex_entries USING gin (search_text gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS animadex_entries_kind_count_idx ON animadex_entries(kind, post_count DESC, slug)",
+    """
     CREATE INDEX IF NOT EXISTS danbooru_tags_embedding_hnsw_idx
     ON danbooru_tags USING hnsw (embedding vector_cosine_ops)
     """,

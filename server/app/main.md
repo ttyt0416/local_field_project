@@ -7,3 +7,5 @@ FastAPI lifespan은 database schema를 초기화한 뒤 image·video·3D generat
 HTTP audit middleware는 route가 request state에 둔 failed provider response를 `api_error_logs.provider_response`로 함께 기록한다. handled 4xx/5xx도 generic status만 남기지 않고 provider response가 있으면 해당 JSONB를 같은 error row에 보관한다.
 
 리깅 router `/generation/3d/rigging`는 3D의 동적 prompt_id 경로보다 먼저 등록한다. HTTP audit는 기존 middleware를 사용하고, 리깅 서비스 내부 호출과 worker 오류도 audit/error DB에 기록한다.
+
+`/tags/gelbooru`와 `/tags/catalogue`는 인증된 로컬 카탈로그 검색 router다. 시작 시 스키마만 준비하고 외부 데이터 다운로드나 동기화를 자동 실행하지 않는다.
