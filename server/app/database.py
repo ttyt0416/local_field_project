@@ -1267,6 +1267,21 @@ def reset_model_downloads() -> None:
         connection.execute("UPDATE model_downloads SET status = 'queued' WHERE status = 'downloading'")
 
 
+def has_active_model_downloads_under(directory: str) -> bool:
+    prefix = directory.rstrip("/") + "/"
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM model_downloads
+            WHERE status IN ('queued', 'downloading')
+                AND LEFT(target_path, LENGTH(%s)) = %s
+            LIMIT 1
+            """,
+            (prefix, prefix),
+        ).fetchone()
+    return row is not None
+
+
 def claim_model_download() -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(

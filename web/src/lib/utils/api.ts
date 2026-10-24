@@ -33,6 +33,8 @@ const api = ky.create({
 
 function getErrorMessage(error: unknown) {
 	if (error instanceof HTTPError) {
+		const body = error.data;
+		if (body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string' && body.detail.trim()) return body.detail;
 		switch (error.response.status) {
 			case 400:
 				return '요청 내용을 확인해 주세요.';

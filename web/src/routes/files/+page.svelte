@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ArrowDownWideNarrow, ChevronRight, Download, FileBox, Folder, FolderInput, FolderPlus, HardDrive, Info, LayoutGrid, List, RefreshCw, Trash2, X } from '@lucide/svelte';
+	import { ArrowDownWideNarrow, ChevronRight, Download, FileBox, Folder, FolderInput, FolderPlus, HardDrive, Info, LayoutGrid, List, Pencil, RefreshCw, Trash2, X } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
@@ -19,6 +19,7 @@
 	import { modelTypes, modelTypeInfo, type InstalledModel, type ModelFolder, type ModelType } from '$lib/types/model-storage';
 
 	type FolderEntry = { type: ModelType; path: string; name: string; count: number; bytes: number };
+	type FolderInfo = ModelFolder & { file_count: number; directory_count: number; size_bytes: number; revision: string; has_active_downloads: boolean };
 	type ToastData = { state: 'positive' | 'negative'; title: string; message: string };
 	let ready = $state(false);
 	let refreshing = $state(false);
@@ -38,10 +39,7 @@
 		const locations = currentType
 			? folders.filter((folder) => folder.model_type === currentType && folder.subfolder && (query ? folder.subfolder.startsWith(currentFolder ? `${currentFolder}/` : '') : parentModelFolder(folder.subfolder) === currentFolder)).map((folder) => ({ type: folder.model_type, path: folder.subfolder, name: folder.subfolder.split('/').at(-1)! }))
 			: [...modelTypes.map((type) => ({ type: type.value, path: '', name: type.label })), ...(query ? folders.filter((folder) => folder.subfolder).map((folder) => ({ type: folder.model_type, path: folder.subfolder, name: basename(folder.subfolder) })) : [])];
-		return locations.filter((folder) => !query || `${folder.name} ${folder.path} ${modelTypeInfo(folder.type).directory}`.toLocaleLowerCase().includes(query)).map((folder): FolderEntry => {
-			const files = installed.filter((model) => model.model_type === folder.type && (!folder.path || model.filename.startsWith(`${folder.path}/`)));
-			return { ...folder, count: files.length, bytes: files.reduce((sum, model) => sum + model.size_bytes, 0) };
-		}).sort((a, b) => sort === 'size' ? b.bytes - a.bytes || a.name.localeCompare(b.name) : a.name.localeCompare(b.name, 'ko', { numeric: true }));
+		return locations.filter((folder) => !query || `${folder.name} ${folder.path} ${modelTypeInfo(folder.type).directory}`.toLocaleLowerCase().includes(query)).map((folder) => describeFolder(folder.type, folder.path, folder.name)).sort((a, b) => sort === 'size' ? b.bytes - a.bytes || a.name.localeCompare(b.name) : a.name.localeCompare(b.name, 'ko', { numeric: true }));
 	});
 	let visibleFiles = $derived(installed.filter((model) => {
 		if (currentType && model.model_type !== currentType) return false;
@@ -49,6 +47,7 @@
 		return currentType && parentModelFolder(model.filename) === currentFolder;
 	}).sort((a, b) => sort === 'modified' ? Date.parse(b.modified_at) - Date.parse(a.modified_at) || a.filename.localeCompare(b.filename) : sort === 'size' ? b.size_bytes - a.size_bytes || a.filename.localeCompare(b.filename) : basename(a.filename).localeCompare(basename(b.filename), 'ko', { numeric: true })));
 	let breadcrumbs = $derived(currentFolder.split('/').filter(Boolean).map((name, index, parts) => ({ name, path: parts.slice(0, index + 1).join('/') })));
+	let currentFolderEntry = $derived(currentType && currentFolder ? describeFolder(currentType, currentFolder, basename(currentFolder)) : null);
 	let createModalOpen = $state(false);
 	let createType = $state<ModelType>('checkpoint');
 	let createParent = $state('');
@@ -60,7 +59,18 @@
 	let deleteTarget = $state<InstalledModel | null>(null);
 	let deleteModalOpen = $state(false);
 	let deleting = $state(false);
-	let busy = $derived(creating || moving || deleting);
+	let renameTarget = $state<FolderEntry | null>(null);
+	let renameModalOpen = $state(false);
+	let renameName = $state('');
+	let renaming = $state(false);
+	let folderDeleteTarget = $state<FolderEntry | null>(null);
+	let folderDeleteModalOpen = $state(false);
+	let folderInfo = $state<FolderInfo | null>(null);
+	let folderInfoLoading = $state(false);
+	let folderDeleting = $state(false);
+	let folderInfoRequest = 0;
+	let folderActionError = $state('');
+	let busy = $derived(creating || moving || deleting || renaming || folderDeleting);
 	let toast = $state<ToastData | null>(null);
 	let active = true;
 
@@ -109,6 +119,111 @@
 
 	function basename(path: string) {
 		return path.split('/').at(-1) ?? path;
+	}
+
+	function describeFolder(type: ModelType, path: string, name: string): FolderEntry {
+		const files = installed.filter((model) => model.model_type === type && (!path || model.filename.startsWith(`${path}/`)));
+		return { type, path, name, count: files.length, bytes: files.reduce((sum, model) => sum + model.size_bytes, 0) };
+	}
+
+	function inFolder(path: string, folder: string) {
+		return path === folder || path.startsWith(`${folder}/`);
+	}
+
+	function openRename(folder: FolderEntry) {
+		if (busy || !folder.path) return;
+		renameTarget = folder;
+		folderActionError = '';
+		renameName = folder.name;
+		renameModalOpen = true;
+	}
+
+	async function renameFolder() {
+		const target = renameTarget;
+		if (!target || busy || !renameName.trim() || renameName.trim() === target.name) return;
+		renaming = true;
+		folderActionError = '';
+		try {
+			const renamed = await apiJson<ModelFolder>(`models/folders/${target.type}/rename`, { method: 'POST', json: { subfolder: target.path, name: renameName.trim() } });
+			if (!active) return;
+			const newPath = (path: string) => `${renamed.subfolder}${path.slice(target.path.length)}`;
+			installed = installed.map((model) => model.model_type === target.type && inFolder(model.filename, target.path) ? { ...model, filename: newPath(model.filename) } : model);
+			folders = folders.map((folder) => folder.model_type === target.type && inFolder(folder.subfolder, target.path) ? { ...folder, subfolder: newPath(folder.subfolder) } : folder);
+			if (currentType === target.type && inFolder(currentFolder, target.path)) currentFolder = newPath(currentFolder);
+			selectedKey = '';
+			renameModalOpen = false;
+			toast = { state: 'positive', title: '폴더명 변경 완료', message: `${target.name} → ${basename(renamed.subfolder)}` };
+			await refresh();
+		} catch (reason) {
+			if (active) {
+				folderActionError = reason instanceof Error ? reason.message : '폴더명을 변경하지 못했습니다.';
+				reportError('폴더명 변경 실패', reason);
+			}
+		} finally {
+			if (active) renaming = false;
+		}
+	}
+
+	function openFolderDelete(folder: FolderEntry) {
+		if (busy || !folder.path) return;
+		folderDeleteTarget = folder;
+		folderDeleteModalOpen = true;
+		void loadFolderInfo();
+	}
+
+	function closeFolderDelete() {
+		if (folderDeleting) return;
+		folderDeleteModalOpen = false;
+		folderInfoRequest += 1;
+		folderInfoLoading = false;
+		folderInfo = null;
+	}
+
+	async function loadFolderInfo() {
+		const target = folderDeleteTarget;
+		if (!target) return;
+		const request = ++folderInfoRequest;
+		folderInfo = null;
+		folderInfoLoading = true;
+		folderActionError = '';
+		try {
+			const info = await apiJson<FolderInfo>(`models/folders/info?model_type=${target.type}&subfolder=${encodeURIComponent(target.path)}`);
+			if (active && request === folderInfoRequest) folderInfo = info;
+		} catch (reason) {
+			if (active && request === folderInfoRequest) {
+				folderActionError = reason instanceof Error ? reason.message : '삭제 대상을 확인하지 못했습니다.';
+				reportError('삭제 대상 조회 실패', reason);
+			}
+		} finally {
+			if (active && request === folderInfoRequest) folderInfoLoading = false;
+		}
+	}
+
+	async function deleteFolder() {
+		const target = folderDeleteTarget;
+		if (!target || !folderInfo || folderInfo.has_active_downloads || busy) return;
+		folderDeleting = true;
+		folderActionError = '';
+		try {
+			const encoded = target.path.split('/').map(encodeURIComponent).join('/');
+			await apiDelete(`models/folders/${target.type}/${encoded}?revision=${encodeURIComponent(folderInfo.revision)}`);
+			if (!active) return;
+			installed = installed.filter((model) => model.model_type !== target.type || !inFolder(model.filename, target.path));
+			folders = folders.filter((folder) => folder.model_type !== target.type || !inFolder(folder.subfolder, target.path));
+			if (currentType === target.type && inFolder(currentFolder, target.path)) currentFolder = parentModelFolder(target.path);
+			selectedKey = '';
+			folderDeleteModalOpen = false;
+			toast = { state: 'positive', title: '폴더 삭제 완료', message: `${target.name} 폴더와 하위 내용을 삭제했습니다.` };
+			await refresh();
+		} catch (reason) {
+			if (active) {
+				folderInfo = null;
+				folderActionError = reason instanceof Error ? reason.message : '폴더를 삭제하지 못했습니다.';
+				reportError('폴더 삭제 실패', reason);
+			}
+		} finally {
+			if (active) folderDeleting = false;
+		}
 	}
 
 	function navigate(type: ModelType | null, path = '') {
@@ -229,11 +344,14 @@
 			<div class={`grid items-start gap-5 ${selectedModel ? 'xl:grid-cols-[minmax(0,1fr)_17rem]' : ''}`}>
 				<section class="min-w-0 overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-label="스토리지 탐색기">
 					<div class="space-y-4 border-b border-border p-4 sm:p-5">
+						<div class="flex flex-wrap items-center justify-between gap-2">
 						<nav class="flex flex-wrap items-center gap-1 text-sm" aria-label="현재 폴더 경로">
 							<button type="button" disabled={busy} onclick={() => navigate(null)} class="rounded-lg px-2 py-1.5 font-semibold transition hover:bg-muted" aria-current={currentType ? undefined : 'page'}>내 스토리지</button>
 							{#if currentType}<ChevronRight size={15} class="text-muted-foreground" /><button type="button" disabled={busy} onclick={() => navigate(currentType)} class="rounded-lg px-2 py-1.5 font-medium hover:bg-muted" aria-current={!currentFolder ? 'page' : undefined}>{modelTypeInfo(currentType).label}</button>{/if}
 							{#each breadcrumbs as crumb}<ChevronRight size={15} class="text-muted-foreground" /><button type="button" disabled={busy} onclick={() => navigate(currentType, crumb.path)} class="max-w-48 truncate rounded-lg px-2 py-1.5 hover:bg-muted" aria-current={crumb.path === currentFolder ? 'page' : undefined}>{crumb.name}</button>{/each}
 						</nav>
+						{#if currentFolderEntry}{@render folderActions(currentFolderEntry)}{/if}
+						</div>
 						<div class="flex flex-wrap items-center gap-3">
 							<SearchBar id="storage-search" bind:value={search} label="파일 및 폴더 검색" placeholder={currentType ? '이 폴더에서 파일 및 폴더 검색' : '스토리지에서 파일 및 폴더 검색'} class="min-w-48 flex-1" oninput={() => (selectedKey = '')} />
 							<label class="flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-muted-foreground"><ArrowDownWideNarrow size={16} /><span class="sr-only">파일 정렬</span><select bind:value={sort} aria-label="파일 정렬" class="min-w-0 bg-transparent text-xs font-medium text-foreground focus:outline-none"><option value="name">이름순</option><option value="modified">최근 수정순</option><option value="size">용량순</option></select></label>
@@ -251,7 +369,7 @@
 								<thead class="border-b border-border bg-muted/30 text-xs text-muted-foreground"><tr><th scope="col" class="px-5 py-3 font-medium">이름</th><th scope="col" class="whitespace-nowrap px-3 py-3 font-medium">수정한 날짜</th><th scope="col" class="whitespace-nowrap px-3 py-3 text-right font-medium">파일 크기</th><th scope="col" class="w-24 px-3 py-3"><span class="sr-only">파일 작업</span></th></tr></thead>
 								<tbody class="divide-y divide-border">
 									{#each folderEntries as folder (`${folder.type}:${folder.path}`)}
-										<tr class="transition hover:bg-muted/50"><td class="px-5 py-3"><button type="button" disabled={busy} onclick={() => navigate(folder.type, folder.path)} class="flex w-full min-w-0 items-center gap-3 text-left"><Folder size={23} class="shrink-0 fill-primary/15 text-primary" /><span class="min-w-0"><span class="block max-w-64 truncate font-medium">{folder.name}</span><span class="mt-0.5 block text-xs text-muted-foreground">{query && folder.path ? folder.path : `${folder.count}개 파일`}</span></span></button></td><td class="px-3 py-3 text-xs text-muted-foreground">폴더</td><td class="whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground">{formatSize(folder.bytes)}</td><td class="px-3 py-3 text-center text-muted-foreground"><ChevronRight size={16} /></td></tr>
+										<tr class="transition hover:bg-muted/50"><td class="px-5 py-3"><button type="button" disabled={busy} onclick={() => navigate(folder.type, folder.path)} class="flex w-full min-w-0 items-center gap-3 text-left"><Folder size={23} class="shrink-0 fill-primary/15 text-primary" /><span class="min-w-0"><span class="block max-w-64 truncate font-medium">{folder.name}</span><span class="mt-0.5 block text-xs text-muted-foreground">{query && folder.path ? folder.path : `${folder.count}개 파일`}</span></span></button></td><td class="px-3 py-3 text-xs text-muted-foreground">폴더</td><td class="whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground">{formatSize(folder.bytes)}</td><td class="px-3 py-3">{#if folder.path}{@render folderActions(folder)}{:else}<ChevronRight size={16} class="ml-auto text-muted-foreground" />{/if}</td></tr>
 									{/each}
 									{#each visibleFiles as model (fileKey(model))}
 										<tr class={`transition hover:bg-muted/50 ${selectedKey === fileKey(model) ? 'bg-primary/8' : ''}`}><td class="px-5 py-3"><button type="button" aria-label={`${basename(model.filename)} 상세 정보`} aria-pressed={selectedKey === fileKey(model)} onclick={() => (selectedKey = fileKey(model))} class="flex w-full items-center gap-3 text-left"><FileBox size={23} class="shrink-0 text-muted-foreground" /><span class="min-w-0"><span class="block max-w-64 truncate font-medium" title={model.filename}>{basename(model.filename)}</span><span class="mt-0.5 block max-w-64 truncate text-xs text-muted-foreground">{query ? `${modelTypeInfo(model.model_type).label} / ${parentModelFolder(model.filename) || '전체'}` : modelTypeInfo(model.model_type).label}</span></span></button></td><td class="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">{formatDate(model.modified_at)}</td><td class="whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground">{formatSize(model.size_bytes)}</td><td class="px-3 py-3">{@render fileActions(model)}</td></tr>
@@ -262,7 +380,7 @@
 					{:else}
 						<div class="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 2xl:grid-cols-3">
 							{#each folderEntries as folder (`${folder.type}:${folder.path}`)}
-								<button type="button" disabled={busy} onclick={() => navigate(folder.type, folder.path)} class="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-muted/20 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"><Folder size={30} class="shrink-0 fill-primary/15 text-primary" /><span class="min-w-0"><span class="block truncate font-semibold">{folder.name}</span><span class="mt-1 block text-xs text-muted-foreground">{folder.count}개 파일 · {formatSize(folder.bytes)}</span></span></button>
+								<article class="min-w-0 overflow-hidden rounded-xl border border-border bg-muted/20 transition hover:border-primary/40"><button type="button" disabled={busy} onclick={() => navigate(folder.type, folder.path)} class="flex w-full min-w-0 items-center gap-3 p-4 text-left hover:bg-primary/5"><Folder size={30} class="shrink-0 fill-primary/15 text-primary" /><span class="min-w-0"><span class="block truncate font-semibold">{folder.name}</span><span class="mt-1 block text-xs text-muted-foreground">{folder.count}개 파일 · {formatSize(folder.bytes)}</span></span></button>{#if folder.path}<div class="border-t border-border px-3 py-2">{@render folderActions(folder)}</div>{/if}</article>
 							{/each}
 							{#each visibleFiles as model (fileKey(model))}
 								<article class={`min-w-0 overflow-hidden rounded-xl border transition ${selectedKey === fileKey(model) ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}`}><button type="button" aria-label={`${basename(model.filename)} 상세 정보`} aria-pressed={selectedKey === fileKey(model)} onclick={() => (selectedKey = fileKey(model))} class="block w-full p-4 text-left"><span class="mb-4 flex h-24 items-center justify-center rounded-lg bg-muted/70"><FileBox size={42} strokeWidth={1.3} class="text-primary/70" /></span><span class="block truncate text-sm font-medium" title={model.filename}>{basename(model.filename)}</span><span class="mt-1 block text-xs text-muted-foreground">{modelTypeInfo(model.model_type).label} · {formatSize(model.size_bytes)}</span></button><div class="flex items-center justify-between gap-2 border-t border-border px-3 py-2"><span class="text-xs text-muted-foreground">{formatDate(model.modified_at)}</span>{@render fileActions(model)}</div></article>
@@ -283,6 +401,36 @@
 {#snippet fileActions(model: InstalledModel)}
 	<div class="flex justify-end gap-1"><IconOutlinedButton ariaLabel={`${basename(model.filename)} 이동`} title="폴더 이동" variant="filled" class="size-8" disabled={busy || refreshing} loading={moving && moveTarget !== null && fileKey(moveTarget) === fileKey(model)} onclick={() => openMove(model)}><FolderInput size={16} /></IconOutlinedButton><IconOutlinedButton ariaLabel={`${basename(model.filename)} 삭제`} title="삭제" variant="filled" class="size-8 hover:bg-destructive/10 hover:text-destructive" disabled={busy || refreshing} loading={deleting && deleteTarget !== null && fileKey(deleteTarget) === fileKey(model)} onclick={() => openDelete(model)}><Trash2 size={16} /></IconOutlinedButton></div>
 {/snippet}
+
+{#snippet folderActions(folder: FolderEntry)}
+	<div class="flex justify-end gap-1">
+		<IconOutlinedButton ariaLabel={`${folder.path} 폴더명 변경`} title="폴더명 변경" variant="filled" class="size-8" disabled={busy || refreshing} loading={renaming && renameTarget?.type === folder.type && renameTarget?.path === folder.path} onclick={() => openRename(folder)}><Pencil size={15} /></IconOutlinedButton>
+		<IconOutlinedButton ariaLabel={`${folder.path} 폴더 삭제`} title="폴더 전체 삭제" variant="filled" class="size-8 hover:bg-destructive/10 hover:text-destructive" disabled={busy || refreshing} loading={(folderDeleting || folderInfoLoading) && folderDeleteTarget?.type === folder.type && folderDeleteTarget?.path === folder.path} onclick={() => openFolderDelete(folder)}><Trash2 size={16} /></IconOutlinedButton>
+	</div>
+{/snippet}
+
+<Modal bind:open={() => renameModalOpen, (value) => { if (!renaming) renameModalOpen = value; }} title="폴더명 변경" description="하위 폴더와 파일을 유지한 채 이름을 변경합니다." closeOnBackdrop={!renaming}>
+	<form class="space-y-4" onsubmit={(event) => { event.preventDefault(); void renameFolder(); }}>
+		<p class="break-all text-xs text-muted-foreground">{renameTarget ? `${modelTypeInfo(renameTarget.type).label} / ${renameTarget.path}` : ''}</p>
+		<label class="block space-y-2" for="storage-rename-folder"><span class="text-sm font-medium">새 폴더 이름</span><input id="storage-rename-folder" bind:value={renameName} disabled={renaming} maxlength="120" class="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
+		{#if folderActionError}<p class="text-sm leading-6 text-destructive" role="alert">{folderActionError}</p>{/if}
+	</form>
+	{#snippet footer()}<OutlinedButton disabled={renaming} onclick={() => (renameModalOpen = false)}>취소</OutlinedButton><PrimaryButton loading={renaming} disabled={!renameName.trim() || renameName.trim() === renameTarget?.name} onclick={() => void renameFolder()}>이름 변경</PrimaryButton>{/snippet}
+</Modal>
+
+<Modal bind:open={() => folderDeleteModalOpen, (value) => { if (!value) closeFolderDelete(); }} title="폴더 전체를 삭제하시겠습니까?" description="하위 폴더와 모든 파일이 함께 삭제되며 복구할 수 없습니다." closeOnBackdrop={!folderDeleting}>
+	<div class="space-y-4">
+		<p class="break-all rounded-lg bg-muted px-3 py-2 text-sm font-medium">{folderDeleteTarget ? `${modelTypeInfo(folderDeleteTarget.type).label} / ${folderDeleteTarget.path}` : ''}</p>
+		{#if folderActionError}<p class="text-sm leading-6 text-destructive" role="alert">{folderActionError}</p>{/if}
+		{#if folderInfoLoading}<div class="flex min-h-24 items-center justify-center"><LoadingSpinner label="삭제 대상 확인 중" /></div>
+		{:else if folderInfo}
+			<dl class="grid grid-cols-3 gap-3 text-center text-sm"><div><dt class="text-xs text-muted-foreground">파일</dt><dd class="mt-1 font-semibold">{folderInfo.file_count}개</dd></div><div><dt class="text-xs text-muted-foreground">하위 폴더</dt><dd class="mt-1 font-semibold">{folderInfo.directory_count}개</dd></div><div><dt class="text-xs text-muted-foreground">용량</dt><dd class="mt-1 font-semibold">{formatSize(folderInfo.size_bytes)}</dd></div></dl>
+			<p class="text-xs leading-5 text-muted-foreground">미리보기·설정 파일 등 모델 외 파일도 삭제 대상에 포함됩니다.</p>
+			{#if folderInfo.has_active_downloads}<p class="rounded-lg bg-destructive/10 p-3 text-sm text-destructive" role="alert">이 폴더에 대기 중이거나 진행 중인 다운로드가 있습니다. 완료 또는 중단 후 다시 확인해 주세요.</p><OutlinedButton onclick={() => void loadFolderInfo()}>삭제 대상 다시 확인</OutlinedButton>{/if}
+		{:else}<p class="text-sm text-muted-foreground">삭제할 내용을 다시 확인해 주세요.</p><OutlinedButton onclick={() => void loadFolderInfo()}>삭제 대상 다시 확인</OutlinedButton>{/if}
+	</div>
+	{#snippet footer()}<OutlinedButton disabled={folderDeleting} onclick={closeFolderDelete}>취소</OutlinedButton><PrimaryButton loading={folderDeleting} variant="destructive" disabled={folderInfoLoading || !folderInfo || folderInfo.has_active_downloads} onclick={() => void deleteFolder()}><Trash2 size={16} />폴더 전체 삭제</PrimaryButton>{/snippet}
+</Modal>
 
 <Modal bind:open={() => createModalOpen, (value) => { if (!creating) createModalOpen = value; }} title="새 폴더" description="현재 위치에 파일을 정리할 폴더를 만드세요." closeOnBackdrop={!creating}>
 	<form id="storage-create-folder" class="space-y-4" onsubmit={(event) => { event.preventDefault(); void createFolder(); }}>

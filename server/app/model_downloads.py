@@ -5,11 +5,13 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any, Literal, cast
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
@@ -29,6 +31,8 @@ from .database import (
     complete_model_download,
     create_model_download,
     fail_model_download,
+    get_model_download,
+    has_active_model_downloads_under,
     is_model_download_active,
     list_model_downloads,
     reset_model_downloads,
@@ -55,6 +59,7 @@ _DOWNLOAD_REDIRECT_CODES = {301, 302, 303, 307, 308}
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 _DOWNLOAD_PROGRESS_INTERVAL = 1.0
 _DOWNLOAD_MAX_REDIRECTS = 5
+_MODEL_FILES_LOCK = RLock()
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -166,6 +171,19 @@ class ModelFolderResponse(BaseModel):
     subfolder: str
 
 
+class RenameModelFolderRequest(BaseModel):
+    subfolder: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class ModelFolderInfo(ModelFolderResponse):
+    file_count: int
+    directory_count: int
+    size_bytes: int
+    revision: str
+    has_active_downloads: bool
+
+
 class MoveInstalledModelRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=512)
     subfolder: str = Field(default="", max_length=255)
@@ -204,15 +222,16 @@ def delete_installed_model(
     filename: str,
     _: UserResponse = Depends(current_user),
 ) -> None:
-    target = _installed_model_path(model_type, filename)
-    if not target.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.")
-    try:
-        target.unlink()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
-    except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 삭제할 수 없습니다.") from exc
+    with _MODEL_FILES_LOCK:
+        target = _installed_model_path(model_type, filename)
+        if not target.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.")
+        try:
+            target.unlink()
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 삭제할 수 없습니다.") from exc
 
 
 @router.post("/installed/{model_type}/move", response_model=InstalledModelResponse)
@@ -221,41 +240,42 @@ def move_installed_model(
     payload: MoveInstalledModelRequest,
     _: UserResponse = Depends(current_user),
 ) -> InstalledModelResponse:
-    source = _installed_model_path(model_type, payload.filename)
-    if not source.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.")
-    try:
-        subfolder = _safe_folder_selection(payload.subfolder)
-        destination_directory = _model_target_directory(model_type, subfolder)
-    except CivitaiError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    if not destination_directory.is_dir():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="선택한 모델 폴더를 찾을 수 없습니다.")
-    destination = destination_directory / source.name
-    if destination == source:
-        file_stat = source.stat()
+    with _MODEL_FILES_LOCK:
+        source = _installed_model_path(model_type, payload.filename)
+        if not source.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.")
+        try:
+            subfolder = _safe_folder_selection(payload.subfolder)
+            destination_directory = _model_target_directory(model_type, subfolder)
+        except CivitaiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not destination_directory.is_dir():
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="선택한 모델 폴더를 찾을 수 없습니다.")
+        destination = destination_directory / source.name
+        if destination == source:
+            file_stat = source.stat()
+            return InstalledModelResponse(
+                model_type=model_type,
+                filename=payload.filename,
+                size_bytes=file_stat.st_size,
+                modified_at=datetime.fromtimestamp(file_stat.st_mtime, timezone.utc),
+            )
+        if destination.exists() or destination.is_symlink():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="대상 폴더에 같은 이름의 모델 파일이 이미 있습니다.")
+        try:
+            source.rename(destination)
+            verified = _installed_model_path(model_type, f"{subfolder}/{source.name}" if subfolder else source.name)
+            file_stat = verified.stat()
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 이동할 수 없습니다.") from exc
         return InstalledModelResponse(
             model_type=model_type,
-            filename=payload.filename,
+            filename=str(verified.relative_to(_model_target_directory(model_type, ""))),
             size_bytes=file_stat.st_size,
             modified_at=datetime.fromtimestamp(file_stat.st_mtime, timezone.utc),
         )
-    if destination.exists() or destination.is_symlink():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="대상 폴더에 같은 이름의 모델 파일이 이미 있습니다.")
-    try:
-        source.rename(destination)
-        verified = _installed_model_path(model_type, f"{subfolder}/{source.name}" if subfolder else source.name)
-        file_stat = verified.stat()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="설치된 모델 파일을 찾을 수 없습니다.") from exc
-    except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 파일을 이동할 수 없습니다.") from exc
-    return InstalledModelResponse(
-        model_type=model_type,
-        filename=str(verified.relative_to(_model_target_directory(model_type, ""))),
-        size_bytes=file_stat.st_size,
-        modified_at=datetime.fromtimestamp(file_stat.st_mtime, timezone.utc),
-    )
 
 
 def _installed_model_path(model_type: ModelType, filename: str) -> Path:
@@ -307,32 +327,153 @@ def create_model_folder(
     payload: ModelFolderRequest,
     _: UserResponse = Depends(current_user),
 ) -> ModelFolderResponse:
+    with _MODEL_FILES_LOCK:
+        try:
+            parent = _safe_folder_selection(payload.parent) if payload.parent else ""
+            name = _safe_folder_name(payload.name)
+            parent_path = _model_target_directory(payload.model_type, parent)
+            if not parent_path.is_dir():
+                raise CivitaiError("상위 모델 폴더를 찾을 수 없습니다.", status_code=status.HTTP_404_NOT_FOUND)
+            subfolder = _safe_folder_selection(f"{parent}/{name}" if parent else name)
+            target = _model_target_directory(payload.model_type, subfolder)
+            target.mkdir(exist_ok=False)
+            _model_target_directory(payload.model_type, subfolder)
+        except CivitaiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="모델 폴더가 이미 있습니다.") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 폴더를 만들 수 없습니다.") from exc
+        return ModelFolderResponse(model_type=payload.model_type, subfolder=subfolder)
+
+
+def _safe_folder_name(raw_name: str) -> str:
+    name = raw_name.strip()
+    if (
+        not name
+        or name.startswith(".")
+        or "/" in name
+        or "\\" in name
+        or re.match(r"^[A-Za-z]:", name)
+        or any(ord(character) < 32 for character in name)
+    ):
+        raise CivitaiError("폴더 이름이 올바르지 않습니다.", status.HTTP_400_BAD_REQUEST)
+    return name
+
+
+def _existing_model_folder(model_type: ModelType, raw_subfolder: str) -> tuple[str, Path]:
     try:
-        parent = _safe_folder_selection(payload.parent) if payload.parent else ""
-        name = payload.name.strip()
-        if (
-            not name
-            or name in {".", ".."}
-            or name.startswith(".")
-            or "/" in name
-            or "\\" in name
-            or any(ord(character) < 32 for character in name)
-        ):
-            raise CivitaiError("새 폴더 이름이 올바르지 않습니다.", status_code=status.HTTP_400_BAD_REQUEST)
-        parent_path = _model_target_directory(payload.model_type, parent)
-        if not parent_path.is_dir():
-            raise CivitaiError("상위 모델 폴더를 찾을 수 없습니다.", status_code=status.HTTP_404_NOT_FOUND)
-        subfolder = f"{parent}/{name}" if parent else name
-        target = _model_target_directory(payload.model_type, subfolder)
-        target.mkdir(exist_ok=False)
-        _model_target_directory(payload.model_type, subfolder)
+        subfolder = _safe_folder_selection(raw_subfolder)
+        if not subfolder:
+            raise CivitaiError("기본 모델 폴더는 변경하거나 삭제할 수 없습니다.", status.HTTP_400_BAD_REQUEST)
+        target = _model_target_directory(model_type, subfolder)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    except FileExistsError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="모델 폴더가 이미 있습니다.") from exc
+    if not target.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="모델 폴더를 찾을 수 없습니다.")
+    return subfolder, target
+
+
+def _folder_snapshot(model_type: ModelType, subfolder: str, target: Path) -> ModelFolderInfo:
+    files = 0
+    directories = 0
+    size = 0
+    entries: list[tuple[str, int, int, int, int, int]] = []
+    pending = [target]
+    try:
+        while pending:
+            directory = pending.pop()
+            file_stat = directory.stat(follow_symlinks=False)
+            entries.append((directory.relative_to(target).as_posix(), file_stat.st_mode, file_stat.st_size, file_stat.st_mtime_ns, file_stat.st_ino, file_stat.st_dev))
+            with os.scandir(directory) as children:
+                for child in children:
+                    path = Path(child.path)
+                    if child.is_dir(follow_symlinks=False):
+                        directories += 1
+                        pending.append(path)
+                    else:
+                        file_stat = child.stat(follow_symlinks=False)
+                        files += 1
+                        size += file_stat.st_size
+                        entries.append((path.relative_to(target).as_posix(), file_stat.st_mode, file_stat.st_size, file_stat.st_mtime_ns, file_stat.st_ino, file_stat.st_dev))
     except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="모델 폴더를 만들 수 없습니다.") from exc
-    return ModelFolderResponse(model_type=payload.model_type, subfolder=subfolder)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="폴더 내용을 확인할 수 없습니다. 다시 불러와 주세요.") from exc
+    revision = hashlib.sha256(json.dumps(sorted(entries), ensure_ascii=True).encode()).hexdigest()
+    return ModelFolderInfo(
+        model_type=model_type,
+        subfolder=subfolder,
+        file_count=files,
+        directory_count=directories,
+        size_bytes=size,
+        revision=revision,
+        has_active_downloads=has_active_model_downloads_under(str(target)),
+    )
+
+
+def _ensure_folder_idle(target: Path) -> None:
+    if has_active_model_downloads_under(str(target)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이 폴더에 대기 중이거나 진행 중인 다운로드가 있습니다. 완료 또는 중단 후 다시 시도해 주세요.")
+
+
+@router.get("/folders/info", response_model=ModelFolderInfo)
+def model_folder_info(
+    model_type: ModelType,
+    subfolder: str = Query(min_length=1, max_length=255),
+    _: UserResponse = Depends(current_user),
+) -> ModelFolderInfo:
+    with _MODEL_FILES_LOCK:
+        relative, target = _existing_model_folder(model_type, subfolder)
+        return _folder_snapshot(model_type, relative, target)
+
+
+@router.post("/folders/{model_type}/rename", response_model=ModelFolderResponse)
+def rename_model_folder(
+    model_type: ModelType,
+    payload: RenameModelFolderRequest,
+    _: UserResponse = Depends(current_user),
+) -> ModelFolderResponse:
+    with _MODEL_FILES_LOCK:
+        subfolder, target = _existing_model_folder(model_type, payload.subfolder)
+        try:
+            name = _safe_folder_name(payload.name)
+            parent = subfolder.rpartition("/")[0]
+            renamed = _safe_folder_selection(f"{parent}/{name}" if parent else name)
+            destination = _model_target_directory(model_type, renamed)
+        except CivitaiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if target == destination:
+            return ModelFolderResponse(model_type=model_type, subfolder=subfolder)
+        _ensure_folder_idle(target)
+        if destination.exists() or destination.is_symlink():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 폴더가 이미 있습니다.")
+        try:
+            target.rename(destination)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="모델 폴더를 찾을 수 없습니다.") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="폴더 이름을 변경할 수 없습니다.") from exc
+        return ModelFolderResponse(model_type=model_type, subfolder=renamed)
+
+
+@router.delete("/folders/{model_type}/{subfolder:path}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_model_folder(
+    model_type: ModelType,
+    subfolder: str,
+    revision: str = Query(min_length=64, max_length=64, pattern="^[0-9a-f]{64}$"),
+    _: UserResponse = Depends(current_user),
+) -> None:
+    with _MODEL_FILES_LOCK:
+        relative, target = _existing_model_folder(model_type, subfolder)
+        _ensure_folder_idle(target)
+        snapshot = _folder_snapshot(model_type, relative, target)
+        if snapshot.revision != revision:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="확인 이후 폴더 내용이 변경되었습니다. 삭제 대상을 다시 확인해 주세요.")
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="모델 폴더를 찾을 수 없습니다.") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="폴더를 완전히 삭제하지 못했습니다. 목록을 새로고침해 주세요.") from exc
 
 
 @router.get("/downloads", response_model=list[ModelDownloadResponse])
@@ -346,10 +487,20 @@ def model_downloads(
 
 @router.post("/downloads/{download_id}/retry", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
 def retry_download(download_id: uuid.UUID, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
-    row = retry_model_download(download_id, user.id)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
-    return _download_response(row)
+    with _MODEL_FILES_LOCK:
+        previous = get_model_download(download_id, user.id)
+        if previous is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
+        try:
+            target = _validated_model_target(cast(ModelType, previous["model_type"]), previous["target_path"])
+        except CivitaiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not target.parent.is_dir():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="저장 폴더가 변경되었거나 삭제되었습니다. 모델을 다시 조회해 저장 위치를 선택해 주세요.")
+        row = retry_model_download(download_id, user.id)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
+        return _download_response(row)
 
 
 @router.post("/downloads/{download_id}/cancel", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -394,27 +545,28 @@ def download_civitai_model(
         filename = _safe_filename(selected_file.name)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    try:
-        subfolder = _safe_folder_selection(payload.subfolder)
-        target_directory = _model_target_directory(target_model_type, subfolder)
-    except CivitaiError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    if not target_directory.is_dir():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="선택한 모델 폴더를 찾을 수 없습니다.")
-    target_path = target_directory / filename
-    if target_path.exists() or target_path.is_symlink():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
-    row = create_model_download(
-        user_id=user.id,
-        version_id=version.version_id,
-        model_type=target_model_type,
-        file_index=selected_index,
-        filename=filename,
-        target_path=str(target_path),
-    )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 모델 다운로드가 이미 대기 중입니다.")
-    return _download_response(row)
+    with _MODEL_FILES_LOCK:
+        try:
+            subfolder = _safe_folder_selection(payload.subfolder)
+            target_directory = _model_target_directory(target_model_type, subfolder)
+        except CivitaiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not target_directory.is_dir():
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="선택한 모델 폴더를 찾을 수 없습니다.")
+        target_path = target_directory / filename
+        if target_path.exists() or target_path.is_symlink():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
+        row = create_model_download(
+            user_id=user.id,
+            version_id=version.version_id,
+            model_type=target_model_type,
+            file_index=selected_index,
+            filename=filename,
+            target_path=str(target_path),
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 모델 다운로드가 이미 대기 중입니다.")
+        return _download_response(row)
 
 
 def _download_response(row: dict[str, Any]) -> ModelDownloadResponse:
@@ -835,10 +987,11 @@ def _process_model_download(job: dict[str, Any]) -> None:
     target = _validated_model_target(model_type, job["target_path"])
     if target.exists() or target.is_symlink():
         raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
-    target.parent.mkdir(parents=True, exist_ok=True)
     partial = _partial_path(target)
     try:
-        _ensure_model_download_active(job["id"])
+        with _MODEL_FILES_LOCK:
+            _ensure_model_download_active(job["id"])
+            target.parent.mkdir(parents=True, exist_ok=True)
         resume_from = partial.stat().st_size if partial.is_file() else 0
         with _open_download(selected_file.download_url, settings.civitai_token.strip(), resume_from) as response:
             _ensure_model_download_active(job["id"])

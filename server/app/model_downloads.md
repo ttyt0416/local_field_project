@@ -8,6 +8,10 @@
 
 `GET /models/folders`는 모델 종류별 기존 폴더를 반환하고 hidden 경로는 제외한다. `POST /models/folders`는 선택한 기존 parent 아래에 slash·backslash·hidden name이 없는 단일 폴더 이름만 새로 만든다. symlink와 root 탈출, 존재하지 않는 parent, 중복 폴더를 거부한다.
 
+`GET /models/folders/info`는 model_type·subfolder를 받아 전체 하위 파일 수·하위 폴더 수·용량·revision·활성 다운로드 여부를 반환한다. 확장자와 숨김 여부에 관계없이 포함하며 하위 symlink는 링크 자체만 집계하고 대상을 따라가지 않는다. `POST /models/folders/{model_type}/rename`은 subfolder·name으로 같은 부모 안에서 폴더 이름을 변경한다. 하위 파일을 유지하며 기존 폴더를 덮어쓰지 않는다. `DELETE /models/folders/{model_type}/{subfolder}`는 info에서 받은 revision query가 현재 내용과 같을 때만 하위 전체를 삭제한다. revision은 상대 경로·파일 종류·크기·수정 시각·inode 정보를 해시하며 확인 이후 변경이 있으면 409로 거절한다. 디렉터리 삭제는 symlink 대상을 따라가지 않는 shutil.rmtree를 사용한다. 두 변경 API는 모델 종류 기본 폴더·hidden·traversal·symlink 경로를 거부한다.
+
+모델 저장소는 현재 단일 API 프로세스로 실행하며 폴더 변경·파일 변경·새 폴더·다운로드 enqueue·재시도를 공용 RLock으로 직렬화한다. 폴더 하위에 queued/downloading 작업이 있으면 사용자와 무관하게 변경·삭제를 막는다. 과거 failed/cancelled 다운로드의 경로 기록은 유지하며 삭제되거나 이름이 바뀐 저장 폴더로 재시도하면 새 위치를 선택하도록 409로 안내한다. 취소된 worker가 폴더를 재생성하지 않도록 mkdir 전에 작업 상태를 같은 lock 안에서 확인한다. API 호출·오류는 기존 전역 middleware가 DB에 기록한다.
+
 `GET /models/installed`는 여섯 ComfyUI 모델 폴더의 현재 파일 목록을 반환하고, `DELETE /models/installed/{model_type}/{filename}`는 허용된 모델 폴더 안의 설치 파일을 삭제한다. 삭제 endpoint는 로그인과 모델 확장자를 확인하고 경로 탈출을 차단한다. `GET /models/downloads`는 로그인한 사용자의 최근 download job을 반환하며 `active_only=true`이면 `queued`와 `downloading`만 반환한다. 실제 Civitai 파일 다운로드는 server worker가 수행하며, 이 구현 검증에서는 대용량 모델 파일을 받거나 ComfyUI inference를 실행하지 않는다.
 
 

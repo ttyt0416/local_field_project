@@ -14,6 +14,8 @@
 
 `api_error_logs.provider_response`는 failed provider call이 실제로 반환한 decoded JSON response를 JSONB로 저장한다. prompt and credential은 넣지 않으며, response의 `choices`, `finish_reason`, `usage`, incomplete structured content를 Error DB에서 같은 503 row와 함께 확인해 token budget 소진 위치를 진단한다.
 
+`has_active_model_downloads_under`는 폴더 변경·삭제 전에 모든 사용자의 queued/downloading target_path를 조회한다. 디렉터리 뒤 slash를 포함한 문자열 prefix를 비교하므로 형제 폴더를 혼동하거나 이름의 `%`·`_`를 SQL wildcard로 해석하지 않는다. 파일 내용이나 토큰은 조회하지 않는다.
+
 image_generations.reference_images JSONB는 추가 참조 이미지의 file_id·filename을 순서대로 저장한다. 시작 시 기존 row에 빈 배열로 컬럼을 추가하고, crop 편집 row도 이 목록을 복사한다. Storage 참조 검사에 JSONB file_id도 포함해 다른 결과가 참조 중인 파일의 삭제를 막는다.
 
 ## MOSS SFT
