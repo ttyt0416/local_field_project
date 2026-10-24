@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Literal, cast
+from typing import Any, Callable, Literal, cast
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from .auth import UserResponse, current_user
 from .configs.constants import settings
+from . import hugging_face as hf
 from .database import (
     cancel_model_download,
     claim_model_download,
@@ -51,7 +52,7 @@ _MODEL_TARGETS: dict[ModelType, tuple[str, str]] = {
     "vae": ("VAE", "vae"),
     "embedding": ("임베딩", "embeddings"),
 }
-_MODEL_EXTENSIONS = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft"}
+_MODEL_EXTENSIONS = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft", ".gguf"}
 _CIVITAI_API_BASE = "https://civitai.com/api/v1"
 _CIVITAI_HOST = "civitai.com"
 _CIVITAI_SOURCE_HOSTS = {"civitai.com", "www.civitai.com", "civitai.red", "www.civitai.red"}
@@ -141,7 +142,11 @@ class ModelDownloadRequest(BaseModel):
 
 class ModelDownloadResponse(BaseModel):
     id: str
-    version_id: int
+    version_id: int | None
+    provider: Literal["civitai", "hugging_face"] = "civitai"
+    source_repo: str | None = None
+    source_revision: str | None = None
+    source_filename: str | None = None
     model_type: ModelType
     subfolder: str
     filename: str
@@ -151,6 +156,28 @@ class ModelDownloadResponse(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+
+
+class HuggingFaceFileResponse(BaseModel):
+    path: str
+    size_bytes: int | None
+    sha256: str | None
+
+
+class HuggingFaceLookupResponse(BaseModel):
+    repo_id: str
+    revision: str
+    requested_revision: str
+    files: list[HuggingFaceFileResponse]
+    selected_file_path: str
+
+
+class HuggingFaceDownloadRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=200)
+    revision: str = Field(pattern="^[0-9a-f]{40}$")
+    filename: str = Field(min_length=1, max_length=1024)
+    model_type: ModelType
+    subfolder: str = Field(default="", max_length=255)
 
 
 class InstalledModelResponse(BaseModel):
@@ -509,7 +536,7 @@ def cancel_download(download_id: uuid.UUID, user: UserResponse = Depends(current
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="중단할 수 있는 다운로드를 찾을 수 없습니다.")
     try:
-        _partial_path(row["target_path"]).unlink(missing_ok=True)
+        _job_partial_path(row).unlink(missing_ok=True)
     except OSError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="다운로드 임시 파일을 삭제하지 못했습니다.") from exc
     return _download_response(row)
@@ -569,10 +596,68 @@ def download_civitai_model(
         return _download_response(row)
 
 
+@router.get("/hugging-face/lookup", response_model=HuggingFaceLookupResponse)
+def lookup_hugging_face_model(
+    source: str = Query(min_length=1, max_length=2048),
+    revision: str = Query(default="", max_length=200),
+    _: UserResponse = Depends(current_user),
+) -> HuggingFaceLookupResponse:
+    try:
+        parsed = hf.parse_source(source, revision)
+        repository = hf.fetch_repository(parsed.repo_id, parsed.revision, settings.hugging_face_token.strip(), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        files = [file for file in repository.files if not parsed.path or (file.path == parsed.path if parsed.is_file else file.path.startswith(f"{parsed.path}/"))]
+        if not files:
+            raise hf.HuggingFaceError("이 위치에서 다운로드할 수 있는 모델 파일을 찾지 못했습니다.", 404)
+    except hf.HuggingFaceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return HuggingFaceLookupResponse(
+        repo_id=repository.repo_id,
+        revision=repository.revision,
+        requested_revision=parsed.revision,
+        files=[HuggingFaceFileResponse(path=file.path, size_bytes=file.size_bytes, sha256=file.sha256) for file in files],
+        selected_file_path=files[0].path,
+    )
+
+
+@router.post("/hugging-face/download", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
+def download_hugging_face_model(payload: HuggingFaceDownloadRequest, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
+    try:
+        hf.safe_repo_path(payload.filename)
+        repository = hf.fetch_repository(payload.repo_id, payload.revision, settings.hugging_face_token.strip(), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        if not any(file.path == payload.filename for file in repository.files):
+            raise hf.HuggingFaceError("선택한 리비전에 모델 파일이 없습니다. 다시 조회해 주세요.", 404)
+        filename = _safe_filename(Path(payload.filename).name)
+    except (hf.HuggingFaceError, CivitaiError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    with _MODEL_FILES_LOCK:
+        try:
+            subfolder = _safe_folder_selection(payload.subfolder)
+            directory = _model_target_directory(payload.model_type, subfolder)
+        except CivitaiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not directory.is_dir():
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="선택한 저장 폴더를 찾을 수 없습니다.")
+        target = directory / filename
+        if target.exists() or target.is_symlink():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
+        row = create_model_download(
+            user_id=user.id, version_id=0, model_type=payload.model_type, file_index=0,
+            filename=filename, target_path=str(target), provider="hugging_face",
+            source_repo=repository.repo_id, source_revision=repository.revision, source_filename=payload.filename,
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 파일 다운로드가 이미 대기 중입니다.")
+        return _download_response(row)
+
+
 def _download_response(row: dict[str, Any]) -> ModelDownloadResponse:
     return ModelDownloadResponse(
         id=str(row["id"]),
-        version_id=row["version_id"],
+        version_id=row["version_id"] if row.get("provider", "civitai") == "civitai" else None,
+        provider=row.get("provider", "civitai"),
+        source_repo=row.get("source_repo"),
+        source_revision=row.get("source_revision"),
+        source_filename=row.get("source_filename"),
         model_type=row["model_type"],
         subfolder=_download_subfolder(row["model_type"], row["target_path"]),
         filename=row["filename"],
@@ -978,55 +1063,86 @@ def _open_download(url: str, token: str, resume_from: int):
 
 
 def _process_model_download(job: dict[str, Any]) -> None:
+    if job.get("provider", "civitai") == "hugging_face":
+        repo = hf.safe_repo_id(job["source_repo"])
+        commit = hf.safe_revision(job["source_revision"], pinned=True)
+        path = hf.safe_repo_path(job["source_filename"])
+        repository = hf.fetch_repository(repo, commit, settings.hugging_face_token.strip(), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        selected = next((file for file in repository.files if file.path == path), None)
+        if selected is None:
+            raise hf.HuggingFaceError("선택한 Hugging Face 파일을 찾을 수 없습니다.", 404)
+        url = hf.file_url(repo, commit, path)
+        _transfer_model_download(job, selected.size_bytes, selected.sha256, lambda resume: hf.open_download(url, settings.hugging_face_token.strip(), resume, _NO_REDIRECT_OPENER))
+        return
+    if job.get("provider", "civitai") != "civitai":
+        raise CivitaiError("지원하지 않는 다운로드 출처입니다.")
     if not settings.civitai_token.strip():
         raise CivitaiError("Civitai 토큰이 설정되지 않았습니다.")
     version = _fetch_version(int(job["version_id"]))
     model_type = cast(ModelType, job["model_type"])
     selected_index = _select_file_index(version, model_type, int(job["file_index"]))
     selected_file = version.files[selected_index]
+    _transfer_model_download(job, selected_file.size_bytes, selected_file.sha256, lambda resume: _open_download(selected_file.download_url, settings.civitai_token.strip(), resume))
+
+
+def _transfer_model_download(job: dict[str, Any], expected_size: int | None, sha256: str | None, open_stream: Callable[[int], Any]) -> None:
+    model_type = cast(ModelType, job["model_type"])
     target = _validated_model_target(model_type, job["target_path"])
     if target.exists() or target.is_symlink():
         raise CivitaiError("같은 이름의 모델 파일이 이미 있습니다.", status.HTTP_409_CONFLICT)
-    partial = _partial_path(target)
+    partial = _job_partial_path(job)
     try:
         with _MODEL_FILES_LOCK:
             _ensure_model_download_active(job["id"])
             target.parent.mkdir(parents=True, exist_ok=True)
         resume_from = partial.stat().st_size if partial.is_file() else 0
-        with _open_download(selected_file.download_url, settings.civitai_token.strip(), resume_from) as response:
-            _ensure_model_download_active(job["id"])
-            response_status = getattr(response, "status", 200)
-            append = resume_from > 0 and response_status == 206
-            downloaded = resume_from if append else 0
-            content_length = _header_int(response, "Content-Length")
-            total_bytes = (downloaded + content_length) if append and content_length is not None else content_length
-            if total_bytes is None:
-                total_bytes = selected_file.size_bytes
-            if not update_model_download_progress(job["id"], downloaded, total_bytes):
-                raise _ModelDownloadCancelled()
-            mode = "ab" if append else "wb"
-            last_progress = time.monotonic()
-            with partial.open(mode) as destination:
-                while True:
-                    chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    destination.write(chunk)
-                    downloaded += len(chunk)
-                    now = time.monotonic()
-                    if now - last_progress >= _DOWNLOAD_PROGRESS_INTERVAL:
-                        if not update_model_download_progress(job["id"], downloaded, total_bytes):
-                            raise _ModelDownloadCancelled()
-                        last_progress = now
+        cached_complete = job.get("provider") == "hugging_face" and expected_size is not None and resume_from == expected_size and sha256 is not None
+        if job.get("provider") == "hugging_face" and expected_size is not None and resume_from >= expected_size and not cached_complete:
+            partial.unlink(missing_ok=True)
+            resume_from = 0
+        content_length = None
+        total_bytes = expected_size
+        if not cached_complete:
+            with open_stream(resume_from) as response:
+                _ensure_model_download_active(job["id"])
+                response_status = getattr(response, "status", 200)
+                append = resume_from > 0 and response_status == 206
+                if response_status == 206:
+                    content_range = re.match(r"bytes (\d+)-\d+/(?:\d+|\*)$", response.headers.get("Content-Range", ""))
+                    if not content_range or int(content_range.group(1)) != resume_from:
+                        raise CivitaiError("파일 이어받기 응답이 올바르지 않습니다.")
+                downloaded = resume_from if append else 0
+                content_length = _header_int(response, "Content-Length")
+                total_bytes = (downloaded + content_length) if append and content_length is not None else content_length
+                if total_bytes is None:
+                    total_bytes = expected_size
+                if not update_model_download_progress(job["id"], downloaded, total_bytes):
+                    raise _ModelDownloadCancelled()
+                mode = "ab" if append else "wb"
+                last_progress = time.monotonic()
+                with partial.open(mode) as destination:
+                    while True:
+                        chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        destination.write(chunk)
+                        downloaded += len(chunk)
+                        now = time.monotonic()
+                        if now - last_progress >= _DOWNLOAD_PROGRESS_INTERVAL:
+                            if not update_model_download_progress(job["id"], downloaded, total_bytes):
+                                raise _ModelDownloadCancelled()
+                            last_progress = now
         _ensure_model_download_active(job["id"])
         actual_bytes = partial.stat().st_size
-        if selected_file.sha256:
+        if (content_length is not None and actual_bytes != total_bytes) or (job.get("provider") == "hugging_face" and expected_size is not None and actual_bytes != expected_size):
+            raise CivitaiError("파일이 완전히 다운로드되지 않았습니다. 다시 시도해 주세요.")
+        if sha256:
             digest = hashlib.sha256()
             with partial.open("rb") as source:
                 for chunk in iter(lambda: source.read(_DOWNLOAD_CHUNK_BYTES), b""):
                     digest.update(chunk)
             _ensure_model_download_active(job["id"])
-            if digest.hexdigest().casefold() != selected_file.sha256.casefold():
+            if digest.hexdigest().casefold() != sha256.casefold():
                 partial.unlink(missing_ok=True)
                 raise CivitaiError("다운로드한 모델의 SHA256 검증에 실패했습니다.")
         _ensure_model_download_active(job["id"])
@@ -1051,6 +1167,12 @@ def _partial_path(target_path: str | Path) -> Path:
     return target.with_name(f".{target.name}.part")
 
 
+def _job_partial_path(job: dict[str, Any]) -> Path:
+    if job.get("provider") == "hugging_face":
+        return Path(job["target_path"]).with_name(f".hf-{uuid.UUID(str(job['id']))}.part")
+    return _partial_path(job["target_path"])
+
+
 def _header_int(response: Any, name: str) -> int | None:
     value = response.headers.get(name)
     try:
@@ -1069,10 +1191,10 @@ async def run_model_download_worker(stop_event: asyncio.Event) -> None:
                 await asyncio.to_thread(_process_model_download, job)
             except _ModelDownloadCancelled:
                 continue
-            except CivitaiError as exc:
+            except (CivitaiError, hf.HuggingFaceError) as exc:
                 await asyncio.to_thread(fail_model_download, job["id"], str(exc))
             except (OSError, URLError, TimeoutError, ValueError):
-                await asyncio.to_thread(fail_model_download, job["id"], "Civitai 파일 다운로드에 실패했습니다.")
+                await asyncio.to_thread(fail_model_download, job["id"], "모델 파일 다운로드에 실패했습니다.")
             continue
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=2)

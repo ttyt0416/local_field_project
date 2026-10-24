@@ -338,7 +338,7 @@
 
 			<div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4">
 				<div class="flex items-center gap-3"><span class="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><HardDrive size={21} /></span><div><p class="text-sm font-semibold">내 스토리지</p><p class="mt-0.5 text-xs text-muted-foreground">{loadFailed ? '목록을 다시 불러와 주세요.' : `${installed.length}개 파일 · ${formatSize(totalBytes)} 사용 중`}</p></div></div>
-				<a href="/models" class="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"><Download size={16} />Civitai에서 다운로드<ChevronRight size={15} /></a>
+				<a href="/models" class="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"><Download size={16} />다운로드 관리<ChevronRight size={15} /></a>
 			</div>
 
 			<div class={`grid items-start gap-5 ${selectedModel ? 'xl:grid-cols-[minmax(0,1fr)_17rem]' : ''}`}>
@@ -362,7 +362,7 @@
 					{#if loadFailed}
 						<div class="flex min-h-64 flex-col items-center justify-center gap-3 px-5 text-center"><HardDrive size={32} class="text-muted-foreground" /><p class="text-sm text-muted-foreground">파일 목록을 불러오지 못했습니다.</p><OutlinedButton loading={refreshing} onclick={() => void refresh()}>다시 시도</OutlinedButton></div>
 					{:else if !folderEntries.length && !visibleFiles.length}
-						<div class="flex min-h-72 flex-col items-center justify-center gap-3 px-5 text-center"><Folder size={40} strokeWidth={1.3} class="text-muted-foreground" /><p class="font-medium">{query ? '검색 결과가 없습니다.' : '이 폴더는 비어 있습니다.'}</p><p class="text-sm text-muted-foreground">{query ? '다른 파일명이나 폴더명으로 검색해 보세요.' : '새 폴더를 만들거나 Civitai에서 모델을 다운로드하세요.'}</p></div>
+						<div class="flex min-h-72 flex-col items-center justify-center gap-3 px-5 text-center"><Folder size={40} strokeWidth={1.3} class="text-muted-foreground" /><p class="font-medium">{query ? '검색 결과가 없습니다.' : '이 폴더는 비어 있습니다.'}</p><p class="text-sm text-muted-foreground">{query ? '다른 파일명이나 폴더명으로 검색해 보세요.' : '새 폴더를 만들거나 다운로드 관리에서 모델을 다운로드하세요.'}</p></div>
 					{:else if view === 'list'}
 						<div class="overflow-x-auto">
 							<table class="w-full min-w-[36rem] text-left text-sm">

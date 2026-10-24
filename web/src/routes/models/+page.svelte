@@ -12,6 +12,9 @@
 	import { apiJson } from '$lib/utils/api';
 	import ModelFolderPicker from '../../../components/models/model-folder-picker.svelte';
 	import { modelTypes, type ModelType } from '$lib/types/model-storage';
+	import type { DownloadJob, DownloadProvider } from '$lib/types/model-downloads';
+	import Tab from '../../../components/tabs/tab.svelte';
+	import HuggingFaceDownload from '../../../components/downloads/hugging-face-download.svelte';
 
 	type FileInfo = {
 		index: number;
@@ -40,17 +43,6 @@
 		selected_file_index: number;
 		versions: VersionOption[];
 	};
-	type DownloadJob = {
-		id: string;
-		version_id: number;
-		model_type: ModelType;
-		subfolder: string;
-		filename: string;
-		status: 'queued' | 'downloading';
-		downloaded_bytes: number;
-		total_bytes: number | null;
-		created_at: string;
-	};
 	type ToastData = { state: 'positive' | 'negative' | 'info'; title: string; message: string };
 
 	const statusLabels: Record<string, string> = {
@@ -59,6 +51,10 @@
 	};
 
 	let ready = $state(false);
+	let provider = $state<DownloadProvider>('civitai');
+	let huggingFaceBusy = $state(false);
+	let lookupRequest = 0;
+	let jobsRevision = 0;
 	let source = $state('');
 	let modelType = $state<ModelType>('checkpoint');
 	let subfolder = $state('');
@@ -78,6 +74,10 @@
 	let toast = $state<ToastData | null>(null);
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	let active = true;
+	let providerTabs = $derived([
+		{ value: 'civitai' as const, label: 'Civitai', disabled: downloadLoading || lookupLoading || versionLoadingId !== null || huggingFaceBusy },
+		{ value: 'hugging_face' as const, label: 'Hugging Face', disabled: downloadLoading || lookupLoading || versionLoadingId !== null || huggingFaceBusy }
+	]);
 
 	onMount(() => {
 		void initialize();
@@ -121,9 +121,17 @@
 	async function loadJobs() {
 		if (jobsLoading) return;
 		jobsLoading = true;
+		const revision = jobsRevision;
 		try {
-			const result = await apiJson<DownloadJob[]>('models/downloads?active_only=true');
-			if (active) jobs = result;
+			const result = await apiJson<DownloadJob[]>('models/downloads?limit=100');
+			if (active && revision === jobsRevision) {
+				const failed = result.find((job) => job.status === 'failed' && jobs.some((previous) => previous.id === job.id));
+				if (failed) {
+					error = `${failed.filename}: ${failed.error_message ?? '모델 다운로드에 실패했습니다.'}`;
+					showToast('negative', '다운로드 실패', error);
+				}
+				jobs = result.filter((job) => job.status === 'queued' || job.status === 'downloading');
+			}
 		} catch (reason) {
 			if (!active) return;
 			error = reason instanceof Error ? reason.message : '다운로드 목록을 불러오지 못했습니다.';
@@ -140,20 +148,22 @@
 			error = 'Civitai 모델 링크, 버전 ID 또는 버전 링크를 입력해 주세요.';
 			return;
 		}
+		const request = ++lookupRequest;
 		lookupLoading = true;
 		error = '';
 		try {
 			const result = await apiJson<Lookup>(
 				`models/civitai/lookup?source=${encodeURIComponent(requestedSource)}&model_type=${requestedType}`
 			);
-			if (source.trim() !== requestedSource || modelType !== requestedType) return;
+			if (!active || request !== lookupRequest || provider !== 'civitai' || source.trim() !== requestedSource || modelType !== requestedType) return;
 			applyLookup(result);
 		} catch (reason) {
+			if (!active || request !== lookupRequest) return;
 			lookup = null;
 			error = reason instanceof Error ? reason.message : 'Civitai 모델 정보를 조회하지 못했습니다.';
 			showToast('negative', '모델 조회 실패', error);
 		} finally {
-			lookupLoading = false;
+			if (active && request === lookupRequest) lookupLoading = false;
 		}
 	}
 
@@ -166,6 +176,10 @@
 	}
 
 	function clearLookupSelection() {
+		lookupRequest += 1;
+		lookupLoading = false;
+		versionLoadingId = null;
+		folderModalOpen = false;
 		lookup = null;
 		versionOptions = [];
 		versionModalOpen = false;
@@ -180,26 +194,28 @@
 			return;
 		}
 		const requestedType = modelType;
+		const request = ++lookupRequest;
 		versionLoadingId = versionId;
 		error = '';
 		try {
 			const result = await apiJson<Lookup>(
 				`models/civitai/lookup?source=${versionId}&model_type=${requestedType}`
 			);
-			if (modelType !== requestedType) return;
+			if (!active || request !== lookupRequest || provider !== 'civitai' || modelType !== requestedType) return;
 			applyLookup(result);
 			versionModalOpen = false;
 		} catch (reason) {
+			if (!active || request !== lookupRequest) return;
 			const message = reason instanceof Error ? reason.message : '모델 버전을 불러오지 못했습니다.';
 			error = message;
 			showToast('negative', '모델 버전 선택 실패', message);
 		} finally {
-			versionLoadingId = null;
+			if (active && request === lookupRequest) versionLoadingId = null;
 		}
 	}
 
 	async function startDownload(folder: string) {
-		if (!lookup || selectedFileIndex === null) return;
+		if (!lookup || selectedFileIndex === null || downloadLoading) return;
 		downloadLoading = true;
 		error = '';
 		try {
@@ -207,14 +223,14 @@
 				method: 'POST',
 				json: { source: String(lookup.version_id), model_type: modelType, file_index: selectedFileIndex, subfolder: folder }
 			});
-			jobs = [job, ...jobs.filter((item) => item.id !== job.id)];
+			if (!active) return;
+			addDownloadJob(job);
 			lookup = null;
 			versionOptions = [];
 			source = '';
 			selectedFileIndex = null;
 			subfolder = '';
 			folderModalOpen = false;
-			showToast('positive', '다운로드 요청 완료', '모델 다운로드가 대기열에 추가되었습니다.');
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '모델 다운로드를 요청하지 못했습니다.';
 			showToast('negative', '다운로드 요청 실패', error);
@@ -234,6 +250,7 @@
 		error = '';
 		try {
 			await apiJson<DownloadJob>(`models/downloads/${downloadId}/cancel`, { method: 'POST' });
+			jobsRevision += 1;
 			jobs = jobs.filter((item) => item.id !== downloadId);
 			showToast('positive', '다운로드 중단 완료', '다운로드를 중단하고 임시 파일을 삭제했습니다.');
 		} catch (reason) {
@@ -247,12 +264,21 @@
 
 	function chooseType(value: ModelType) {
 		modelType = value;
-		lookup = null;
-		versionOptions = [];
-		versionModalOpen = false;
-		selectedFileIndex = null;
-		folderModalOpen = false;
-		subfolder = '';
+		clearLookupSelection();
+	}
+
+	function chooseProvider(value: DownloadProvider) {
+		if (downloadLoading || lookupLoading || versionLoadingId !== null || huggingFaceBusy) return false;
+		provider = value;
+		source = '';
+		error = '';
+		clearLookupSelection();
+	}
+
+	function addDownloadJob(job: DownloadJob) {
+		jobsRevision += 1;
+		jobs = [job, ...jobs.filter((item) => item.id !== job.id)];
+		showToast('positive', '다운로드 요청 완료', '모델 다운로드가 대기열에 추가되었습니다.');
 	}
 
 	function showToast(state: ToastData['state'], title: string, message: string) {
@@ -286,23 +312,26 @@
 </script>
 
 <svelte:head>
-	<title>CIVITAI 다운로드 · Local Field</title>
-	<meta name="description" content="Civitai 모델을 ComfyUI 모델 폴더에 다운로드합니다." />
+	<title>다운로드 관리 · Local Field</title>
+	<meta name="description" content="Civitai와 Hugging Face 모델 다운로드를 관리합니다." />
 </svelte:head>
 
 {#if !ready}
-	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="CIVITAI 다운로드를 불러오는 중" /></div>
+	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="다운로드 관리를 불러오는 중" /></div>
 {:else}
 	<Layout>
 		<div class="space-y-6">
 			<div class="flex flex-wrap items-end justify-between gap-4">
 				<div>
-					<Typography as="h1" variant="display">CIVITAI 다운로드</Typography>
+					<Typography as="h1" variant="display">다운로드 관리</Typography>
 					<p class="mt-2 text-sm text-muted-foreground">모델을 찾아 다운로드하세요. 저장된 파일은 <a href="/files" class="font-medium text-primary hover:underline">파일 관리</a>에서 정리할 수 있습니다.</p>
 				</div>
 				<OutlinedButton class="gap-2" loading={refreshing} onclick={() => void refresh()}><RefreshCw size={16} />새로고침</OutlinedButton>
 			</div>
 
+			<Tab items={providerTabs} value={provider} onselect={chooseProvider} ariaLabel="다운로드 출처" />
+
+			{#if provider === 'civitai'}
 			<section class="space-y-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
 				<div class="flex flex-wrap gap-2" role="tablist" aria-label="모델 종류">
 					{#each modelTypes as item}
@@ -335,6 +364,11 @@
 				</section>
 			{/if}
 
+
+			{:else}
+				<HuggingFaceDownload bind:busy={huggingFaceBusy} ondownload={addDownloadJob} />
+			{/if}
+
 			{#if error}<div class="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">{error}</div>{/if}
 
 			<section class="space-y-3">
@@ -345,7 +379,7 @@
 										{#each jobs as job (job.id)}
 											<article class="space-y-3 rounded-xl border border-border bg-card p-4 shadow-sm">
 												<div class="flex flex-wrap items-start justify-between gap-3">
-													<div class="min-w-0"><p class="truncate text-sm font-semibold" title={`${job.subfolder ? `${job.subfolder}/` : ''}${job.filename}`}>{job.subfolder ? `${job.subfolder}/` : ''}{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{typeLabel(job.model_type)} · version {job.version_id}</p></div>
+													<div class="min-w-0"><p class="truncate text-sm font-semibold" title={`${job.subfolder ? `${job.subfolder}/` : ''}${job.filename}`}>{job.subfolder ? `${job.subfolder}/` : ''}{job.filename}</p><p class="mt-1 text-xs text-muted-foreground">{job.provider === 'hugging_face' ? 'Hugging Face' : 'Civitai'} · {typeLabel(job.model_type)}{#if job.provider === 'hugging_face'} · {job.source_repo} · {job.source_revision?.slice(0, 12)}{:else} · version {job.version_id}{/if}</p></div>
 													<span class="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">{statusLabels[job.status] ?? job.status}</span>
 												</div>
 												<div class="flex items-center gap-3"><div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" style={`width: ${progress(job) ?? 0}%`}></div></div><button type="button" disabled={cancelLoadingId !== ''} onclick={() => void cancelJob(job.id)} class="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">{#if cancelLoadingId === job.id}<LoadingSpinner size="sm" label="중단 중" />{:else}중단{/if}</button></div>

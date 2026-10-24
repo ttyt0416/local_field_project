@@ -1,4 +1,8 @@
-# Civitai model downloads
+# 모델 다운로드 관리
+
+Civitai와 Hugging Face는 같은 model_downloads 대기열·worker·진행 상태·중단·재시도 API와 파일 관리 저장소를 사용한다. `GET /models/hugging-face/lookup`은 저장소/파일/폴더 source와 선택 revision으로 파일 목록을 반환한다. `POST /models/hugging-face/download`는 조회한 repo_id·40자 revision·원본 filename·model_type·subfolder를 검증해 provider=hugging_face 작업을 넣는다. 실제 경로는 선택한 모델 종류·폴더 아래의 basename이며 기존 파일을 덮어쓰지 않는다. GGUF도 지원 확장자에 포함해 다운로드 후 파일 관리에 나타난다.
+
+Hugging Face 전송은 공용 worker의 크기 검사·Range·진행률·SHA 검증을 사용한다. 이 출처의 partial은 파일명이 아니라 job UUID별 `.hf-{id}.part`로 구분해 다른 저장소의 같은 파일명이 섞이지 않는다. 완료된 partial은 SHA를 검증해 재사용하고, Range가 무시되면 처음부터 받는다. 잘못된 Content-Range·길이·SHA는 최종 파일로 게시하지 않는다. 중단 시 해당 작업 partial만 삭제한다. 기존 Civitai 작업·partial 이름·버전 조회는 유지한다.
 
 `/models/civitai/lookup`는 숫자 version ID, Civitai version/download 링크, `civitai.com` 또는 `civitai.red`의 `/models/{model_id}` 링크를 받는다. Model page 링크 자체는 fetch하지 않고 model ID를 추출해 official `civitai.com/api/v1/models/{id}`만 호출한다. `modelVersionId` query가 있으면 해당 version을 우선하고, 없으면 선택한 Local Field 모델 타입과 ComfyUI 확장자에 맞는 version을 `publishedAt` 최신순으로 정렬해 첫 version을 기본 선택한다. 응답의 `versions`는 변경 가능한 호환 version 목록이며 선택된 version의 파일과 `selected_file_index`를 함께 반환한다. 숫자 ID는 기존 계약대로 version ID다.
 

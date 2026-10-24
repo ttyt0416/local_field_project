@@ -142,7 +142,7 @@
 			onclick={close}
 		>
 			<Download size={18} strokeWidth={1.8} />
-			<span>CIVITAI 다운로드</span>
+			<span>다운로드 관리</span>
 		</a>
 		<a
 			href="/files"

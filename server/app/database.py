@@ -657,13 +657,19 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         completed_at TIMESTAMPTZ
     )
     """,
+    "ALTER TABLE model_downloads ADD COLUMN IF NOT EXISTS provider VARCHAR(16) NOT NULL DEFAULT 'civitai'",
+    "ALTER TABLE model_downloads ADD COLUMN IF NOT EXISTS source_repo TEXT",
+    "ALTER TABLE model_downloads ADD COLUMN IF NOT EXISTS source_revision TEXT",
+    "ALTER TABLE model_downloads ADD COLUMN IF NOT EXISTS source_filename TEXT",
     "CREATE INDEX IF NOT EXISTS model_downloads_status_created_idx ON model_downloads(status, created_at)",
     "CREATE INDEX IF NOT EXISTS model_downloads_user_created_idx ON model_downloads(user_id, created_at DESC)",
     """
-    CREATE UNIQUE INDEX IF NOT EXISTS model_downloads_active_unique_idx
-    ON model_downloads(user_id, version_id, model_type, file_index)
+    CREATE UNIQUE INDEX IF NOT EXISTS model_downloads_source_active_unique_idx
+    ON model_downloads(user_id, provider, version_id, model_type, file_index,
+        COALESCE(source_repo, ''), COALESCE(source_revision, ''), COALESCE(source_filename, ''))
     WHERE status IN ('queued', 'downloading')
     """,
+    "DROP INDEX IF EXISTS model_downloads_active_unique_idx",
     """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
@@ -1052,7 +1058,7 @@ def delete_image_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID
 
 _MEDIA_FIELDS = "id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type, created_at"
 _REUSABLE_MEDIA_FIELDS = "file_id, filename, content_type, media_kind, source_type, created_at, size"
-_MODEL_DOWNLOAD_FIELDS = "id, user_id, version_id, model_type, file_index, filename, target_path, status, downloaded_bytes, total_bytes, error_message, created_at, completed_at"
+_MODEL_DOWNLOAD_FIELDS = "id, user_id, version_id, model_type, file_index, filename, target_path, status, downloaded_bytes, total_bytes, error_message, created_at, completed_at, provider, source_repo, source_revision, source_filename"
 
 
 def create_media_asset(
@@ -1219,17 +1225,23 @@ def create_model_download(
     file_index: int,
     filename: str,
     target_path: str,
+    provider: str = "civitai",
+    source_repo: str | None = None,
+    source_revision: str | None = None,
+    source_filename: str | None = None,
 ) -> dict[str, Any] | None:
     download_id = uuid.uuid4()
     try:
         with get_connection() as connection:
             row = connection.execute(
                 f"""
-                INSERT INTO model_downloads (id, user_id, version_id, model_type, file_index, filename, target_path)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO model_downloads (id, user_id, version_id, model_type, file_index, filename, target_path,
+                    provider, source_repo, source_revision, source_filename)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING {_MODEL_DOWNLOAD_FIELDS}
                 """,
-                (download_id, user_id, version_id, model_type, file_index, filename, target_path),
+                (download_id, user_id, version_id, model_type, file_index, filename, target_path,
+                 provider, source_repo, source_revision, source_filename),
             ).fetchone()
     except psycopg.Error as exc:
         if getattr(exc, "sqlstate", None) == "23505":
