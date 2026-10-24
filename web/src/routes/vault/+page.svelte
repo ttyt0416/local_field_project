@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { Box, ChevronLeft, ChevronRight, Download, Heart, Trash2, Video } from '@lucide/svelte';
 	import ImageMedia from '../../../components/media/image.svelte';
+	import ModelViewer from '../../../components/media/model-viewer.svelte';
 	import VideoMedia from '../../../components/media/video.svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import OutlinedButton from '../../../components/buttons/outlined-button.svelte';
@@ -743,6 +744,8 @@
 								<div class="aspect-square bg-muted">
 									{#if job}
 										{@render vaultProgress(job, '3D 모델 생성 중')}
+									{:else if model.generation_mode === 'rigging' && model.status === 'completed' && model.model_url}
+										<ModelViewer source={model.model_url} sourceType="server" alt="리깅된 3D 모델 미리보기" class="h-full" />
 									{:else if model.source_image_url}
 										<ImageMedia source={model.source_image_url} sourceType={imageSourceType(model.source_image_url)} alt="3D 모델 소스 이미지" class="h-full" />
 									{:else}
