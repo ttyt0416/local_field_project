@@ -192,7 +192,7 @@
 						{#if threeDActive}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-4 px-5 text-center sm:min-h-[36rem]"><LoadingSpinner size="lg" label="3D 모델 생성 중" /><p class="text-base font-medium text-foreground">{stageLabel(threeDStage)}</p><p class="text-sm text-muted-foreground">경과 {formatElapsedSeconds(threeDElapsedSeconds)}{#if threeDJob?.queuePosition !== null && threeDJob?.queuePosition !== undefined} · 대기 {threeDJob.queuePosition}번째{/if}</p></div>
 						{:else if generation.model_url}
-							<ModelViewer source={generation.model_url} sourceType="server" poster={generation.source_image_url ?? undefined} alt="생성된 3D 모델" autoRotate class="min-h-[24rem] sm:min-h-[36rem]" />
+							<ModelViewer source={generation.model_url} sourceType="server" poster={generation.source_image_url ?? undefined} alt="생성된 3D 모델" inspectRigging={generation.generation_mode === 'rigging'} autoRotate={generation.generation_mode !== 'rigging'} class="min-h-[24rem] sm:min-h-[36rem]" />
 						{:else}
 							<div class="flex min-h-[24rem] flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Box size={28} strokeWidth={1.7} />3D 모델 결과가 아직 없습니다.</div>
 						{/if}

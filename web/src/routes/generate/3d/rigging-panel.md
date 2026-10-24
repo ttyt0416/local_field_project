@@ -1,7 +1,9 @@
 # SkinTokens 리깅 화면
 
-RIGGING 탭은 GLB(최대 200 MiB) 업로드 또는 보관함의 완료된 MESH 결과를 입력으로 사용한다. 공용 ModelViewer·Select·Tab·버튼·Toast와 기존 API helper, generation job store를 재사용한다. 보관함은 기존 paginated 3D API를 사용하며 더 불러오기에서 다음 페이지를 가져온다. 파일과 보관함 모델은 동시에 제출하지 않는다.
+완료 결과는 공용 ModelViewer의 `inspectRigging`으로 실제 관절과 뼈대 연결을 기본 표시한다. 관절·스킨 메시 수와 애니메이션 유무를 함께 표시하고 뼈대를 숨겨 표면과 비교한다. 자동 회전은 끄고 드래그로 방향을 확인한다.
 
-초기화 시 실행 서비스 readiness를 확인하며 준비되지 않으면 자동 리깅을 비활성화한다. Temperature(0.1~2)와 Beam 수(1~10, 기본 10)는 고급 설정에 둔다. 생성 수락 후 kind=3d, generationMode=rigging으로 전역 SSE를 구독한다. 모드별 최근 메모리 job을 복원해 탭 전환 후 상태와 완료 결과를 다시 볼 수 있다. 업로드 중 재제출을 막고 모든 통신 오류를 Toast로 표시한다.
+RIGGING 탭은 GLB(최대 200 MiB) 업로드 또는 보관함의 완료된 MESH 결과를 입력으로 사용한다. 동영상 생성과 같이 `소스 GLB 선택` 버튼으로 모달을 열어 기기 저장소·저장된 콘텐츠 중 하나를 선택한다. `rigging-source-modal.svelte`와 공용 ModelViewer·버튼·Toast, 기존 API helper와 generation job store를 재사용한다. 선택한 모델은 미리보기와 파일명 또는 생성 정보로 표시하고 선택 해제로 비운다. 새 선택은 기존 선택을 대체하며 파일과 보관함 모델은 동시에 제출하지 않는다.
+
+초기화 시 실행 서비스 readiness를 확인하며 준비되지 않으면 자동 리깅을 비활성화한다. Temperature(0.1~2)와 Beam 수(1~10, 기본 10)는 고급 설정에 둔다. 생성 수락 후 kind=3d, generationMode=rigging으로 전역 SSE를 구독한다. 다른 페이지나 탭에서 돌아오면 입력·결과를 초기 상태로 시작하며 이전 메모리 job을 화면에 복원하지 않는다. 전역 작업과 보관함 기록은 유지한다. 업로드 중 재제출을 막고 모든 통신 오류를 Toast로 표시한다.
 
 결과는 원본 색상·재질·크기를 보존한 GLB이며 뼈대와 스킨 가중치를 포함한다. 움직임 생성·리타게팅·뼈대 편집은 제공하지 않는다. 파일 다운로드와 보관함 상세 링크를 제공한다.

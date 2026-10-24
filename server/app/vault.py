@@ -553,6 +553,29 @@ def vault_three_d_detail(
     )
 
 
+@router.get("/3d/{generation_id}/model")
+def vault_three_d_model(
+    generation_id: UUID,
+    source: bool = False,
+    user: UserResponse = Depends(current_user),
+) -> Response:
+    generation = get_three_d_generation_by_id(generation_id, user.id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
+    if source and generation.get("generation_mode") != "rigging":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="원본 3D 모델을 찾을 수 없습니다.")
+    file_id = generation.get("source_file_id" if source else "storage_file_id")
+    if not file_id or (not source and generation["status"] != "completed"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 모델 파일을 찾을 수 없습니다.")
+    if not storage_enabled():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
+    try:
+        content, _ = storage_download_file(file_id=file_id, owner_id=str(user.id))
+    except StorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return Response(content=content, media_type="model/gltf-binary", headers={"Cache-Control": "private, no-store"})
+
+
 @router.patch("/3d/{generation_id}/favorite", response_model=FavoriteResponse)
 def update_vault_three_d_favorite(
     generation_id: UUID,
@@ -938,24 +961,25 @@ def delete_vault_image(
 def _three_d_summary(
     generation: dict, user_id: UUID, *, include_file_size: bool = False
 ) -> VaultThreeDSummary:
+    is_rigging = generation.get('generation_mode') == 'rigging'
+    model_path = f"vault/3d/{generation['id']}/model"
     try:
         model_url = (
-            storage_read_url(file_id=generation["storage_file_id"], owner_id=str(user_id))
+            model_path
             if storage_enabled() and generation.get("storage_file_id")
             else None
         )
         source_image_url = (
             storage_read_url(file_id=generation["source_file_id"], owner_id=str(user_id))
-            if storage_enabled() and generation.get("source_file_id")
+            if not is_rigging and storage_enabled() and generation.get("source_file_id")
             else None
         )
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    is_rigging = generation.get('generation_mode') == 'rigging'
     return VaultThreeDSummary(
         generation_mode=generation.get('generation_mode', 'mesh'),
         rigging_options=generation.get('rigging_options') or {},
-        source_model_url=source_image_url if is_rigging else None,
+        source_model_url=f"{model_path}?source=true" if is_rigging and storage_enabled() and generation.get("source_file_id") else None,
         id=generation["id"],
         prompt_id=str(generation.get("prompt_id") or ""),
         client_id=str(generation.get("client_id") or ""),

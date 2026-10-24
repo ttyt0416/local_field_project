@@ -38,7 +38,6 @@ from .storage import (
     StorageError,
     download_file as storage_download_file,
     enabled as storage_enabled,
-    read_url as storage_read_url,
     upload_file as storage_upload_file,
 )
 
@@ -502,7 +501,7 @@ def _status_from_row(
     filename = generation.get("filename")
     if generation["status"] == "completed" and isinstance(file_id, str) and isinstance(filename, str):
         output = ThreeDModelOutput(
-            url=storage_read_url(file_id=file_id, owner_id=str(user_id)),
+            url=f"vault/3d/{generation['id']}/model",
             filename=filename,
             size_bytes=int(generation.get("size_bytes") or 0) or None,
         )

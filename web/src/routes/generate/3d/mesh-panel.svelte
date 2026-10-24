@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Box, HardDrive, ImagePlus, Sparkles, X } from '@lucide/svelte';
+	import { Box, HardDrive, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import ModelViewer from '../../../../components/media/model-viewer.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -280,8 +280,6 @@
 									{/if}
 									<p class="border-t border-border px-3 py-2 text-xs text-muted-foreground">{sourceFile?.name ?? storedSource?.filename}</p>
 								</div>
-							{:else}
-								<div class="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 text-muted-foreground"><ImagePlus size={24} strokeWidth={1.7} /><span class="text-xs">기기 또는 보관함에서 이미지를 선택해 주세요.</span></div>
 							{/if}
 						</div>
 

@@ -44,12 +44,11 @@ class RiggingTest(unittest.TestCase):
 
     def test_terminal_rigging_result_uses_database_without_worker_or_comfy(self):
         completed = {**self.row, 'status': 'completed', 'stage': 'completed', 'storage_file_id': 'result', 'filename': 'rigged.glb'}
-        with (patch.object(three_d, 'storage_read_url', return_value='https://storage/result.glb'),
-              patch.object(three_d, '_queue_position') as queue,
+        with (patch.object(three_d, '_queue_position') as queue,
               patch.object(rigging, 'request_worker') as worker):
             result = three_d._history_status(completed, self.user.id)
         self.assertEqual(result.generation_mode, 'rigging')
-        self.assertEqual(result.model.url, 'https://storage/result.glb')
+        self.assertEqual(result.model.url, f"vault/3d/{completed['id']}/model")
         queue.assert_not_called()
         worker.assert_not_called()
 
