@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +14,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from .database import record_api_error
+from .configs.constants import settings
 
 
 class AssetSyncError(ValueError):
@@ -36,7 +39,26 @@ def thumbnail_url(kind: str, slug: str) -> str | None:
     path = thumbnail_path(kind, key)
     if not path.is_file():
         return None
-    return f'tags/catalogue/{kind}/thumbnail/{key}?v={path.stat().st_mtime_ns}'
+    expires = int(time.time()) + 900
+    signature = _signature(kind, key, expires)
+    return f'tags/catalogue/{kind}/thumbnail/{key}?v={path.stat().st_mtime_ns}&expires={expires}&signature={signature}'
+
+
+def _signature(kind: str, key: str, expires: int) -> str:
+    if not settings.auth_secret:
+        raise AssetSyncError('서버 인증 키가 설정되지 않았습니다.')
+    message = f'animadex-thumbnail\0{kind}\0{key}\0{expires}'.encode()
+    return hmac.new(settings.auth_secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def verify_signature(kind: str, key: str, expires: str, signature: str) -> bool:
+    try:
+        timestamp = int(expires)
+        if timestamp < time.time() or timestamp > time.time() + 900 or len(signature) != 64:
+            return False
+        return hmac.compare_digest(_signature(kind, key, timestamp), signature)
+    except (ValueError, TypeError):
+        return False
 
 
 def _filename(value: str) -> str:

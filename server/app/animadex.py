@@ -15,12 +15,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request as APIRequest
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from starlette.responses import FileResponse
 
-from .animadex_assets import AssetSyncError, catalogue_lock, plan_thumbnails, read_state, sync_thumbnails, thumbnail_path, thumbnail_url
-from .auth import UserResponse, current_user
+from .animadex_assets import AssetSyncError, catalogue_lock, plan_thumbnails, read_state, sync_thumbnails, thumbnail_path, thumbnail_url, verify_signature
+from .auth import UserResponse, current_user, _bearer
 from .danbooru import _like_escape
 from .database import get_connection, record_api_call, record_api_error
 
@@ -262,8 +263,17 @@ def browse_catalogue(kind: CatalogueKind, search: str = Query(default="", max_le
     return search_catalogue(kind, search, sort, page, series)
 
 
+def thumbnail_access(request: APIRequest, credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> UserResponse | None:
+    signature = request.query_params.get('signature')
+    if signature is not None:
+        if verify_signature(request.path_params['kind'], request.path_params['key'], request.query_params.get('expires', ''), signature):
+            return None
+        raise HTTPException(status_code=403, detail='썸네일 주소가 만료되었거나 올바르지 않습니다. 목록을 새로고침해 주세요.')
+    return current_user(request, credentials)
+
+
 @router.get('/{kind}/thumbnail/{key}')
-def local_thumbnail(kind: CatalogueKind, key: str, _: UserResponse = Depends(current_user)) -> FileResponse:
+def local_thumbnail(kind: CatalogueKind, key: str, _: UserResponse | None = Depends(thumbnail_access)) -> FileResponse:
     if not re.fullmatch('[a-f0-9]{64}', key):
         raise HTTPException(status_code=404, detail='썸네일을 찾을 수 없습니다.')
     path = thumbnail_path(kind, key)

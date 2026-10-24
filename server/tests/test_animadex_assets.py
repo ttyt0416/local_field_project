@@ -6,9 +6,11 @@ import unittest
 from http.client import RemoteDisconnected
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app import animadex, animadex_assets as assets
 
@@ -27,6 +29,9 @@ class ThumbnailImportTest(unittest.TestCase):
         audit = patch.object(assets, 'record_api_error')
         self.audit = audit.start()
         self.addCleanup(audit.stop)
+        config = patch.object(assets, 'settings', SimpleNamespace(auth_secret='synthetic-thumbnail-signing-secret'))
+        config.start()
+        self.addCleanup(config.stop)
         self.entries = animadex._build_entries([{'character': 'char', 'trigger': 'char: a/b (series)', 'copyright': 'series/a'}], [{'artist': 'artist', 'trigger': 'artist'}])
         self.manifest = {'version': 100, 'r2_base': 'https://blobs.animadex.net', 'prefixes': {'char_thumb': 'Outputs/thumbs', 'artist_thumb': 'ArtistOutputs/thumbs', 'copyright_thumb': 'Outputs/copyrights'}}
         self.index = {'version': 100, 'chars': {'char': 1}, 'artists': {'artist': 0}, 'copyrights': {'series_a.webp': 5}}
@@ -134,6 +139,30 @@ class ThumbnailImportTest(unittest.TestCase):
             with self.assertRaises(assets.AssetSyncError):
                 with assets.catalogue_lock():
                     self.fail('Second importer acquired the lock')
+
+    def test_signed_image_url_expires_and_cannot_read_another_file_or_kind(self):
+        assets.sync_thumbnails(self.entries, self.manifest, self.index, MagicMock(return_value=WEBP))
+        with patch.object(assets.time, 'time', return_value=1000):
+            url = assets.thumbnail_url('characters', 'char')
+            parsed = urlsplit(url)
+            key = assets.asset_key('characters', 'char')
+            request = Request({'type': 'http', 'path_params': {'kind': 'characters', 'key': key}, 'query_string': parsed.query.encode()})
+            with patch.object(animadex, 'current_user', side_effect=AssertionError('Scoped URL must not require a bearer token')):
+                self.assertIsNone(animadex.thumbnail_access(request, None))
+            for kind, other_key in [('artists', key), ('characters', 'b' * 64)]:
+                request = Request({'type': 'http', 'path_params': {'kind': kind, 'key': other_key}, 'query_string': parsed.query.encode()})
+                with self.assertRaises(HTTPException) as raised:
+                    animadex.thumbnail_access(request, None)
+                self.assertEqual(raised.exception.status_code, 403)
+        with patch.object(assets.time, 'time', return_value=2000):
+            request = Request({'type': 'http', 'path_params': {'kind': 'characters', 'key': key}, 'query_string': parsed.query.encode()})
+            with self.assertRaises(HTTPException) as raised:
+                animadex.thumbnail_access(request, None)
+            self.assertEqual(raised.exception.status_code, 403)
+        request = Request({'type': 'http', 'path_params': {'kind': 'characters', 'key': key}, 'query_string': b''})
+        with self.assertRaises(HTTPException) as raised:
+            animadex.thumbnail_access(request, None)
+        self.assertEqual(raised.exception.status_code, 401)
 
 
 class ThumbnailConnectionTest(unittest.TestCase):

@@ -8,6 +8,7 @@
 	import Toast from '../feedback/toast.svelte';
 	import ImageMedia from '../media/image.svelte';
 	import { apiJson } from '$lib/utils/api';
+	import { SERVER_URL } from '$lib/configs/constants';
 
 	type Kind = 'characters' | 'artists' | 'series';
 	type Entry = { slug: string; name: string; trigger: string; tags: string[]; copyright: string | null; copyright_name: string | null; count: number; thumb_url: string | null; source_url: string };
@@ -58,7 +59,7 @@
 		<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
 			{#each result.items as item (item.slug)}
 				<article class="min-w-0 space-y-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
-					{#if item.thumb_url}<ImageMedia source={item.thumb_url} sourceType="server" alt={`${item.name} 썸네일`} class="aspect-[4/3] w-full bg-muted [&_img]:object-contain" onerror={(message) => (error = message)} />{:else}<div class="flex aspect-[4/3] items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">등록된 썸네일이 없습니다.</div>{/if}
+					{#if item.thumb_url}<ImageMedia source={`${SERVER_URL.replace(/\/+$/, '')}/${item.thumb_url}`} sourceType="external" alt={`${item.name} 썸네일`} class="aspect-[4/3] w-full bg-muted [&_img]:object-contain" onerror={(message) => (error = message)} />{:else}<div class="flex aspect-[4/3] items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">등록된 썸네일이 없습니다.</div>{/if}
 					<div><h2 class="truncate font-semibold" title={item.name}>{item.name}</h2>{#if item.copyright_name}<button type="button" class="mt-1 max-w-full truncate text-left text-xs text-primary hover:underline" onclick={() => item.copyright && onseries(item.copyright)}>{item.copyright_name}</button>{/if}<p class="mt-1 text-xs text-muted-foreground">{kind === 'series' ? `캐릭터 ${item.count.toLocaleString('ko-KR')}명` : `사용 ${item.count.toLocaleString('ko-KR')}회`}</p></div>
 					<p class="break-words text-xs leading-5 text-muted-foreground">{item.trigger}</p>
 					{#if item.tags.length}<div class="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">{#each item.tags as tag}<button type="button" class="rounded-full bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:bg-primary/10 hover:text-primary" title={`${tag} 선택한 태그에 추가`} onclick={() => onadd(tag)}>{tag}</button>{/each}</div>{/if}
