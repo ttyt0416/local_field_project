@@ -84,7 +84,7 @@ class StorageClientTest(unittest.TestCase):
                 "app.storage.settings",
                 replace(storage.settings, storage_url="http://storage.internal:8090", storage_api_token="service-token"),
             ),
-            patch.object(storage, "read_url", return_value="https://storage.5ddd.org/files/file-id?expires=123&signature=signed"),
+            patch.object(storage, "read_url", return_value="https://storage.magi00.fun/files/file-id?expires=123&signature=signed"),
             patch("app.storage.urlopen", return_value=_DownloadResponse()) as open_url,
         ):
             content, media_type = storage.download_file(file_id="file-id", owner_id="user-id")
