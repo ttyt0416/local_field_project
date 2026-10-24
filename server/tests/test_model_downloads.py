@@ -31,6 +31,7 @@ from app.model_downloads import (
     _safe_filename,
     _select_file_index,
     _detected_model_type,
+    _suggested_subfolder,
     ModelType,
     cancel_download,
     create_model_folder,
@@ -159,6 +160,7 @@ class ModelDownloadsTest(unittest.TestCase):
             ("LORA", "MOSS-Image-SFT-8-steps-dmd", "checkpoint", "lora", "MOSS"),
             ("LORA", "MOSS Image", "checkpoint", "lora", "MOSS"),
             ("Checkpoint", "MOSS Image SFT", "checkpoint", "diffusion_model", "MOSS"),
+            ("Checkpoint", "MOSS", "checkpoint", "diffusion_model", "MOSS"),
         )
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -188,6 +190,48 @@ class ModelDownloadsTest(unittest.TestCase):
                 nested = CivitaiVersion(1, None, "Example", "LORA", "v1", "Anima", (CivitaiFile("model.safetensors", "Model", "https://civitai.com/file", 1, None, True),))
                 nested_response = _lookup_response(nested, "lora", 0, (nested,))
                 self.assertEqual(nested_response.suggested_subfolder, "styles/Anima")
+
+    def test_moss_suggestion_uses_canonical_folder_without_fuzzy_fallback(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for folder in ("diffusion_models/MOSS-other", "diffusion_models/styles/MOSS", "loras/MOSS-Image-SFT-8-steps-dmd"):
+                (root / folder).mkdir(parents=True)
+            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
+                self.assertEqual(_suggested_subfolder("diffusion_model", "MOSS Image SFT"), "MOSS")
+                self.assertEqual(_suggested_subfolder("lora", "MOSS-Image-SFT-8-steps-dmd"), "MOSS")
+                self.assertFalse((root / "diffusion_models/MOSS").exists())
+
+    def test_moss_download_defaults_to_canonical_folder_and_keeps_selected_subfolder(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with (
+                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)),
+                patch("app.model_downloads.create_model_download") as create_job,
+            ):
+                for version_type, expected_type, directory in (("Checkpoint", "diffusion_model", "diffusion_models"), ("LORA", "lora", "loras")):
+                    version = CivitaiVersion(3316573, None, "Miao MOSS", version_type, "v1", "MOSS Image", (CivitaiFile("miao.safetensors", "Model", "https://civitai.com/file", 1, None, True),))
+                    with patch("app.model_downloads._fetch_version", return_value=version):
+                        with self.assertRaises(HTTPException) as missing:
+                            download_civitai_model(ModelDownloadRequest(source="3316573", model_type="checkpoint"), user)
+                        self.assertEqual(missing.exception.status_code, 422)
+                        create_job.assert_not_called()
+                        for selected, expected_folder in (("", "MOSS"), ("MOSS/custom", "MOSS/custom")):
+                            with self.subTest(version_type=version_type, selected=selected):
+                                target = root / directory / expected_folder / "miao.safetensors"
+                                target.parent.mkdir(parents=True, exist_ok=True)
+                                create_job.return_value = {
+                                    "id": uuid.uuid4(), "version_id": version.version_id,
+                                    "model_type": expected_type, "target_path": str(target),
+                                    "filename": target.name, "status": "queued", "downloaded_bytes": 0,
+                                    "total_bytes": 1, "error_message": None,
+                                    "created_at": datetime.now(timezone.utc), "completed_at": None,
+                                }
+                                response = download_civitai_model(ModelDownloadRequest(source="3316573", model_type="checkpoint", subfolder=selected), user)
+                                self.assertEqual(create_job.call_args.kwargs["model_type"], expected_type)
+                                self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
+                                self.assertEqual(response.subfolder, expected_folder)
+                                create_job.reset_mock()
 
     def test_model_storage_categories_are_distinct(self) -> None:
         with TemporaryDirectory() as temporary_directory:

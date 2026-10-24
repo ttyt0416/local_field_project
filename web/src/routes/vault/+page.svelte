@@ -21,7 +21,7 @@
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
-	import { imageGenerationModeTabs, imageModelFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType } from '$lib/types/presets';
+	import { imageGenerationModeTabs, imageGenerationFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType } from '$lib/types/presets';
 
 	type Sort = 'latest' | 'oldest' | 'most_viewed';
 	const vaultMediaTabs = [
@@ -544,7 +544,7 @@
 			<Tab items={vaultMediaTabs} bind:value={mediaTab} ariaLabel="보관함 콘텐츠 종류" onselect={selectVaultMediaTab} />
 			{#if mediaTab === 'images'}
 				<section class="space-y-2" aria-label="이미지 생성 분류">
-					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
+					<Tab items={imageGenerationFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
 					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (activeImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
 				</section>
 			{/if}

@@ -19,6 +19,6 @@ Hugging Face 전송은 공용 worker의 크기 검사·Range·진행률·SHA 검
 `GET /models/installed`는 여섯 ComfyUI 모델 폴더의 현재 파일 목록을 반환하고, `DELETE /models/installed/{model_type}/{filename}`는 허용된 모델 폴더 안의 설치 파일을 삭제한다. 삭제 endpoint는 로그인과 모델 확장자를 확인하고 경로 탈출을 차단한다. `GET /models/downloads`는 로그인한 사용자의 최근 download job을 반환하며 `active_only=true`이면 `queued`와 `downloading`만 반환한다. 실제 Civitai 파일 다운로드는 server worker가 수행하며, 이 구현 검증에서는 대용량 모델 파일을 받거나 ComfyUI inference를 실행하지 않는다.
 
 
-MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model 표기는 MOSS family로 통합한다. MOSS checkpoint는 Diffusion Model로 분류하고, 타입별로 기존 MOSS 폴더가 있으면 자동 선택한다. LoRA는 loras/MOSS를 공통 저장 폴더로 사용한다.
+MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model 표기는 MOSS family로 통합한다. Civitai MOSS checkpoint는 Diffusion Model로 분류하고 `diffusion_models/MOSS`, MOSS LoRA는 `loras/MOSS`를 기본 저장 위치로 제안한다. 이름에 MOSS가 포함된 다른 폴더를 자동 선택하지 않는다. 다운로드 요청의 subfolder가 비어 있어도 해당 MOSS 폴더를 사용하며, 명시한 하위폴더는 유지한다. MOSS 폴더가 없거나 안전하지 않으면 기존 경로 검증으로 요청을 거부하고 root로 대체하지 않는다. 폴더 생성은 기존 폴더 선택 모달에서 수행한다.
 
 조회·enqueue·worker는 사용자별 저장 토큰만 사용한다. 저장 토큰이 없으면 Civitai 다운로드는 토큰 등록을 요구하고 Hugging Face 공개 모델은 무토큰으로 받는다. Civitai metadata의 인증 헤더는 ContextVar로 요청별 격리하며 scope 종료 시 초기화한다. 인증 metadata 요청은 자동 리디렉션을 허용하지 않는다.

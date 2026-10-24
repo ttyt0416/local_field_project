@@ -3,3 +3,5 @@
 직사각형 출력의 중앙 기준 좌표 변환·문자 보존·캔버스 경계 검증, SFT와 DMD 연결, 레이아웃 JSON conditioning을 확인한다. 외부 참조 노드 없이 T2I 옵션을 제공하고 MOSS I2I 요청·소스·참조·R2I 설정·I2I 프리셋은 거부하는 회귀 테스트를 포함한다. 실제 이미지 품질 검증과는 별개다.
 
 MOSS I2I 거부 응답이 JSON으로 직렬화되어 422로 전달되는지 검증한다.
+
+MOSS 체크포인트는 diffusion_models/MOSS 하위폴더 기준으로 인식한다. Miao와 중첩 폴더의 임의 파일명이 선택·생성 그래프에 전달되고, 폴더 밖의 공식 파일명과 MOSS-other 폴더는 제외되는지 확인한다. 기본 모델은 MOSS/moss_image_sft_bf16.safetensors다.

@@ -11,7 +11,7 @@ base model에 Anima, MiniMax, Illustrious가 있고 selected model type root 아
 이 페이지는 설치 파일 목록을 요청하지 않으며 모델 파일의 이동·삭제도 제공하지 않는다. 해당 기능은 사이드바의 별도 `/files` 파일 관리로 분리한다. 화면 상단에서 파일 관리로 이동할 수 있다. Civitai token과 download URL은 frontend에 노출하지 않는다. 다운로드 목록의 새로고침과 polling 실패는 catch 후 Toast로 표시한다.
 
 
-MOSS LoRA의 폴더 선택·설치 목록 필터는 공통 MOSS 폴더를 사용한다. Civitai base model의 MOSS Image/SFT/DMD 변형도 MOSS family로 자동 분류한다.
+MOSS LoRA의 폴더 선택·설치 목록 필터는 공통 MOSS 폴더를 사용한다. Civitai base model의 MOSS Image/SFT/DMD 변형도 MOSS family로 자동 분류한다. MOSS checkpoint는 Diffusion Model·MOSS 폴더, MOSS LoRA는 LoRA·MOSS 폴더를 기본 선택한다. 서버도 빈 저장 폴더를 같은 MOSS 경로로 처리한다. MOSS 폴더가 없으면 폴더 모달에서 생성해야 하며 이름에 MOSS가 포함된 다른 폴더나 root로 자동 대체하지 않는다.
 
 Hugging Face 탭은 공용 HuggingFaceDownload 패널을 사용한다. 저장소·파일·폴더 링크와 선택 리비전을 조회해 모델 파일을 검색·선택하고 공용 폴더 모달로 저장 위치를 선택한다. 조회한 commit에 고정해 enqueue하고, 두 출처의 작업은 탭 변경 후에도 같은 진행 목록에 표시한다. 작업 요청 중 탭 전환을 막으며 Civitai URL·타입·탭 변경 후 이전 조회 응답은 적용하지 않는다.
 

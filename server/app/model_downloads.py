@@ -598,6 +598,8 @@ def download_civitai_model(
     with _MODEL_FILES_LOCK:
         try:
             subfolder = _safe_folder_selection(payload.subfolder)
+            if not subfolder and target_model_type in {"diffusion_model", "lora"} and "moss" in _normalized_label(version.base_model or ""):
+                subfolder = _suggested_subfolder(target_model_type, version.base_model)
             target_directory = _model_target_directory(target_model_type, subfolder)
         except CivitaiError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -816,6 +818,8 @@ def _suggested_subfolder(model_type: ModelType, base_model: str | None) -> str:
     family = next((name for name in ("anima", "minimax", "illustrious", "moss") if name in _normalized_label(base_model or "")), None)
     if family is None:
         return ""
+    if family == "moss" and model_type in {"diffusion_model", "lora"}:
+        return "MOSS"
     try:
         directory = _model_target_directory(model_type, "")
         candidates = sorted(

@@ -47,7 +47,7 @@ class MossWorkflowTest(unittest.TestCase):
         def node(**inputs):
             return {"input": {"required": {key: [values] for key, values in inputs.items()}}}
         data = {
-            "UNETLoader": node(unet_name=[comfyui._MOSS_CHECKPOINT, "Anima/a.safetensors", "moss_image_base_bf16.safetensors"]),
+            "UNETLoader": node(unet_name=[comfyui._MOSS_CHECKPOINT, "MOSS/miaomiaoHaremMOSS_baseV10_3316573.safetensors", "MOSS/custom/model.safetensors", "Anima/a.safetensors", "moss_image_sft_bf16.safetensors", "MOSS-other/model.safetensors"]),
             "CLIPLoader": node(clip_name=[comfyui._MOSS_ENCODER], type=["moss_image"]),
             "VAELoader": node(vae_name=[comfyui._MOSS_VAE]),
             "LoraLoaderModelOnly": node(lora_name=[comfyui._MOSS_DMD_LORA, "Anima/a.safetensors"]),
@@ -56,9 +56,15 @@ class MossWorkflowTest(unittest.TestCase):
         }
         with patch.object(comfyui, "_request_json", return_value=data):
             options = comfyui._image_options("moss")
-        self.assertEqual(options.checkpoints, [comfyui._MOSS_CHECKPOINT])
+        self.assertEqual(options.checkpoints, sorted([comfyui._MOSS_CHECKPOINT, "MOSS/miaomiaoHaremMOSS_baseV10_3316573.safetensors", "MOSS/custom/model.safetensors"]))
+        self.assertEqual(options.default_checkpoint, comfyui._MOSS_CHECKPOINT)
         self.assertEqual(options.loras, [comfyui._MOSS_DMD_LORA])
         comfyui._validate_model_choice(self.request(), options)
+        for checkpoint in options.checkpoints:
+            request = self.request().model_copy(update={"checkpoint": checkpoint})
+            comfyui._validate_model_choice(request, options)
+            graph, _ = comfyui._build_prompt(request)
+            self.assertEqual(graph["1"]["inputs"]["unet_name"], checkpoint)
 
     def test_moss_i2i_and_reference_inputs_are_rejected(self):
         with self.assertRaises(ValidationError):

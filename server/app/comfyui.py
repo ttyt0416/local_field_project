@@ -97,7 +97,7 @@ class LoraSelection(BaseModel):
 
 
 ModelFamily = Literal["anima", "illustrious", "flux3_klein", "moss", "qwen_image_2_1"]
-_MOSS_CHECKPOINT = "moss_image_sft_bf16.safetensors"
+_MOSS_CHECKPOINT = "MOSS/moss_image_sft_bf16.safetensors"
 _MOSS_ENCODER = "qwen3.5_9b_int8_convrot.safetensors"
 _MOSS_VAE = "flux2-vae_small.safetensors"
 _MOSS_DMD_LORA = "MOSS/lora_latest.safetensors"
@@ -926,7 +926,7 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
         preferred_sampler = _DEFAULT_SAMPLER
         preferred_scheduler = _DEFAULT_SCHEDULER
     elif model_family == "moss":
-        checkpoints = [name for name in _node_choices(data, "UNETLoader", "unet_name") if Path(name).name.startswith("moss_image_sft_")]
+        checkpoints = _family_choices(data, "UNETLoader", "unet_name", "MOSS/")
         loras = [name for name in _node_choices(data, "LoraLoaderModelOnly", "lora_name") if "moss" in name.casefold()]
         preferred_checkpoint = _MOSS_CHECKPOINT
         default_cfg, default_steps = 3.0, 50

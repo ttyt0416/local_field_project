@@ -28,7 +28,7 @@ FLUX references는 추가 이미지 0~9개를 받으며 source를 합쳐 최대 
 
 ## MOSS SFT
 
-MOSS SFT는 T2I 전용이며 `moss_image_sft_bf16.safetensors`, `qwen3.5_9b_int8_convrot.safetensors` type `moss_image`, `flux2-vae_small.safetensors`를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 장면 설명을 중앙 기준 JSON으로 변환하고 별도 프롬프트 개선을 적용하지 않는다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
+MOSS SFT는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함하며 기본 모델은 `MOSS/moss_image_sft_bf16.safetensors`다. `qwen3.5_9b_int8_convrot.safetensors` type `moss_image`, `flux2-vae_small.safetensors`를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 장면 설명을 중앙 기준 JSON으로 변환하고 별도 프롬프트 개선을 적용하지 않는다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
 
 참조 패처 출처는 https://github.com/silveroxides/ComfyUI-UtilsCollection 이며 설치 revision은 `52524719f934c7cc09382e2560f27f6967636255`이다. 누락된 의존성 `unifiedefficientloader==0.5.4`를 ComfyUI 환경에 추가했다.
 
