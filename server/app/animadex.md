@@ -4,6 +4,8 @@
 
 `python -B -m app.animadex`는 서버 ANIMADEX_EXPORT_TOKEN으로 공식 `/api/export/manifest`에 인증하고 두 CSV를 가져온다. 토큰은 정확한 HTTPS animadex.net manifest 요청에만 헤더로 보내며 blobs.animadex.net CSV 요청에는 보내지 않는다. 자동 리디렉션·임의 호스트·원문 로그를 허용하지 않는다. `.env.production` 값은 Git·응답·브라우저에 포함하지 않는다.
 
-가져오기는 캐릭터·아티스트·캐릭터를 묶은 시리즈 메타데이터를 원자적으로 교체한다. 빈 파일·잘못된 필드·실패한 다운로드는 기존 데이터를 유지하고 마지막 오류를 기록한다. 썸네일은 이 메타데이터 import에 포함하지 않으며 검색 시 외부 이미지를 불러오지 않는다. 수동 CSV는 `--csv-dir DIR --version VERSION`으로 읽을 수 있다.
+가져오기는 캐릭터·아티스트·캐릭터를 묶은 시리즈 메타데이터를 원자적으로 교체하고 공식 WebP 썸네일을 로컬에 저장한다. CSV·썸네일 인덱스·경로 검증을 통과한 뒤 메타데이터를 반영한다. 빈 파일·잘못된 필드·실패한 메타데이터 다운로드는 기존 데이터를 유지하고 마지막 오류를 기록한다. 개별 썸네일 실패는 기존 이미지를 보존하고 재시도 가능한 상태로 남기며 warning에 실패 개수를 표시한다. 수동 `--csv-dir DIR --version VERSION`은 기존처럼 메타데이터만 가져온다.
 
-이번 실제 연결에서는 export 인증은 HTTP 200, 공식 CSV CDN은 SSL WRONG_VERSION_NUMBER 오류다. 초기 카탈로그를 받지 못해 세 탭에서 준비 실패를 표시한다. [공식 export 절차](https://github.com/zetaneko/AnimaDex/blob/main/docs/import-from-site.md), [CSV 필드](https://github.com/zetaneko/AnimaDex/blob/main/docs/data-format.md)를 기준으로 구현했다.
+`GET /tags/catalogue/{kind}/thumbnail/{key}`는 로그인 인증 후 로컬 파일만 `image/webp`로 반환한다. key는 소문자 64자리 hex만 허용한다. 검색 응답은 저장된 파일에 한해 상대 `thumb_url`과 mtime 버전 query를 포함하며 브라우저로 export 토큰·CDN 주소를 전달하지 않는다. private cache와 nosniff를 설정한다. 썸네일 저장·delta 상태는 `animadex_assets.md`에 정리했다.
+
+이전 SSL WRONG_VERSION_NUMBER는 로컬 ASUS 공유기의 AiProtection 차단 페이지가 TLS 대신 HTTP로 반환되어 발생했다. 차단 해제 후 버전 1780120177의 메타데이터를 정상 가져왔다. [공식 export 절차](https://github.com/zetaneko/AnimaDex/blob/main/docs/import-from-site.md), [CSV 필드](https://github.com/zetaneko/AnimaDex/blob/main/docs/data-format.md)를 기준으로 구현했다.

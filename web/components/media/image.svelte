@@ -16,6 +16,7 @@
 		alt: string;
 		sourceType?: 'local' | 'server' | 'external';
 		gallery?: readonly GalleryItem[];
+		onerror?: (message: string) => void;
 		class?: string;
 	};
 
@@ -24,6 +25,7 @@
 		alt,
 		sourceType = 'local',
 		gallery = [],
+		onerror,
 		class: className = ''
 	}: Props = $props();
 
@@ -61,8 +63,11 @@
 					objectUrl = URL.createObjectURL(blob);
 					sourceUrl = objectUrl;
 				})
-				.catch(() => {
-					if (!cancelled) failed = true;
+				.catch((reason) => {
+					if (!cancelled) {
+						failed = true;
+						onerror?.(reason instanceof Error ? reason.message : '이미지를 불러오지 못했습니다.');
+					}
 				});
 			return () => {
 				cancelled = true;
@@ -139,7 +144,7 @@
 		<div class="flex min-h-48 items-center justify-center bg-muted px-4 text-center text-sm text-muted-foreground" role="alert">
 			이미지를 불러올 수 없습니다.
 		</div>
-	{:else}
+	{:else if sourceUrl}
 		<button
 			type="button"
 			class="block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
@@ -152,7 +157,7 @@
 				{alt}
 				loading={isRemoteSource ? 'lazy' : 'eager'}
 				onload={() => (loaded = true)}
-				onerror={() => (failed = true)}
+				onerror={() => { failed = true; onerror?.('이미지 파일을 표시하지 못했습니다.'); }}
 				class={`block h-full min-h-48 w-full object-cover transition-opacity ${isRemoteSource && !loaded ? 'opacity-0' : 'opacity-100'}`}
 			/>
 		</button>

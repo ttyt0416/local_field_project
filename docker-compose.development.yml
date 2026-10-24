@@ -47,11 +47,13 @@ services:
     environment:
       EMBEDDING_URL: http://embedding:30005
       RIGGING_URL: http://host.docker.internal:8190
+      ANIMADEX_DATA_DIR: /var/lib/local-field/animadex
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /home/yoon/ComfyUI/models:/comfyui-models
       - ./rigging/.runtime/token:/run/secrets/rigging_token:ro
+      - ./.runtime/tag-catalogues/animadex:/var/lib/local-field/animadex
     ports:
       - "8080:8080"
     depends_on:

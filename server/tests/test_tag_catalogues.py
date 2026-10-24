@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import unittest
+import tempfile
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,16 @@ from app import animadex, gelbooru
 
 
 class CatalogueImportTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        patcher = patch.dict('os.environ', {'ANIMADEX_DATA_DIR': temporary.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        audit = patch.object(animadex, 'record_api_error')
+        self.import_audit = audit.start()
+        self.addCleanup(audit.stop)
+
     def test_character_artist_and_series_entries_preserve_triggers_and_count_characters(self):
         characters = [{"character": "sample_one", "copyright": "sample_series", "trigger": "sample one, sample series", "core_tags": "blue eyes, long hair", "count": "120"}, {"character": "sample_two", "copyright": "sample_series", "trigger": "sample two, sample series", "core_tags": "red hair", "count": "900"}]
         artists = [{"artist": "sample_artist", "trigger": "artist:sample_artist", "count": "70"}]
@@ -55,7 +66,7 @@ class CatalogueImportTest(unittest.TestCase):
 
     def test_cdn_failure_is_reported_without_token_and_does_not_start_live_search(self):
         connection = MagicMock()
-        manifest = {"ok": True, "version": 1, "csv": {"characters": "https://blobs.animadex.net/export/characters.csv", "artists": "https://blobs.animadex.net/export/artists.csv"}}
+        manifest = {"ok": True, "version": 1, "index_url": "https://blobs.animadex.net/export/index.json", "csv": {"characters": "https://blobs.animadex.net/export/characters.csv", "artists": "https://blobs.animadex.net/export/artists.csv"}}
         with patch.dict("os.environ", {"ANIMADEX_EXPORT_TOKEN": "synthetic-private-token"}), patch("app.animadex.get_connection") as db, patch("app.animadex._read_url", side_effect=[json.dumps(manifest).encode(), animadex.CatalogueImportError("CSV TLS connection failed")]) as request:
             db.return_value.__enter__.return_value = connection
             with self.assertRaises(animadex.CatalogueImportError) as raised:
@@ -63,6 +74,7 @@ class CatalogueImportTest(unittest.TestCase):
             self.assertNotIn("synthetic-private-token", str(raised.exception))
             self.assertEqual(request.call_count, 2)
             self.assertEqual(connection.execute.call_args.args[1], ("CSV TLS connection failed",))
+            self.import_audit.assert_called_once()
 
 
 class LocalSearchTest(unittest.TestCase):
