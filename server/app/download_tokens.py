@@ -33,7 +33,6 @@ class TokenRequest(BaseModel):
 class TokenStatus(BaseModel):
     provider: Provider
     saved: bool
-    server_configured: bool
     updated_at: datetime | None
 
 
@@ -59,17 +58,13 @@ def decrypt_token(user_id: UUID, provider: Provider, encrypted: str) -> str:
         raise CredentialError("저장된 다운로드 토큰을 읽지 못했습니다. 토큰을 다시 저장해 주세요.") from None
 
 
-def _server_token(provider: Provider) -> str:
-    return (settings.civitai_token if provider == "civitai" else settings.hugging_face_token).strip()
-
-
 def get_effective_token(user_id: UUID | None, provider: Provider) -> str:
     if user_id is not None:
         with get_connection() as connection:
             row = connection.execute("SELECT encrypted_token FROM download_tokens WHERE user_id = %s AND provider = %s", (user_id, provider)).fetchone()
         if row is not None:
             return decrypt_token(user_id, provider, row[0])
-    return _server_token(provider)
+    return ""
 
 
 @router.get("", response_model=list[TokenStatus])
@@ -77,7 +72,7 @@ def token_status(user: UserResponse = Depends(current_user)) -> list[TokenStatus
     with get_connection() as connection:
         rows = connection.execute("SELECT provider, updated_at FROM download_tokens WHERE user_id = %s", (user.id,)).fetchall()
     saved = dict(rows)
-    return [TokenStatus(provider=provider, saved=provider in saved, server_configured=bool(_server_token(provider)), updated_at=saved.get(provider)) for provider in ("civitai", "hugging_face")]
+    return [TokenStatus(provider=provider, saved=provider in saved, updated_at=saved.get(provider)) for provider in ("civitai", "hugging_face")]
 
 
 @router.put("/{provider}", response_model=list[TokenStatus])

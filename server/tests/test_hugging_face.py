@@ -36,7 +36,7 @@ class Response(io.BytesIO):
 
 class HuggingFaceTest(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("app.model_downloads.get_effective_token", side_effect=lambda _user, provider: models.settings.civitai_token if provider == "civitai" else models.settings.hugging_face_token)
+        patcher = patch("app.model_downloads.get_effective_token", return_value="")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -129,7 +129,7 @@ class HuggingFaceTest(unittest.TestCase):
             target = Path(temporary) / "loras/nested/model.safetensors"
             target.parent.mkdir(parents=True)
             row = {"id": uuid.uuid4(), "version_id": 0, "provider": "hugging_face", "source_repo": "owner/repo", "source_revision": COMMIT, "source_filename": "nested/model.safetensors", "model_type": "lora", "filename": target.name, "target_path": str(target), "status": "queued", "downloaded_bytes": 0, "total_bytes": None, "error_message": None, "created_at": datetime.now(timezone.utc), "completed_at": None}
-            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary, hugging_face_token="secret")), patch("app.model_downloads.hf.fetch_repository", return_value=REPOSITORY), patch("app.model_downloads.create_model_download", return_value=row) as create:
+            with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary)), patch("app.model_downloads.get_effective_token", return_value="secret"), patch("app.model_downloads.hf.fetch_repository", return_value=REPOSITORY), patch("app.model_downloads.create_model_download", return_value=row) as create:
                 payload = models.HuggingFaceDownloadRequest(repo_id="owner/repo", revision=COMMIT, filename="nested/model.safetensors", model_type="lora", subfolder="nested")
                 response = models.download_hugging_face_model(payload, user)
                 self.assertEqual(create.call_args.kwargs["source_revision"], COMMIT)
@@ -154,7 +154,7 @@ class HuggingFaceWorkerTest(unittest.TestCase):
         self.target = Path(temporary.name) / "checkpoints/model.safetensors"
         self.target.parent.mkdir()
         self.job = {"id": uuid.uuid4(), "provider": "hugging_face", "version_id": 0, "model_type": "checkpoint", "file_index": 0, "target_path": str(self.target), "source_repo": "owner/repo", "source_revision": COMMIT, "source_filename": "nested/model.safetensors"}
-        for name, value in (("settings", replace(settings, comfyui_models_path=temporary.name, civitai_token="", hugging_face_token="")), ("hf.fetch_repository", REPOSITORY), ("is_model_download_active", True), ("update_model_download_progress", True), ("complete_model_download", True)):
+        for name, value in (("settings", replace(settings, comfyui_models_path=temporary.name)), ("hf.fetch_repository", REPOSITORY), ("is_model_download_active", True), ("update_model_download_progress", True), ("complete_model_download", True)):
             patcher = patch(f"app.model_downloads.{name}", return_value=value) if name != "settings" else patch("app.model_downloads.settings", value)
             patcher.start()
             self.addCleanup(patcher.stop)

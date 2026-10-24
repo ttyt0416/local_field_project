@@ -43,7 +43,6 @@ services:
     build: ./server
     env_file:
       - ./server/.env.development
-      - /home/yoon/.civita.env
     environment:
       EMBEDDING_URL: http://embedding:30005
       RIGGING_URL: http://host.docker.internal:8190

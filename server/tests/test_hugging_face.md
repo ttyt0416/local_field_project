@@ -4,4 +4,4 @@
 
 `python -B -m unittest discover -s tests -p 'test_hugging_face.py'`로 실행한다. 별도 실제 연결 검증에서는 격리된 임시 컨테이너에서 hf-internal-testing/tiny-random-BertModel의 383481바이트 공개 파일을 다운로드·이어받기했으며 파일은 종료 시 제거했다.
 
-개인 토큰 조회를 모킹해 공개 모델 전송·경로 테스트를 운영 DB와 독립적으로 유지한다.
+개인 토큰 조회를 빈 값 또는 합성 개인 토큰으로 모킹해 공개 모델 전송·경로 테스트를 운영 DB와 독립적으로 유지한다. 서버 공용 토큰 설정은 사용하지 않는다.

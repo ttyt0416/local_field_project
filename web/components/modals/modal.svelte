@@ -65,15 +65,15 @@
 {#if open}
 	<dialog
 		open
-		class="fixed inset-0 z-50 m-0 flex h-full w-full max-w-none items-end justify-center overflow-y-auto border-0 bg-black/60 p-4 sm:items-center"
+		class="fixed inset-0 z-50 m-0 flex h-dvh max-h-none w-full max-w-none items-end justify-center overflow-hidden border-0 bg-black/60 p-4 sm:items-center"
 		aria-modal="true"
 		aria-labelledby="modal-title"
 		aria-describedby={description ? 'modal-description' : undefined}
 		onclick={handleBackdropClick}
 	>
-		<div class="flex max-h-[80dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl">
+		<div class="flex max-h-[calc(100dvh-2rem)] min-w-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl">
 			<header class="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
-				<div class="min-w-0">
+				<div class="min-w-0 flex-1 [overflow-wrap:anywhere]">
 					<h2 id="modal-title" class="text-lg font-semibold tracking-tight">{title}</h2>
 					{#if description}
 						<p id="modal-description" class="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
@@ -90,7 +90,7 @@
 				</button>
 			</header>
 
-			<div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+			<div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-5 py-5 [overflow-wrap:anywhere] sm:px-6">
 				{#if children}
 					{@render children()}
 				{/if}

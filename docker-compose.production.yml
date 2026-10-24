@@ -43,7 +43,6 @@ services:
     build: ./server
     env_file:
       - ./server/.env.production
-      - /home/yoon/.civita.env
     environment:
       EMBEDDING_URL: http://embedding:30005
       HARDWARE_MONITOR_URL: http://host.docker.internal:8091

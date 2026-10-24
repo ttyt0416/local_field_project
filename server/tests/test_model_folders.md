@@ -4,4 +4,4 @@ TemporaryDirectory 아래의 합성 파일만 사용한다. 원본·중첩·빈 
 
 `python -B -m unittest discover -s tests -p 'test_model_*.py'`로 기존 모델 다운로드 검증과 함께 실행한다.
 
-worker의 개인 토큰 조회를 모킹해 폴더 취소·삭제 검증은 운영 토큰 저장소에 접근하지 않는다.
+worker의 개인 토큰 조회는 합성 개인 토큰을 반환하도록 모킹해 폴더 취소·삭제 검증은 운영 토큰 저장소나 공용 환경 변수에 접근하지 않는다.

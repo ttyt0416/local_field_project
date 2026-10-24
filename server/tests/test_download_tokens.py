@@ -4,6 +4,7 @@ import json
 import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -22,7 +23,7 @@ class DownloadTokensTest(unittest.TestCase):
         db = patch("app.download_tokens.get_connection")
         db.start().return_value.__enter__.return_value = self.connection
         self.addCleanup(db.stop)
-        config = patch("app.download_tokens.settings", replace(settings, auth_secret="test-encryption-secret-" * 3, civitai_token="server-civitai", hugging_face_token=""))
+        config = patch("app.download_tokens.settings", replace(settings, auth_secret="test-encryption-secret-" * 3))
         config.start()
         self.addCleanup(config.stop)
 
@@ -48,17 +49,33 @@ class DownloadTokensTest(unittest.TestCase):
         body = json.dumps([row.model_dump(mode="json") for row in result])
         self.assertNotIn("personal-secret", body)
         self.assertNotIn(parameters[2], body)
+        self.assertNotIn("server_configured", body)
         self.assertTrue(result[0].saved)
         self.assertFalse(result[1].saved)
 
-    def test_personal_token_precedes_server_and_lookup_is_owner_scoped(self) -> None:
-        encrypted = tokens.encrypt_token(self.user.id, "civitai", "personal")
-        self.connection.execute.return_value.fetchone.return_value = (encrypted,)
-        self.assertEqual(tokens.get_effective_token(self.user.id, "civitai"), "personal")
-        self.assertEqual(self.connection.execute.call_args.args[1], (self.user.id, "civitai"))
+    def test_only_personal_tokens_are_used_and_lookup_is_owner_scoped(self) -> None:
+        with patch.dict("os.environ", {"CIVITAI_TOKEN": "unused-shared-civitai", "HF_TOKEN": "unused-shared-hf"}):
+            for provider in ("civitai", "hugging_face"):
+                with self.subTest(provider=provider):
+                    encrypted = tokens.encrypt_token(self.user.id, provider, "personal")
+                    self.connection.execute.return_value.fetchone.return_value = (encrypted,)
+                    self.assertEqual(tokens.get_effective_token(self.user.id, provider), "personal")
+                    self.assertEqual(self.connection.execute.call_args.args[1], (self.user.id, provider))
+                    self.connection.execute.return_value.fetchone.return_value = None
+                    self.assertEqual(tokens.get_effective_token(uuid4(), provider), "")
+                    self.connection.execute.reset_mock()
+                    self.assertEqual(tokens.get_effective_token(None, provider), "")
+                    self.connection.execute.assert_not_called()
+
+    def test_civitai_download_requires_personal_token_even_with_shared_environment(self) -> None:
         self.connection.execute.return_value.fetchone.return_value = None
-        self.assertEqual(tokens.get_effective_token(uuid4(), "civitai"), "server-civitai")
-        self.assertEqual(tokens.get_effective_token(uuid4(), "hugging_face"), "")
+        with TemporaryDirectory() as temporary, patch.dict("os.environ", {"CIVITAI_TOKEN": "unused-shared-civitai"}), patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary)), patch("app.model_downloads._resolve_civitai_source") as metadata, patch("app.model_downloads.create_model_download") as enqueue:
+            with self.assertRaises(HTTPException) as raised:
+                models.download_civitai_model(models.ModelDownloadRequest(source="1", model_type="checkpoint"), self.user)
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("토큰을 저장", raised.exception.detail)
+        metadata.assert_not_called()
+        enqueue.assert_not_called()
 
     def test_invalid_headers_and_missing_encryption_configuration_do_not_write(self) -> None:
         for value in ("", "one\ntwo", "contains space", "한글", "x" * 4097):
@@ -74,6 +91,8 @@ class DownloadTokensTest(unittest.TestCase):
         self.connection.execute.return_value.fetchall.return_value = []
         tokens.remove_token("hugging_face", self.user)
         self.assertEqual(self.connection.execute.call_args_list[0].args[1], (self.user.id, "hugging_face"))
+        self.connection.execute.return_value.fetchone.return_value = None
+        self.assertEqual(tokens.get_effective_token(self.user.id, "hugging_face"), "")
 
     def test_civitai_metadata_token_context_does_not_leak_between_requests(self) -> None:
         response = MagicMock()

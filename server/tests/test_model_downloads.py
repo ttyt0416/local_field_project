@@ -46,8 +46,7 @@ from app.model_downloads import (
 
 class ModelDownloadsTest(unittest.TestCase):
     def setUp(self) -> None:
-        from app import model_downloads as models
-        patcher = patch("app.model_downloads.get_effective_token", side_effect=lambda _user, provider: models.settings.civitai_token if provider == "civitai" else models.settings.hugging_face_token)
+        patcher = patch("app.model_downloads.get_effective_token", return_value="personal-test-token")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -294,7 +293,7 @@ class ModelDownloadsTest(unittest.TestCase):
                 "completed_at": None,
             }
             with (
-                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory, civitai_token="token")),
+                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)),
                 patch("app.model_downloads._fetch_version", return_value=version),
                 patch("app.model_downloads.create_model_download", return_value=row) as create_job,
             ):
@@ -419,7 +418,7 @@ class ModelDownloadsTest(unittest.TestCase):
                     return None
 
             with (
-                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory, civitai_token="token")),
+                patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)),
                 patch("app.model_downloads._fetch_version", return_value=version),
                 patch("app.model_downloads._open_download", return_value=DownloadResponse()),
                 patch("app.model_downloads.is_model_download_active", return_value=True),

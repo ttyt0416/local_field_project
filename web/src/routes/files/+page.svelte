@@ -353,7 +353,7 @@
 						{#if currentFolderEntry}{@render folderActions(currentFolderEntry)}{/if}
 						</div>
 						<div class="flex flex-wrap items-center gap-3">
-							<SearchBar id="storage-search" bind:value={search} label="파일 및 폴더 검색" placeholder={currentType ? '이 폴더에서 파일 및 폴더 검색' : '스토리지에서 파일 및 폴더 검색'} class="min-w-48 flex-1" oninput={() => (selectedKey = '')} />
+							<SearchBar id="storage-search" bind:value={search} label="파일 및 폴더 검색" placeholder={currentType ? '이 폴더에서 파일 및 폴더 검색' : '스토리지에서 파일 및 폴더 검색'} class="min-w-0 flex-1 basis-full sm:basis-48" oninput={() => (selectedKey = '')} />
 							<label class="flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-muted-foreground"><ArrowDownWideNarrow size={16} /><span class="sr-only">파일 정렬</span><select bind:value={sort} aria-label="파일 정렬" class="min-w-0 bg-transparent text-xs font-medium text-foreground focus:outline-none"><option value="name">이름순</option><option value="modified">최근 수정순</option><option value="size">용량순</option></select></label>
 							<div class="flex gap-1" role="group" aria-label="파일 표시 방식"><IconOutlinedButton ariaLabel="목록 보기" pressed={view === 'list'} class={view === 'list' ? 'border-primary bg-primary/10 text-primary' : ''} onclick={() => (view = 'list')}><List size={18} /></IconOutlinedButton><IconOutlinedButton ariaLabel="격자 보기" pressed={view === 'grid'} class={view === 'grid' ? 'border-primary bg-primary/10 text-primary' : ''} onclick={() => (view = 'grid')}><LayoutGrid size={17} /></IconOutlinedButton></div>
 						</div>
@@ -364,15 +364,15 @@
 					{:else if !folderEntries.length && !visibleFiles.length}
 						<div class="flex min-h-72 flex-col items-center justify-center gap-3 px-5 text-center"><Folder size={40} strokeWidth={1.3} class="text-muted-foreground" /><p class="font-medium">{query ? '검색 결과가 없습니다.' : '이 폴더는 비어 있습니다.'}</p><p class="text-sm text-muted-foreground">{query ? '다른 파일명이나 폴더명으로 검색해 보세요.' : '새 폴더를 만들거나 다운로드 관리에서 모델을 다운로드하세요.'}</p></div>
 					{:else if view === 'list'}
-						<div class="overflow-x-auto">
-							<table class="w-full min-w-[36rem] text-left text-sm">
-								<thead class="border-b border-border bg-muted/30 text-xs text-muted-foreground"><tr><th scope="col" class="px-5 py-3 font-medium">이름</th><th scope="col" class="whitespace-nowrap px-3 py-3 font-medium">수정한 날짜</th><th scope="col" class="whitespace-nowrap px-3 py-3 text-right font-medium">파일 크기</th><th scope="col" class="w-24 px-3 py-3"><span class="sr-only">파일 작업</span></th></tr></thead>
+						<div class="min-w-0">
+							<table class="w-full table-fixed text-left text-sm">
+								<thead class="border-b border-border bg-muted/30 text-xs text-muted-foreground"><tr><th scope="col" class="px-3 py-3 font-medium sm:px-5">이름</th><th scope="col" class="hidden w-40 whitespace-nowrap px-3 py-3 font-medium md:table-cell">수정한 날짜</th><th scope="col" class="hidden w-28 whitespace-nowrap px-3 py-3 text-right font-medium sm:table-cell">파일 크기</th><th scope="col" class="relative w-24 px-3 py-3"><span class="sr-only">파일 작업</span></th></tr></thead>
 								<tbody class="divide-y divide-border">
 									{#each folderEntries as folder (`${folder.type}:${folder.path}`)}
-										<tr class="transition hover:bg-muted/50"><td class="px-5 py-3"><button type="button" disabled={busy} onclick={() => navigate(folder.type, folder.path)} class="flex w-full min-w-0 items-center gap-3 text-left"><Folder size={23} class="shrink-0 fill-primary/15 text-primary" /><span class="min-w-0"><span class="block max-w-64 truncate font-medium">{folder.name}</span><span class="mt-0.5 block text-xs text-muted-foreground">{query && folder.path ? folder.path : `${folder.count}개 파일`}</span></span></button></td><td class="px-3 py-3 text-xs text-muted-foreground">폴더</td><td class="whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground">{formatSize(folder.bytes)}</td><td class="px-3 py-3">{#if folder.path}{@render folderActions(folder)}{:else}<ChevronRight size={16} class="ml-auto text-muted-foreground" />{/if}</td></tr>
+										<tr class="transition hover:bg-muted/50"><td class="px-3 py-3 sm:px-5"><button type="button" disabled={busy} onclick={() => navigate(folder.type, folder.path)} class="flex w-full min-w-0 items-center gap-3 text-left"><Folder size={23} class="shrink-0 fill-primary/15 text-primary" /><span class="min-w-0 flex-1"><span class="block truncate font-medium" title={folder.name}>{folder.name}</span><span class="mt-0.5 block truncate text-xs text-muted-foreground" title={folder.path}>{query && folder.path ? folder.path : `${folder.count}개 파일`}<span class="sm:hidden"> · {formatSize(folder.bytes)}</span></span></span></button></td><td class="hidden px-3 py-3 text-xs text-muted-foreground md:table-cell">폴더</td><td class="hidden whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground sm:table-cell">{formatSize(folder.bytes)}</td><td class="px-3 py-3">{#if folder.path}{@render folderActions(folder)}{:else}<ChevronRight size={16} class="ml-auto text-muted-foreground" />{/if}</td></tr>
 									{/each}
 									{#each visibleFiles as model (fileKey(model))}
-										<tr class={`transition hover:bg-muted/50 ${selectedKey === fileKey(model) ? 'bg-primary/8' : ''}`}><td class="px-5 py-3"><button type="button" aria-label={`${basename(model.filename)} 상세 정보`} aria-pressed={selectedKey === fileKey(model)} onclick={() => (selectedKey = fileKey(model))} class="flex w-full items-center gap-3 text-left"><FileBox size={23} class="shrink-0 text-muted-foreground" /><span class="min-w-0"><span class="block max-w-64 truncate font-medium" title={model.filename}>{basename(model.filename)}</span><span class="mt-0.5 block max-w-64 truncate text-xs text-muted-foreground">{query ? `${modelTypeInfo(model.model_type).label} / ${parentModelFolder(model.filename) || '전체'}` : modelTypeInfo(model.model_type).label}</span></span></button></td><td class="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">{formatDate(model.modified_at)}</td><td class="whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground">{formatSize(model.size_bytes)}</td><td class="px-3 py-3">{@render fileActions(model)}</td></tr>
+										<tr class={`transition hover:bg-muted/50 ${selectedKey === fileKey(model) ? 'bg-primary/8' : ''}`}><td class="px-3 py-3 sm:px-5"><button type="button" aria-label={`${basename(model.filename)} 상세 정보`} aria-pressed={selectedKey === fileKey(model)} onclick={() => (selectedKey = fileKey(model))} class="flex w-full min-w-0 items-center gap-3 text-left"><FileBox size={23} class="shrink-0 text-muted-foreground" /><span class="min-w-0 flex-1"><span class="block truncate font-medium" title={model.filename}>{basename(model.filename)}</span><span class="mt-0.5 block truncate text-xs text-muted-foreground">{query ? `${modelTypeInfo(model.model_type).label} / ${parentModelFolder(model.filename) || '전체'}` : modelTypeInfo(model.model_type).label}<span class="sm:hidden"> · {formatSize(model.size_bytes)}</span></span><span class="mt-0.5 block truncate text-xs text-muted-foreground md:hidden">{formatDate(model.modified_at)}</span></span></button></td><td class="hidden whitespace-nowrap px-3 py-3 text-xs text-muted-foreground md:table-cell">{formatDate(model.modified_at)}</td><td class="hidden whitespace-nowrap px-3 py-3 text-right text-xs text-muted-foreground sm:table-cell">{formatSize(model.size_bytes)}</td><td class="px-3 py-3">{@render fileActions(model)}</td></tr>
 									{/each}
 								</tbody>
 							</table>
@@ -387,7 +387,7 @@
 							{/each}
 						</div>
 					{/if}
-					<footer class="flex items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground"><span>{folderEntries.length}개 폴더 · {visibleFiles.length}개 파일{query ? ' 검색됨' : ''}</span><span>파일을 선택하면 상세 정보를 볼 수 있습니다.</span></footer>
+					<footer class="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground"><span>{folderEntries.length}개 폴더 · {visibleFiles.length}개 파일{query ? ' 검색됨' : ''}</span><span>파일을 선택하면 상세 정보를 볼 수 있습니다.</span></footer>
 				</section>
 
 				{#if selectedModel}
@@ -444,7 +444,7 @@
 {#if moveTarget}<ModelFolderPicker bind:open={moveModalOpen} modelType={moveTarget.model_type} initialFolder={parentModelFolder(moveTarget.filename)} title="파일 이동" confirmLabel="이 폴더로 이동" loading={moving} onconfirm={(folder) => void moveFile(folder)} onclose={() => void refresh()} />{/if}
 
 <Modal bind:open={() => deleteModalOpen, (value) => { if (!deleting) deleteModalOpen = value; }} title="파일을 삭제하시겠습니까?" description="삭제한 파일은 복구할 수 없습니다." closeOnBackdrop={!deleting}>
-	<p class="break-all text-sm leading-6"><strong>{deleteTarget?.filename}</strong> 파일을 스토리지에서 삭제합니다.</p>
+	<div class="space-y-3 text-sm leading-6"><p class="min-w-0 font-semibold [overflow-wrap:anywhere]">{deleteTarget?.filename}</p><p>이 파일을 스토리지에서 삭제합니다.</p></div>
 	{#snippet footer()}<OutlinedButton disabled={deleting} onclick={() => (deleteModalOpen = false)}>취소</OutlinedButton><PrimaryButton loading={deleting} variant="destructive" onclick={() => void deleteFile()}><Trash2 size={16} />삭제</PrimaryButton>{/snippet}
 </Modal>
 

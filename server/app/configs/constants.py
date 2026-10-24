@@ -16,8 +16,6 @@ DEFAULT_AUTH_SECRET = ""
 DEFAULT_COMFYUI_URL = "http://host.docker.internal:8188"
 DEFAULT_STORAGE_URL = ""
 DEFAULT_STORAGE_API_TOKEN = ""
-DEFAULT_CIVITAI_TOKEN = ""
-DEFAULT_HUGGING_FACE_TOKEN = ""
 DEFAULT_COMFYUI_MODELS_PATH = "/comfyui-models"
 DEFAULT_VLLM_URL = "http://host.docker.internal:30004"
 DEFAULT_VLLM_MODEL = "pekkAi/G4-MeroMero-26B-A4B-it-uncensored-heretic-NVFP4"
@@ -52,8 +50,6 @@ class Settings:
     comfyui_url: str
     storage_url: str
     storage_api_token: str
-    civitai_token: str
-    hugging_face_token: str
     comfyui_models_path: str
     vllm_url: str
     vllm_model: str
@@ -85,8 +81,6 @@ class Settings:
             comfyui_url=os.getenv("COMFYUI_URL", DEFAULT_COMFYUI_URL),
             storage_url=os.getenv("STORAGE_URL", DEFAULT_STORAGE_URL),
             storage_api_token=os.getenv("STORAGE_API_TOKEN", DEFAULT_STORAGE_API_TOKEN),
-            civitai_token=os.getenv("CIVITAI_TOKEN", DEFAULT_CIVITAI_TOKEN),
-            hugging_face_token=os.getenv("HF_TOKEN", DEFAULT_HUGGING_FACE_TOKEN),
             comfyui_models_path=os.getenv("COMFYUI_MODELS_PATH", DEFAULT_COMFYUI_MODELS_PATH),
             vllm_url=os.getenv("VLLM_URL", DEFAULT_VLLM_URL),
             vllm_model=os.getenv("VLLM_MODEL", DEFAULT_VLLM_MODEL),

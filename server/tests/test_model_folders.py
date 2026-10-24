@@ -26,8 +26,7 @@ from app.model_downloads import (
 
 class ModelFoldersTest(unittest.TestCase):
     def setUp(self) -> None:
-        from app import model_downloads as models
-        patcher = patch("app.model_downloads.get_effective_token", side_effect=lambda _user, provider: models.settings.civitai_token if provider == "civitai" else models.settings.hugging_face_token)
+        patcher = patch("app.model_downloads.get_effective_token", return_value="personal-test-token")
         patcher.start()
         self.addCleanup(patcher.stop)
         temporary = TemporaryDirectory()
@@ -194,7 +193,7 @@ class ModelFoldersTest(unittest.TestCase):
         target = self.models / "deleted/model.safetensors"
         version = CivitaiVersion(1, None, "Model", "Checkpoint", "v1", None, (CivitaiFile(target.name, "Model", "https://civitai.com/file", 1, None, True),))
         with (
-            patch("app.model_downloads.settings", replace(settings, comfyui_models_path=str(self.root), civitai_token="test-only")),
+            patch("app.model_downloads.settings", replace(settings, comfyui_models_path=str(self.root))),
             patch("app.model_downloads._fetch_version", return_value=version),
             patch("app.model_downloads.is_model_download_active", return_value=False),
             patch("app.model_downloads._open_download") as open_download,
