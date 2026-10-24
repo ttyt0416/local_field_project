@@ -744,10 +744,8 @@
 								<div class="aspect-square bg-muted">
 									{#if job}
 										{@render vaultProgress(job, '3D 모델 생성 중')}
-									{:else if model.generation_mode === 'rigging' && model.status === 'completed' && model.model_url}
-										<ModelViewer source={model.model_url} sourceType="server" alt="리깅된 3D 모델 미리보기" class="h-full" />
-									{:else if model.source_image_url}
-										<ImageMedia source={model.source_image_url} sourceType={imageSourceType(model.source_image_url)} alt="3D 모델 소스 이미지" class="h-full" />
+									{:else if model.status === 'completed' && model.model_url}
+										<ModelViewer source={model.model_url} sourceType="server" alt={model.generation_mode === 'rigging' ? '리깅된 3D 모델 미리보기' : '생성된 3D 메시 미리보기'} class="h-full" />
 									{:else}
 										<div class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground"><Box size={28} strokeWidth={1.7} />3D 모델</div>
 									{/if}
