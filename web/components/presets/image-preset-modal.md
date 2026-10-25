@@ -9,7 +9,7 @@ width와 height는 기존 64~2048 product cap 없이 Comfy native 16~16384 range
 FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
 FLUX 프리셋은 CFG·Denoise 1, API 기본 16 steps를 사용하고 크기를 32 배수로 선택한다.
 
-## MOSS SFT
+## MOSS
 
 
 Qwen 2.1 Turbo 프리셋은 출력 크기를 32배수로 맞추며 CFG 1·8스텝·전용 스케줄을 유지한다. Denoise는 편집용 1로 고정한다.

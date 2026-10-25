@@ -11,7 +11,7 @@
 
 
 
-## MOSS SFT
+## MOSS
 
 MOSS는 T2I 전용이므로 I2I 모델 탭·설정·요청에서 제외한다. 기존 family=moss I2I 주소는 MOSS T2I 페이지로 이동한다. 소스 선택창에서 MOSS 생성물을 찾을 때도 T2I만 표시한다. 다른 편집 모델의 다중 참조 UI는 유지한다.
 

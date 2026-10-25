@@ -18,7 +18,7 @@
 
 image_generations.reference_images JSONB는 추가 참조 이미지의 file_id·filename을 순서대로 저장한다. 시작 시 기존 row에 빈 배열로 컬럼을 추가하고, crop 편집 row도 이 목록을 복사한다. Storage 참조 검사에 JSONB file_id도 포함해 다른 결과가 참조 중인 파일의 삭제를 막는다.
 
-## MOSS SFT
+## MOSS
 
 image_generations의 moss JSONB 열은 MOSS 생성 방식·레이아웃·참조 설정을 저장한다. 기본값은 빈 객체이고 기존 기록을 유지한다. 생성 insert/read와 편집본 복사에서 설정을 보존한다.
 

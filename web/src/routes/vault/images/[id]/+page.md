@@ -8,7 +8,7 @@ FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i
 
 다중 참조 이미지의 순서·파일명·소유자용 읽기 URL을 보여 주고, 재생성 요청에 reference_images를 그대로 전달한다. 제거한 Krea2 기록은 모델 옵션 요청과 재생성을 비활성화한다.
 
-## MOSS SFT
+## MOSS
 
 MOSS 기록의 moss 설정을 프리셋 저장과 재생성에 전달한다. 기존 이미지 참조 목록·소유권·원본 재사용 흐름을 유지한다.
 

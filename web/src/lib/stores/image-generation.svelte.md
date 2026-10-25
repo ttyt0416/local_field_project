@@ -8,7 +8,7 @@ FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i
 
 재생성 파라미터의 reference_images는 추가 참조의 file_id·filename·url을 순서대로 전달한다. 소스 이미지와 구분하며 localStorage에는 저장하지 않는다.
 
-## MOSS SFT
+## MOSS
 
 MOSS 재생성은 moss 설정을 함께 전달한다. 화면에서 기본값과 저장된 영역을 복원해 레이아웃 및 r2i 프로필을 유지한다.
 

@@ -97,13 +97,13 @@
 
 	let { modelFamily, onselect }: { modelFamily: ModelFamily; onselect: (family: ModelFamily) => void } = $props();
 	let presetType = $derived<Preset['type']>(`t2i_${modelFamily}`);
-	let familyLabel = $derived(modelFamily === 'moss' ? 'MOSS SFT' : modelFamily === 'illustrious' ? 'Illustrious' : 'Anima');
+	let familyLabel = $derived(modelFamily === 'moss' ? 'MOSS' : modelFamily === 'illustrious' ? 'Illustrious' : 'Anima');
 	let dimensionStep = $derived(modelFamily === 'moss' ? 16 : 8);
 	const pageTitle = 'T2I';
 	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
 		{ value: 'anima', label: 'ANIMA' },
 		{ value: 'illustrious', label: 'ILLUSTRIOUS' },
-		{ value: 'moss', label: 'MOSS SFT' }
+		{ value: 'moss', label: 'MOSS' }
 	];
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [

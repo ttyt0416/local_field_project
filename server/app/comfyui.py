@@ -68,7 +68,7 @@ _QWEN21_TURBO_SCHEDULER = "qwen_2_1_turbo"
 _QWEN21_TURBO_SIGMAS = "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0"
 _EDIT_MODELS = {
     "qwen_image_2_1": {
-        "checkpoint": "qwen_image_2.1_turbo_bf16.safetensors",
+        "checkpoint": "Qwen/qwen_image_2.1_turbo_bf16.safetensors",
         "text_encoder": "qwen3vl_8b_int8_convrot.safetensors",
         "vae": "qwen_image_2.1_vae_bf16.safetensors",
         "clip_type": "qwen_image",

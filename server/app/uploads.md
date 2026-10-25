@@ -10,7 +10,7 @@
 
 FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
 
-## MOSS SFT
+## MOSS
 
 저장된 생성 이미지 선택의 model_family에 moss를 지원한다. 기존 소유권 검사와 T2I/I2I 분류를 재사용한다.
 

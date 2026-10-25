@@ -18,9 +18,9 @@ FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i
 
 이미지 detail의 reference_images는 저장된 추가 참조 목록과 사용자별 읽기 URL을 반환한다. 새 참조 컬럼이 비어 있는 기존 row는 빈 목록으로 처리한다.
 
-## MOSS SFT
+## MOSS
 
-MOSS SFT 생성 기록을 family 필터에서 조회한다. 상세 응답의 moss 필드는 레이아웃과 참조 모드·강도·구도 유지 설정을 재생성 화면에 전달한다.
+MOSS 생성 기록을 family 필터에서 조회한다. 상세 응답의 moss 필드는 레이아웃과 참조 모드·강도·구도 유지 설정을 재생성 화면에 전달한다.
 
 Qwen 2.1 Turbo family(qwen_image_2_1)의 목록·상세·참조 이미지 조회를 지원한다.
 

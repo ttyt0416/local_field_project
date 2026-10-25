@@ -12,7 +12,7 @@ lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하
 
 공통 Comfy progress state는 현재 실행 node ID도 보존한다. image/video caller는 기존 progress 계약을 그대로 사용하고, TRELLIS.2 router는 node ID를 background cleanup·structure·shape·texture·mesh stage로 매핑한다.
 
-`GET /generation/image/options?family=anima|illustrious|flux3_klein|moss`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima` split model과 `qwen_image_vae.safetensors`를 사용하고 Illustrious는 full checkpoint를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·Illustrious·MOSS SFT를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima prompt enhancement는 Danbooru tags와 자연어를, Illustrious는 검증된 tags만 사용한다.
+`GET /generation/image/options?family=anima|illustrious|flux3_klein|moss`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima` split model과 `qwen_image_vae.safetensors`를 사용하고 Illustrious는 full checkpoint를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·Illustrious·MOSS를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima prompt enhancement는 Danbooru tags와 자연어를, Illustrious는 검증된 tags만 사용한다.
 
 `POST /generation/image/i2i`는 multipart payload와 소스 이미지 한 개를 받는다. local file은 submit 시에만 Storage·media_assets에 저장하고 기존 file ID는 ownership을 확인해 재사용한다. Anima·Illustrious는 `LoadImage → ImageScale → VAEEncode → KSampler`와 0~1 denoise를 유지한다.
 
@@ -26,15 +26,15 @@ FLUX references는 추가 이미지 0~9개를 받으며 source를 합쳐 최대 
 
 현재 FLUX 가중치·인코더·프롬프트 확장 모델·VAE는 사용자 요청으로 제거했다. 다중 참조 UI와 연결 코드는 유지하며, 모델 미설치 상태에서는 생성 옵션 API가 설치 필요 오류를 반환한다.
 
-## MOSS SFT
+## MOSS
 
-MOSS SFT는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함하며 기본 모델은 `MOSS/moss_image_sft_bf16.safetensors`다. `qwen3.5_9b_int8_convrot.safetensors` type `moss_image`, `flux2-vae_small.safetensors`를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 장면 설명을 중앙 기준 JSON으로 변환하고 별도 프롬프트 개선을 적용하지 않는다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
+MOSS는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함하며 기본 모델은 `MOSS/moss_image_sft_bf16.safetensors`다. `qwen3.5_9b_int8_convrot.safetensors` type `moss_image`, `flux2-vae_small.safetensors`를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 장면 설명을 중앙 기준 JSON으로 변환하고 별도 프롬프트 개선을 적용하지 않는다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
 
 참조 패처 출처는 https://github.com/silveroxides/ComfyUI-UtilsCollection 이며 설치 revision은 `52524719f934c7cc09382e2560f27f6967636255`이다. 누락된 의존성 `unifiedefficientloader==0.5.4`를 ComfyUI 환경에 추가했다.
 
 가중치 출처: https://huggingface.co/Comfy-Org/MOSS-Image 의 SFT BF16·INT8 텍스트 인코더·small VAE와 https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd 의 lora_latest.safetensors를 사용한다. Base 본체와 폐기된 DMD 전용 transformer 파일은 받지 않는다.
 
-Qwen Image 2.1 Turbo는 qwen_image_2_1 family로 I2I·다중 참조 생성을 제공한다. 공식 BF16 Turbo 본체, qwen3vl_8b_int8_convrot 인코더(type qwen_image), 전용 Qwen 2.1 VAE를 사용한다. TextEncodeQwenImage21에 원본을 image_1, 추가 참조를 image_2~image_10 순으로 전달한다. 원본은 선택한 출력 크기로 맞추고 추가 참조는 비율을 유지해 약 1MP·32배수로 줄인다. resolution 0으로 인코더 latent와 출력 캔버스를 일치시킨다. QwenImage21Cache auto/default와 공식 ManualSigmas [1,.978453,.95418,.926626,.89508,.845148,.704534,.414568,0], Euler·CFG 1·8 steps·Denoise 1을 사용하며 다른 조합은 업로드 전에 거부한다. 일반 KSampler 스케줄러로 대체하지 않는다. LLM 프롬프트 강화는 아래 설정을 따른다.
+Qwen Image 2.1 Turbo는 qwen_image_2_1 family로 I2I·다중 참조 생성을 제공한다. 본체는 `diffusion_models/Qwen/qwen_image_2.1_turbo_bf16.safetensors`에 두며 모델 옵션과 생성 그래프는 `Qwen/` 상대 경로로 참조한다. 공식 BF16 Turbo 본체, qwen3vl_8b_int8_convrot 인코더(type qwen_image), 전용 Qwen 2.1 VAE를 사용한다. TextEncodeQwenImage21에 원본을 image_1, 추가 참조를 image_2~image_10 순으로 전달한다. 원본은 선택한 출력 크기로 맞추고 추가 참조는 비율을 유지해 약 1MP·32배수로 줄인다. resolution 0으로 인코더 latent와 출력 캔버스를 일치시킨다. QwenImage21Cache auto/default와 공식 ManualSigmas [1,.978453,.95418,.926626,.89508,.845148,.704534,.414568,0], Euler·CFG 1·8 steps·Denoise 1을 사용하며 다른 조합은 업로드 전에 거부한다. 일반 KSampler 스케줄러로 대체하지 않는다. LLM 프롬프트 강화는 아래 설정을 따른다.
 
 출처: https://huggingface.co/Comfy-Org/Qwen-Image-2.1 / https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo / https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_2_1_turbo_image_edit.json . 모델 배포 revision은 a8342359c61979b06a8dafb1a47991fe1f30e994이다.
 
