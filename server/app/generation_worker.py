@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from typing import Any
 
+from .latency import api_user
 from .audit import record_exception
 from .comfyui import _history_generation_status, generation_progress, record_comfy_progress, stream_comfy_progress
 from .database import (
@@ -32,7 +33,8 @@ def reconcile_active_generations() -> None:
     for generation in list_active_image_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            result = _history_generation_status(generation["prompt_id"], generation["user_id"])
+            with api_user(generation["user_id"]):
+                result = _history_generation_status(generation["prompt_id"], generation["user_id"])
             _publish_if_changed("image", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
             record_exception(exc, operation="generation.reconcile.image", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
@@ -42,7 +44,8 @@ def reconcile_active_generations() -> None:
     for generation in list_active_video_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            result = _history_status(generation, generation["user_id"])
+            with api_user(generation["user_id"]):
+                result = _history_status(generation, generation["user_id"])
             _publish_if_changed("video", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
             record_exception(exc, operation="generation.reconcile.video", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
@@ -52,7 +55,8 @@ def reconcile_active_generations() -> None:
     for generation in list_active_three_d_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            result = _three_d_history_status(generation, generation["user_id"])
+            with api_user(generation["user_id"]):
+                result = _three_d_history_status(generation, generation["user_id"])
             _publish_if_changed("3d", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
             record_exception(exc, operation="generation.reconcile.3d", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
@@ -62,7 +66,8 @@ def reconcile_active_generations() -> None:
     for generation in list_active_music_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            result = _music_history_status(generation, generation["user_id"])
+            with api_user(generation["user_id"]):
+                result = _music_history_status(generation, generation["user_id"])
             _publish_if_changed("music", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
             record_exception(exc, operation="generation.reconcile.music", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
@@ -147,18 +152,19 @@ async def _watch_progress(kind: str, generation: dict[str, Any], stop_event: asy
     user_id = generation["user_id"]
     while not stop_event.is_set():
         try:
-            async for event_name, data in stream_comfy_progress(generation["client_id"], stop_event):
-                active_prompt_id = None
-                if kind == "video":
-                    current = get_video_generation(prompt_id, user_id)
-                    active = current.get("active_prompt_id") if current is not None else None
-                    if not isinstance(active, str) or not active:
+            with api_user(user_id):
+                async for event_name, data in stream_comfy_progress(generation["client_id"], stop_event):
+                    active_prompt_id = None
+                    if kind == "video":
+                        current = get_video_generation(prompt_id, user_id)
+                        active = current.get("active_prompt_id") if current is not None else None
+                        if not isinstance(active, str) or not active:
+                            continue
+                        active_prompt_id = active
+                    if record_comfy_progress(
+                        prompt_id, user_id, event_name, data, accepted_prompt_id=active_prompt_id
+                    ):
                         continue
-                    active_prompt_id = active
-                if record_comfy_progress(
-                    prompt_id, user_id, event_name, data, accepted_prompt_id=active_prompt_id
-                ):
-                    continue
         except Exception as exc:
             record_exception(exc, operation="generation.progress", user_id=user_id, context={"kind": kind, "prompt_id": prompt_id})
             logger.debug("%s 생성 progress WebSocket 연결을 재시도합니다: %s", kind, prompt_id, exc_info=True)

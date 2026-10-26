@@ -20,6 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from starlette.responses import FileResponse
 
+from .latency import ApiTimer, timed_urlopen
 from .audit import exception_message, record_exception
 from .animadex_assets import AssetSyncError, catalogue_lock, plan_thumbnails, read_state, sync_thumbnails, thumbnail_path, thumbnail_url, verify_signature
 from .auth import UserResponse, current_user, _bearer
@@ -81,14 +82,16 @@ def _read_thumbnail(url: str, limit: int) -> tuple[int, bytes]:
             connection = HTTPSConnection('blobs.animadex.net', timeout=45)
             _THUMBNAIL_CONNECTION.connection = connection
         try:
-            connection.request('GET', target, headers={'User-Agent': 'LocalField/0.1'})
-            response = connection.getresponse()
-            raw = response.read(limit + 1)
-            if len(raw) > limit:
-                connection.close()
-            if response.status != 200:
-                raise HTTPError(url, response.status, 'AnimaDex thumbnail request failed', response.headers, None)
-            return response.status, raw
+            with ApiTimer('GET', url) as timer:
+                connection.request('GET', target, headers={'User-Agent': 'LocalField/0.1'})
+                response = connection.getresponse()
+                timer.headers(response.status)
+                raw = response.read(limit + 1)
+                if len(raw) > limit:
+                    connection.close()
+                if response.status != 200:
+                    raise HTTPError(url, response.status, 'AnimaDex thumbnail request failed', response.headers, None)
+                return response.status, raw
         except HTTPError:
             raise
         except (OSError, HTTPClientError) as exc:
@@ -117,7 +120,7 @@ def _read_url(url: str, *, token: str = "", manifest: bool = False, resource: Li
         if resource == 'thumbnail' and not manifest:
             code, raw = _read_thumbnail(url, limit)
         else:
-            with _OPENER.open(Request(url, headers=headers), timeout=45) as response:
+            with timed_urlopen(_OPENER.open, Request(url, headers=headers), timeout=45) as response:
                 code = response.status
                 raw = response.read(limit + 1)
         if len(raw) > limit:
@@ -131,9 +134,6 @@ def _read_url(url: str, *, token: str = "", manifest: bool = False, resource: Li
     except (URLError, OSError, TimeoutError, HTTPClientError) as exc:
         record_exception(exc, operation=f"animadex.export.{resource}", status_code=code)
         raise CatalogueImportError("AnimaDex 파일 서버의 TLS 또는 네트워크 연결 오류로 로컬 카탈로그를 가져오지 못했습니다.") from None
-    finally:
-        path = "/upstream/animadex/export/manifest" if manifest else f"/upstream/animadex/export/{resource}"
-        record_api_call(method="GET", path=path, status_code=code, client_ip=None, user_agent="LocalField/0.1", user_id=None)
 
 
 def _csv(raw: bytes, required: set[str]) -> list[dict]:

@@ -33,3 +33,7 @@ Gelbooru 태그와 AnimaDex 엔트리는 별도 로컬 테이블과 trigram 검�
 ## 동작·오류 기록
 
 API·인증·웹 로그 쓰기는 별도 큐로 전달하고 완료를 기다리지 않는다. 기록 연결 3초·쿼리 5초·잠금 2초 제한을 적용한다. api_error_logs.error_details에 예외 체인·스택·외부 응답을 저장하고 메시지 1,000자 절단을 제거한다. 웹 로그에 event_id, client_occurred_at, visitor_id, session_id, target_path, target_context를 추가한다. 긴 URL은 TEXT로 보존하고 인덱스는 앞 512자를 사용한다. event_id 중복은 무시한다. 다운로드 실패 상태에도 원문을 저장한다.
+
+## API 레이턴시 기록
+
+api_audit_logs에 request_id/parent_request_id, source, headers_ms, first_byte_ms, duration_ms, finished_at, outcome, timing_context를 추가한다. 시작 시각은 실제 관측값을 전달한다. request_id UPSERT로 진행 중/완료 이벤트를 같은 행에 갱신하며 늦게 온 진행 이벤트가 완료 시간·상태를 되돌리지 않는다. 기존 행의 latency는 NULL로 유지한다.

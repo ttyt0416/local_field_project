@@ -740,6 +740,16 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         user_id UUID REFERENCES users(id) ON DELETE SET NULL
     )
     """,
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS request_id UUID",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS parent_request_id UUID",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'server'",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS headers_ms DOUBLE PRECISION",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS first_byte_ms DOUBLE PRECISION",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS duration_ms DOUBLE PRECISION",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS outcome VARCHAR(32)",
+    "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS timing_context JSONB",
+    "CREATE UNIQUE INDEX IF NOT EXISTS api_audit_logs_request_id_idx ON api_audit_logs(request_id) WHERE request_id IS NOT NULL",
     """
     CREATE TABLE IF NOT EXISTS api_error_logs (
         id BIGSERIAL PRIMARY KEY,
@@ -2445,22 +2455,36 @@ def record_auth_event(
 
 
 def record_api_call(
-    *,
-    method: str,
-    path: str,
-    status_code: int,
-    client_ip: str | None,
-    user_agent: str | None,
-    user_id: Any = None,
+    *, method: str, path: str, status_code: int, client_ip: str | None,
+    user_agent: str | None, user_id: Any = None, request_id: Any = None,
+    parent_request_id: Any = None, source: str = "server", requested_at: datetime | None = None,
+    headers_ms: float | None = None, first_byte_ms: float | None = None,
+    duration_ms: float | None = None, finished_at: datetime | None = None,
+    outcome: str | None = None, timing_context: dict[str, Any] | None = None,
 ) -> None:
-    _record(
-        """
-        INSERT INTO api_audit_logs
-            (method, path, status_code, client_ip, user_agent, user_id)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (method, path, status_code, client_ip, user_agent, user_id),
-    )
+    try:
+        _record(
+            """
+            INSERT INTO api_audit_logs
+                (method, path, status_code, client_ip, user_agent, user_id, request_id,
+                 parent_request_id, source, requested_at, headers_ms, first_byte_ms,
+                 duration_ms, finished_at, outcome, timing_context)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, CURRENT_TIMESTAMP), %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (request_id) WHERE request_id IS NOT NULL DO UPDATE SET
+                status_code = CASE WHEN api_audit_logs.finished_at IS NULL THEN EXCLUDED.status_code ELSE api_audit_logs.status_code END,
+                user_id = COALESCE(EXCLUDED.user_id, api_audit_logs.user_id),
+                headers_ms = COALESCE(api_audit_logs.headers_ms, EXCLUDED.headers_ms),
+                first_byte_ms = COALESCE(api_audit_logs.first_byte_ms, EXCLUDED.first_byte_ms),
+                duration_ms = COALESCE(EXCLUDED.duration_ms, api_audit_logs.duration_ms),
+                finished_at = COALESCE(EXCLUDED.finished_at, api_audit_logs.finished_at),
+                outcome = CASE WHEN api_audit_logs.finished_at IS NULL THEN EXCLUDED.outcome ELSE api_audit_logs.outcome END
+            """,
+            (method, redact(path), status_code, client_ip, user_agent, user_id, request_id,
+             parent_request_id, source, requested_at, headers_ms, first_byte_ms, duration_ms,
+             finished_at, outcome, json.dumps(redact(timing_context), ensure_ascii=False, default=str) if timing_context else None),
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("Could not prepare API latency audit")
 
 
 _API_ERROR_INSERT = """

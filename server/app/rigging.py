@@ -13,6 +13,7 @@ import threading
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, ValidationError
 
+from .latency import api_user, timed_urlopen
 from .audit import exception_message, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .comfyui import _ComfyUIError
@@ -45,7 +46,7 @@ def request_worker(method, path, *, content=None, user_id=None):
                       headers={'Authorization': f'Bearer {token}', 'Content-Type': 'model/gltf-binary'})
     code = 503
     try:
-        with urlopen(request, timeout=120 if content else 15) as response:
+        with api_user(user_id), timed_urlopen(urlopen, request, timeout=120 if content else 15) as response:
             code = response.status
             body = response.read()
             return body if path.endswith('/result') else json.loads(body)
@@ -53,9 +54,6 @@ def request_worker(method, path, *, content=None, user_id=None):
         code = exc.code if isinstance(exc, HTTPError) else 503
         record_exception(exc, operation='skintokens:' + path.split('?')[0], status_code=code, user_id=user_id)
         raise _ComfyUIError('SkinTokens 실행 서비스에 연결할 수 없습니다.') from exc
-    finally:
-        record_api_call(method=method, path='skintokens:' + path.split('?')[0], status_code=code,
-                        client_ip=None, user_agent='Local Field rigging', user_id=user_id)
 
 
 @router.get('/options')

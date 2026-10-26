@@ -26,3 +26,7 @@ MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model �
 ## 동작·오류 기록
 
 다운로드 워커의 서비스·파일·네트워크·타임아웃 오류는 원문을 기록하고 실제 원인 문구를 실패 상태에 저장한다. 초기화·작업 조회 실패, 설치 파일 stat와 추천 폴더 탐색 실패도 기록한다.
+
+## API 레이턴시 기록
+
+Civitai 메타데이터·다운로드 호출을 공통 HTTP 유틸로 측정한다. 다운로드 워커의 사용자 context를 외부 요청까지 전달한다.

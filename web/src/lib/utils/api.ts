@@ -1,12 +1,12 @@
 import { browser } from '$app/environment';
-import ky, { HTTPError, isTimeoutError, type Options } from 'ky';
+import ky, { HTTPError, isTimeoutError, type Options, type ResponsePromise } from 'ky';
 import { SERVER_URL } from '$lib/configs/constants';
 
 export const ACCESS_TOKEN_KEY = 'local-field.access-token';
 
 export { trackWebEvent } from './telemetry';
 export type { WebEvent } from './telemetry';
-import { reportApiError } from './telemetry';
+import { reportApiError, startApiTiming } from './telemetry';
 
 const api = ky.create({
 	baseUrl: `${SERVER_URL.replace(/\/+$/, '')}/`,
@@ -59,39 +59,45 @@ function getErrorMessage(error: unknown) {
 	return '서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.';
 }
 
-export async function apiJson<T>(path: string, options?: Options) {
+function timedOptions(options: Options | undefined, timing: ReturnType<typeof startApiTiming>): Options {
+	return {
+		...options,
+		hooks: {
+			...options?.hooks,
+			afterResponse: [({ response }) => timing.headers(response.status), ...(options?.hooks?.afterResponse ?? [])]
+		}
+	};
+}
+
+async function timedRequest<T>(path: string, options: Options | undefined, read: (response: ResponsePromise) => Promise<T>): Promise<T> {
+	const method = options?.method ?? 'GET';
+	const timing = startApiTiming(path, method);
 	try {
-		return await api(path, options).json<T>();
+		const response = api(path, timedOptions(options, timing));
+		return await read(response);
 	} catch (error) {
-		reportApiError(error, path, options?.method ?? 'GET');
+		timing.fail(error);
+		reportApiError(error, path, method);
 		throw new Error(getErrorMessage(error), { cause: error });
+	} finally {
+		timing.finish();
 	}
 }
 
-export async function apiForm<T>(path: string, form: FormData, options?: Options) {
-	try {
-		return await api(path, { ...options, method: options?.method ?? 'POST', body: form }).json<T>();
-	} catch (error) {
-		reportApiError(error, path, options?.method ?? 'POST');
-		throw new Error(getErrorMessage(error), { cause: error });
-	}
+export function apiJson<T>(path: string, options?: Options) {
+	return timedRequest<T>(path, options, (response) => response.json<T>());
 }
-export async function apiBlob(path: string, options?: Options) {
-	try {
-		return await api(path, options).blob();
-	} catch (error) {
-		reportApiError(error, path, options?.method ?? 'GET');
-		throw new Error(getErrorMessage(error), { cause: error });
-	}
+
+export function apiForm<T>(path: string, form: FormData, options?: Options) {
+	return timedRequest<T>(path, { ...options, method: options?.method ?? 'POST', body: form }, (response) => response.json<T>());
+}
+
+export function apiBlob(path: string, options?: Options) {
+	return timedRequest(path, options, (response) => response.blob());
 }
 
 export async function apiDelete(path: string) {
-	try {
-		await api(path, { method: 'DELETE' });
-	} catch (error) {
-		reportApiError(error, path, 'DELETE');
-		throw new Error(getErrorMessage(error), { cause: error });
-	}
+	await timedRequest(path, { method: 'DELETE' }, async (response) => { await response; });
 }
 
 export type ServerSentEvent = {
@@ -109,12 +115,13 @@ export async function streamSse(
 	onEvent: (event: ServerSentEvent) => void,
 	options?: StreamSseOptions
 ) {
+	const timing = startApiTiming(path, 'GET', true);
 	try {
-		const response = await api(path, {
+		const response = await api(path, timedOptions({
 			timeout: false,
 			signal: options?.signal,
 			headers: { Accept: 'text/event-stream' }
-		});
+		}, timing));
 		if (!response.body) throw new Error('SSE 응답 스트림을 사용할 수 없습니다.');
 		options?.onConnected?.();
 
@@ -135,6 +142,7 @@ export async function streamSse(
 
 		while (true) {
 			const { done, value } = await reader.read();
+			if (value?.length) timing.firstByte();
 			buffer += decoder.decode(value, { stream: !done });
 			let separator = buffer.indexOf('\n\n');
 			while (separator >= 0) {
@@ -148,7 +156,10 @@ export async function streamSse(
 			}
 		}
 	} catch (error) {
+		timing.fail(error);
 		reportApiError(error, path, 'GET');
 		throw new Error(getErrorMessage(error), { cause: error });
+	} finally {
+		timing.finish();
 	}
 }

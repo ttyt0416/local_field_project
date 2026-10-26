@@ -27,3 +27,7 @@ I2V·FL2V·R2V workflow는 `diffusion_models/MiniMaxH3/`에서 선택한 UNET을
 ## 동작·오류 기록
 
 영상 SSE, 원격 history 실패, 시퀀스 정리·후속 작업 취소 실패를 공통 유틸로 보존한다. 정상 heartbeat 타임아웃은 제외한다.
+
+## API 레이턴시 기록
+
+영상 입력 파일 업로드 요청에 공통 HTTP 시간 측정을 적용한다. 공유 ComfyUI 호출은 comfyui 유틸을 재사용한다.

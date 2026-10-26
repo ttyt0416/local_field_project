@@ -1,4 +1,4 @@
-import { installInteractionAudit, trackWebEvent, reportApiError, elementPath } from '../src/lib/utils/telemetry';
+import { installInteractionAudit, trackWebEvent, reportApiError, elementPath, startApiTiming } from '../src/lib/utils/telemetry';
 
 const fixture = document.querySelector<HTMLElement>('#fixture')!;
 const result = document.querySelector<HTMLOutputElement>('#result')!;
@@ -64,6 +64,30 @@ try {
 	assert(latest().from_path === '/generate/3d' && latest().target_context.navigation_type === 'popstate', 'route from, to and navigation type');
 	reportApiError(Object.assign(new Error('upstream raw error'), { response: new Response(null, { status: 502 }), data: { detail: 'original body' } }), '/generation/music', 'POST');
 	assert(requests.at(-1)!.url.endsWith('/web/errors') && latest().error_message === 'upstream raw error' && latest().response.detail === 'original body', 'original API error response');
+	const metric = startApiTiming('/api/latency', 'POST');
+	const originPage = `${location.pathname}${location.search}${location.hash}`;
+	metric.headers(200);
+	history.replaceState({}, '', '/different-page');
+	metric.finish();
+	assert(latest().duration_ms >= latest().headers_ms && latest().outcome === 'completed', 'HTTP total and headers latency');
+	assert(latest().page_path === originPage, 'latency retains originating page across navigation');
+	const live = startApiTiming('/api/events', 'GET', true);
+	live.headers(200);
+	assert(latest().outcome === 'in_progress' && latest().duration_ms === undefined, 'SSE headers recorded while open');
+	const liveId = latest().request_id;
+	live.firstByte();
+	assert(latest().request_id === liveId && latest().first_byte_ms >= latest().headers_ms, 'SSE first chunk recorded while open');
+	live.finish();
+	assert(latest().request_id === liveId && latest().duration_ms >= latest().first_byte_ms, 'SSE total uses same request');
+	const completedCount = requests.length;
+	live.finish();
+	assert(requests.length === completedCount, 'latency completion is idempotent');
+	const timedOut = startApiTiming('/api/timeout', 'GET');
+	timedOut.fail(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+	assert(latest().outcome === 'timeout' && latest().status_code === 0, 'timeout latency retained');
+	const cancelled = startApiTiming('/api/cancel', 'GET');
+	cancelled.fail(new DOMException('cancelled', 'AbortError'));
+	assert(latest().outcome === 'cancelled', 'user cancellation latency retained');
 	const count = requests.length;
 	reportApiError(new DOMException('cancelled', 'AbortError'), '/api', 'GET');
 	assert(requests.length === count, 'intentional abort excluded');

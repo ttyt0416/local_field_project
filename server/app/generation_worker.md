@@ -19,3 +19,7 @@ SkinTokens 리깅 row는 동일 3D reconciler에서 독립 실행 서비스 상�
 ## 동작·오류 기록
 
 이미지·영상·음악·3D 각각의 reconcile, progress WebSocket 재연결, 전체 동기화 실패를 작업·사용자·prompt_id와 함께 공통 유틸로 기록한다. 정상 폴링 타임아웃과 취소는 제외한다.
+
+## API 레이턴시 기록
+
+각 이미지·영상·음악·3D 동기화와 progress WebSocket 호출에 사용자 context를 전달한다. 워커가 유발한 외부 호출에도 사용자 식별을 유지한다.

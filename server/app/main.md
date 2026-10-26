@@ -13,3 +13,7 @@ HTTP audit middleware는 route가 request state에 둔 failed provider response�
 ## 동작·오류 기록
 
 HTTP/검증 예외의 원인 체인을 보존하고 직접 반환한 오류 Response는 실제 본문을 기록한다. /web/events와 /web/errors는 DB 저장 완료를 기다리지 않고 204를 반환한다. 사용자 식별은 JWT 서명·만료를 검증하며 사용자 DB 조회를 기다리지 않는다. 웹 이벤트는 요소 경로·모달·시각·사용자·방문자·세션과 라우트 정보를 받는다.
+
+## API 레이턴시 기록
+
+전역 ASGI ApiTimingMiddleware로 모든 HTTP 응답과 스트림 종료 시간을 기록한다. 기존 오류 미들웨어는 원문 보존을 담당하며 중복 호출 기록을 제거했다. /web/api-timings는 브라우저 시간·상태·페이지·세션을 검증해 source=browser로 비대기 저장한다.

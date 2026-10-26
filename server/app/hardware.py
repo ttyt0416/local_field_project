@@ -10,6 +10,7 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from .latency import timed_urlopen
 from .auth import UserResponse, current_user
 from .configs.constants import settings
 
@@ -40,7 +41,7 @@ def hardware_metrics(_: UserResponse = Depends(current_user)) -> HardwareMetrics
 def fetch_hardware_metrics() -> dict[str, float]:
     url = f"{settings.hardware_monitor_url.rstrip('/')}/metrics"
     try:
-        with urlopen(UrlRequest(url, headers={"Accept": "application/json"}), timeout=_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, UrlRequest(url, headers={"Accept": "application/json"}), timeout=_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read())
     except (UrlHTTPError, URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HardwareMonitorError("hardware monitor request failed") from exc

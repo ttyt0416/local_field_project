@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from starlette.responses import StreamingResponse
 
+from .latency import timed_urlopen
 from .audit import audit_stream, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .comfyui import (
@@ -1370,7 +1371,7 @@ def _upload_to_comfy(resolved: dict[str, _ResolvedAsset], asset: VideoAsset | No
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:
+        with timed_urlopen(urlopen, request, timeout=30) as response:
             result = json.loads(response.read())
     except UrlHTTPError as exc:
         raise _ComfyUIError(f"ComfyUI 입력 파일 업로드가 실패했습니다. (HTTP {exc.code})") from exc

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import RedirectResponse, StreamingResponse
 
+from .latency import ApiTimer, timed_urlopen, upstream_path
 from .audit import audit_stream, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .configs.constants import settings
@@ -321,23 +322,27 @@ def _comfy_websocket_url(client_id: str) -> str:
 
 
 async def stream_comfy_progress(client_id: str, stop_event: asyncio.Event) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    async with websocket_connect(_comfy_websocket_url(client_id), open_timeout=5, ping_interval=20) as socket:
-        while not stop_event.is_set():
-            try:
-                raw_message = await asyncio.wait_for(socket.recv(), timeout=1)
-            except asyncio.TimeoutError:
-                continue
-            if isinstance(raw_message, bytes):
-                continue
-            try:
-                message = json.loads(raw_message)
-            except (TypeError, json.JSONDecodeError) as exc:
-                record_exception(exc, operation="comfyui.websocket.decode", context={"client_id": client_id})
-                continue
-            event_name = message.get("type") if isinstance(message, dict) else None
-            data = message.get("data") if isinstance(message, dict) else None
-            if isinstance(event_name, str) and isinstance(data, dict):
-                yield event_name, data
+    with ApiTimer('WS', upstream_path(_comfy_websocket_url(client_id))) as timer:
+        async with websocket_connect(_comfy_websocket_url(client_id), open_timeout=5, ping_interval=20) as socket:
+            timer.headers(101)
+            while not stop_event.is_set():
+                try:
+                    raw_message = await asyncio.wait_for(socket.recv(), timeout=1)
+                except asyncio.TimeoutError:
+                    continue
+                if raw_message:
+                    timer.first_byte()
+                if isinstance(raw_message, bytes):
+                    continue
+                try:
+                    message = json.loads(raw_message)
+                except (TypeError, json.JSONDecodeError) as exc:
+                    record_exception(exc, operation="comfyui.websocket.decode", context={"client_id": client_id})
+                    continue
+                event_name = message.get("type") if isinstance(message, dict) else None
+                data = message.get("data") if isinstance(message, dict) else None
+                if isinstance(event_name, str) and isinstance(data, dict):
+                    yield event_name, data
 
 
 def _queue_position(prompt_id: str) -> int | None:
@@ -584,7 +589,7 @@ def _upload_comfy_input(content: bytes, filename: str, media_type: str) -> str:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
             result = json.loads(response.read())
     except UrlHTTPError as exc:
         raise _ComfyUIError(f"ComfyUI 입력 이미지 업로드가 실패했습니다. (HTTP {exc.code})") from exc
@@ -1403,7 +1408,7 @@ def _request_json(method: str, path: str, payload: dict[str, Any] | None = None)
         method=method,
     )
     try:
-        with urlopen(request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
             decoded = json.loads(response.read())
     except UrlHTTPError as exc:
         raise _ComfyUIError(f"ComfyUI 요청이 실패했습니다. (HTTP {exc.code})") from exc
@@ -1422,7 +1427,7 @@ def cancel_comfy_generation(prompt_id: str) -> bool:
 def _request_bytes(path: str) -> tuple[bytes, str | None]:
     request = UrlRequest(_comfy_url(path), method="GET")
     try:
-        with urlopen(request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, request, timeout=_COMFYUI_TIMEOUT_SECONDS) as response:
             return response.read(), response.headers.get_content_type()
     except UrlHTTPError as exc:
         raise _ComfyUIError(f"ComfyUI 이미지 요청이 실패했습니다. (HTTP {exc.code})") from exc
@@ -1604,7 +1609,7 @@ def _request_vllm_json(payload: dict[str, Any], *, timeout_seconds: int = _VLLM_
         method="POST",
     )
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
+        with timed_urlopen(urlopen, request, timeout=timeout_seconds) as response:
             decoded = json.loads(response.read())
     except UrlHTTPError as exc:
         raise _VLLMError(f"vLLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc

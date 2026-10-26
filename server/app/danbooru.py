@@ -15,6 +15,7 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from .latency import timed_urlopen
 from .auth import UserResponse, current_user
 from .configs.constants import settings
 from .database import get_connection
@@ -288,7 +289,7 @@ def _request_embeddings(texts: Sequence[str]) -> list[list[float]]:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=120) as response:
+        with timed_urlopen(urlopen, request, timeout=120) as response:
             decoded = json.loads(response.read())
     except UrlHTTPError as exc:
         raise DanbooruError(f"임베딩 모델 요청이 실패했습니다. (HTTP {exc.code})") from exc

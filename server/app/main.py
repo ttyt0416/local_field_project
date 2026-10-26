@@ -21,6 +21,7 @@ from .animadex import router as animadex_router
 from .gelbooru import router as gelbooru_router
 from .download_tokens import router as download_tokens_router
 from .saved_prompts import router as saved_prompts_router
+from .latency import ApiTimingMiddleware
 from .generation_worker import run_generation_reconciler
 from .generations import router as generations_router
 from .hardware import router as hardware_router
@@ -139,6 +140,36 @@ def client_api_error(payload: ClientApiError, request: Request,
                      error_details={"source": "browser", **payload.model_dump(mode="json")})
 
 
+class ClientApiTiming(BaseModel):
+    request_id: uuid.UUID
+    method: str = Field(min_length=1, max_length=16)
+    api_path: str = Field(min_length=1, max_length=65536)
+    page_path: str = Field(max_length=65536)
+    requested_at: datetime
+    finished_at: datetime | None = None
+    headers_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    first_byte_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    duration_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    status_code: int = Field(default=0, ge=0, le=599)
+    outcome: Literal["in_progress", "completed", "http_error", "error", "cancelled", "timeout"]
+    visitor_id: uuid.UUID | None = None
+    session_id: uuid.UUID | None = None
+
+
+@app.post("/web/api-timings", status_code=204)
+def client_api_timing(payload: ClientApiTiming, request: Request,
+                      user_id: uuid.UUID | None = Depends(telemetry_user)) -> None:
+    record_api_call(method=payload.method, path=payload.api_path, status_code=payload.status_code,
+                    client_ip=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent"), user_id=user_id,
+                    source="browser", request_id=payload.request_id, requested_at=payload.requested_at,
+                    finished_at=payload.finished_at, headers_ms=payload.headers_ms,
+                    first_byte_ms=payload.first_byte_ms, duration_ms=payload.duration_ms,
+                    outcome=payload.outcome,
+                    timing_context={"page_path": payload.page_path, "visitor_id": payload.visitor_id,
+                                    "session_id": payload.session_id})
+
+
 @app.exception_handler(StarletteHTTPException)
 async def audit_handled_exception(request: Request, error: StarletteHTTPException):
     request.state.audit_error = error
@@ -159,6 +190,7 @@ async def audit_api_requests(request: Request, call_next: Any):
         "method": request.method, "path": request.url.path,
         "client_ip": request.client.host if request.client else None,
         "user_agent": request.headers.get("user-agent"), "user_id": telemetry_user(request),
+        "request_id": getattr(request.state, "api_request_id", None),
     }
     context_token = request_context.set(metadata)
     try:
@@ -192,15 +224,10 @@ async def audit_api_requests(request: Request, call_next: Any):
                 provider_response=provider_response,
             )
 
-        record_api_call(
-            method=request.method,
-            path=request.url.path,
-            status_code=status_code,
-            client_ip=client_ip,
-            user_agent=user_agent,
-            user_id=user_id,
-        )
         request_context.reset(context_token)
+
+
+app.add_middleware(ApiTimingMiddleware)
 
 
 @app.get("/health")

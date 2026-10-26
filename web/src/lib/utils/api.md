@@ -7,3 +7,7 @@ HTTP 오류의 Ky HTTPError.data에 문자열 detail이 있으면 해당 사용�
 ## 동작·오류 기록
 
 apiJson/apiForm/apiBlob/apiDelete/streamSse는 사용자 안내 문구로 바꾸기 전에 reportApiError를 호출하고 원래 Error를 cause로 보존한다. 기록 완료는 기다리지 않는다.
+
+## API 레이턴시 기록
+
+timedRequest로 JSON/FormData/Blob/DELETE 요청의 헤더 도착 및 본문 소비·파싱 완료까지 시간을 측정한다. 기존 사용자 훅을 보존한다. SSE는 헤더·첫 청크를 즉시 기록하고 정상 종료/오류/취소 시 전체 시간을 반영한다.

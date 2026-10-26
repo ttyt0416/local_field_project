@@ -160,3 +160,69 @@ export function reportApiError(error: unknown, path: string, method: string) {
 		} else send('web/errors', payload);
 	} catch {}
 }
+
+export function startApiTiming(path: string, method: string, streaming = false) {
+	let start = 0;
+	let requestedAt = '';
+	let pagePath = '';
+	let requestId: string | undefined;
+	let headersMs: number | undefined;
+	let firstByteMs: number | undefined;
+	let statusCode = 0;
+	let finished = false;
+	try {
+		start = performance.now();
+		pagePath = `${location.pathname}${location.search}${location.hash}`;
+		requestedAt = new Date().toISOString();
+		requestId = crypto.randomUUID();
+	} catch {}
+	const elapsed = () => Math.max(0, performance.now() - start);
+	const record = (outcome: string, complete: boolean) => {
+		try {
+			if (!requestId) return;
+			send('web/api-timings', {
+				request_id: requestId, method: method.toUpperCase(), api_path: path,
+				page_path: pagePath,
+				requested_at: requestedAt, finished_at: complete ? new Date().toISOString() : undefined,
+				headers_ms: headersMs, first_byte_ms: firstByteMs,
+				duration_ms: complete ? elapsed() : undefined, status_code: statusCode, outcome,
+				visitor_id: storedId('localStorage', 'local-field.audit-visitor-id'),
+				session_id: storedId('sessionStorage', 'local-field.audit-session-id')
+			});
+		} catch {}
+	};
+	return {
+		headers(status: number) {
+			try {
+				if (finished) return;
+				statusCode = status;
+				if (headersMs === undefined) {
+					headersMs = elapsed();
+					if (streaming) record('in_progress', false);
+				}
+			} catch {}
+		},
+		firstByte() {
+			try {
+				if (firstByteMs === undefined && !finished) {
+					firstByteMs = elapsed();
+					if (streaming) record('in_progress', false);
+				}
+			} catch {}
+		},
+		finish() {
+			if (finished) return;
+			finished = true;
+			record(statusCode >= 400 ? 'http_error' : 'completed', true);
+		},
+		fail(error: unknown) {
+			if (finished) return;
+			finished = true;
+			try {
+				const original = error as { name?: string; response?: Response } | null;
+				statusCode = original?.response?.status ?? statusCode;
+				record(original?.name === 'AbortError' ? 'cancelled' : original?.name === 'TimeoutError' ? 'timeout' : statusCode >= 400 ? 'http_error' : 'error', true);
+			} catch {}
+		}
+	};
+}

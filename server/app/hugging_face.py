@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.request import Request
 
+from .latency import timed_urlopen
+
 
 class HuggingFaceError(RuntimeError):
     def __init__(self, message: str, status_code: int = 502) -> None:
@@ -101,7 +103,7 @@ def open_download(url: str, token: str, resume_from: int, opener: Any):
         if resume_from:
             headers["Range"] = f"bytes={resume_from}-"
         try:
-            return opener.open(Request(current, headers=headers), timeout=60)
+            return timed_urlopen(opener.open, Request(current, headers=headers), timeout=60)
         except HTTPError as exc:
             code = exc.code
             location = exc.headers.get("Location")

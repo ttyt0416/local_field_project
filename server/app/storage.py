@@ -11,6 +11,7 @@ from urllib.parse import urlunsplit
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
+from .latency import timed_urlopen
 from .configs.constants import settings
 
 _STORAGE_TIMEOUT_SECONDS = 30
@@ -83,7 +84,7 @@ def download_file(*, file_id: str, owner_id: str) -> tuple[bytes, str]:
     internal = urlsplit(settings.storage_url)
     url = urlunsplit((internal.scheme, internal.netloc, signed.path, signed.query, ""))
     try:
-        with urlopen(UrlRequest(url), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, UrlRequest(url), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
             return response.read(), response.headers.get_content_type()
     except UrlHTTPError as exc:
         raise StorageError(f"스토리지 파일 읽기가 실패했습니다. (HTTP {exc.code})", status_code=exc.code) from exc
@@ -97,7 +98,7 @@ def file_size(*, file_id: str, owner_id: str) -> int | None:
     internal = urlsplit(settings.storage_url)
     url = urlunsplit((internal.scheme, internal.netloc, signed.path, signed.query, ""))
     try:
-        with urlopen(UrlRequest(url, method="HEAD"), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, UrlRequest(url, method="HEAD"), timeout=_STORAGE_TIMEOUT_SECONDS) as response:
             value = response.headers.get("Content-Length")
             if value and value.isdigit():
                 return int(value)
@@ -109,7 +110,7 @@ def file_size(*, file_id: str, owner_id: str) -> int | None:
 
     try:
         request = UrlRequest(url, headers={"Range": "bytes=0-0"})
-        with urlopen(request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
             content_range = response.headers.get("Content-Range", "")
             total = content_range.rsplit("/", 1)[-1]
             if total.isdigit():
@@ -165,7 +166,7 @@ def _request_json(
         method=method,
     )
     try:
-        with urlopen(request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
+        with timed_urlopen(urlopen, request, timeout=_STORAGE_TIMEOUT_SECONDS) as response:
             body = response.read()
             if not body and allow_empty:
                 return {}

@@ -11,3 +11,7 @@ composedPath로 중첩 SVG와 open shadow DOM의 실제 요소를 찾는다. 실
 apiJson/apiForm/apiBlob/apiDelete/streamSse 및 외부 downloadMedia는 안내 문구 변환 전에 reportApiError로 원래 오류 종류·문구·스택·HTTP 상태·응답 본문을 전달한다. 의도적인 AbortError는 제외하고 기록 전송 자체는 재귀 기록하지 않는다.
 
 fetch는 void로 호출하고 완료를 기다리지 않는다. 작은 본문은 keepalive를 사용하며 60,000바이트 초과 기록은 브라우저 keepalive 제한을 피한다. 전송 타임아웃은 5초이며 실패는 기능으로 전파하지 않는다. 오프라인·탭 강제 종료·서버 큐 초과 등에서는 best effort 기록이 유실될 수 있다. 비공개 shadow root·브라우저 자체 미디어 UI 내부는 브라우저가 노출하는 호스트/미디어 이벤트까지만 식별할 수 있다.
+
+## API 레이턴시 기록
+
+startApiTiming은 performance.now로 headers_ms/first_byte_ms/duration_ms를 구분하고 시작 페이지·UTC 시각·UUID·세션을 보존한다. 정상/HTTP 오류/연결 오류/타임아웃/취소를 기록하며 종료 기록은 한 번만 보낸다. /web/api-timings 전송은 기다리지 않고 기존 send를 재사용한다. 기록 요청 자체를 브라우저에서 재측정하지 않아 재귀 전송을 막으며 서버에서는 해당 요청도 측정한다.

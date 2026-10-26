@@ -25,6 +25,7 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from .latency import api_user, timed_urlopen
 from .audit import exception_message, record_exception
 from .auth import UserResponse, current_user
 from .configs.constants import settings
@@ -937,7 +938,7 @@ def _fetch_civitai_payload(path: str, not_found_message: str) -> dict[str, Any]:
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
-        with (_NO_REDIRECT_OPENER.open(request, timeout=30) if token else urlopen(request, timeout=30)) as response:
+        with timed_urlopen(_NO_REDIRECT_OPENER.open if token else urlopen, request, timeout=30) as response:
             payload = json.loads(response.read())
     except UrlHTTPError as exc:
         if exc.code == 404:
@@ -1081,7 +1082,7 @@ def _open_download(url: str, token: str, resume_from: int):
             headers["Range"] = f"bytes={resume_from}-"
         request = UrlRequest(current_url, headers=headers)
         try:
-            return _NO_REDIRECT_OPENER.open(request, timeout=60)
+            return timed_urlopen(_NO_REDIRECT_OPENER.open, request, timeout=60)
         except UrlHTTPError as exc:
             if exc.code not in _DOWNLOAD_REDIRECT_CODES:
                 if exc.code in {401, 403}:
@@ -1224,7 +1225,8 @@ async def _run_model_download_worker(stop_event: asyncio.Event) -> None:
         job = await asyncio.to_thread(claim_model_download)
         if job is not None:
             try:
-                await asyncio.to_thread(_process_model_download, job)
+                with api_user(job["user_id"]):
+                    await asyncio.to_thread(_process_model_download, job)
             except _ModelDownloadCancelled:
                 continue
             except (CivitaiError, hf.HuggingFaceError, OSError, URLError, TimeoutError, ValueError) as exc:
