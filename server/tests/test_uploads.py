@@ -10,9 +10,58 @@ from starlette.datastructures import Headers
 from app import uploads
 from app.auth import UserResponse
 from app.media_editing import VideoMetadata
+from app.storage import StorageError
 
 
 class UploadsRouteTest(unittest.TestCase):
+    def test_source_reads_selected_generated_and_uploaded_media(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        for source_type, content_type in (
+            ("image_generation", "image/png"),
+            ("video_generation", "video/mp4"),
+            ("generation_input", "image/jpeg"),
+            ("edited_upload", "image/png"),
+        ):
+            with (
+                self.subTest(source_type=source_type),
+                patch.object(uploads, "get_media_asset", return_value=None) as uploaded_only,
+                patch.object(uploads, "get_reusable_media", return_value={"file_id": "selected-file", "content_type": content_type, "source_type": source_type}) as reusable,
+                patch.object(uploads, "storage_download_file", return_value=(b"source-bytes", content_type)) as download,
+            ):
+                result = uploads.upload_source("selected-file", user)
+
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.body, b"source-bytes")
+            self.assertEqual(result.media_type, content_type)
+            reusable.assert_called_once_with("selected-file", user.id)
+            download.assert_called_once_with(file_id="selected-file", owner_id=str(user.id))
+            uploaded_only.assert_not_called()
+
+    def test_source_rejects_missing_or_other_users_media_before_storage(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        with (
+            patch.object(uploads, "get_reusable_media", return_value=None) as reusable,
+            patch.object(uploads, "storage_download_file") as download,
+        ):
+            with self.assertRaises(uploads.HTTPException) as raised:
+                uploads.upload_source("other-users-file", user)
+
+        self.assertEqual(raised.exception.status_code, 404)
+        reusable.assert_called_once_with("other-users-file", user.id)
+        download.assert_not_called()
+
+    def test_source_reports_storage_failure_after_owned_generated_lookup(self) -> None:
+        user = UserResponse(id=uuid4(), username="tester")
+        with (
+            patch.object(uploads, "get_reusable_media", return_value={"file_id": "generated-file", "content_type": "image/png"}),
+            patch.object(uploads, "storage_download_file", side_effect=StorageError("storage unavailable")),
+        ):
+            with self.assertRaises(uploads.HTTPException) as raised:
+                uploads.upload_source("generated-file", user)
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(raised.exception.detail, "storage unavailable")
+
     def test_detail_returns_video_duration_and_size(self) -> None:
         user = UserResponse(id=uuid4(), username="tester")
         asset = {

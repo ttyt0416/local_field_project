@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from .audit import record_exception
 from .auth import UserResponse, current_user
-from .database import create_media_asset, delete_media_asset, get_media_asset, list_reusable_media
+from .database import create_media_asset, delete_media_asset, get_media_asset, get_reusable_media, list_reusable_media
 from .media_editing import MediaEditError, edit_video, probe_video
 from .storage import (
     StorageError,
@@ -97,7 +97,9 @@ def upload_source(
     file_id: str,
     user: UserResponse = Depends(current_user),
 ) -> Response:
-    asset = _owned_asset(file_id, user)
+    asset = get_reusable_media(file_id, user.id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="선택한 콘텐츠를 찾을 수 없습니다.")
     try:
         content, media_type = storage_download_file(file_id=file_id, owner_id=str(user.id))
     except StorageError as exc:
