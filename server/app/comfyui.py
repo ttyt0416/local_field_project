@@ -1504,13 +1504,22 @@ def _request_structured_object(
     schema: dict[str, Any],
     name: str,
     timeout_seconds: int = _VLLM_TIMEOUT_SECONDS,
+    image_inputs: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
+    user_content: str | list[dict[str, Any]] = user_prompt
+    if image_inputs:
+        user_content = [{"type": "text", "text": user_prompt}]
+        for label, image_url in image_inputs:
+            user_content.extend([
+                {"type": "text", "text": label},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ])
     response = _request_vllm_json(
         {
             "model": settings.vllm_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": user_content},
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,

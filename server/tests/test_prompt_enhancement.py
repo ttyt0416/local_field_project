@@ -145,6 +145,17 @@ class PromptEnhancementTest(unittest.TestCase):
 
         self.assertEqual(request.call_args.args[0]["model"], settings.vllm_model)
 
+    def test_structured_output_sends_labeled_image_parts_without_changing_text_requests(self) -> None:
+        response = {"choices": [{"finish_reason": "stop", "message": {"content": '{"shots":[]}'}}]}
+        with patch("app.comfyui._request_vllm_json", return_value=response) as request:
+            _request_structured_object(system_prompt="system", user_prompt="user", max_tokens=128, temperature=0.6, schema={}, name="video", image_inputs=[("<Picture 2>", "data:image/png;base64,preview")])
+        messages = request.call_args.args[0]["messages"]
+        self.assertEqual(messages[0], {"role": "system", "content": "system"})
+        self.assertEqual(messages[1]["content"], [
+            {"type": "text", "text": "user"}, {"type": "text", "text": "<Picture 2>"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,preview"}},
+        ])
+
     def test_structured_length_logs_safe_video_metadata(self) -> None:
         schema = {
             "type": "object",

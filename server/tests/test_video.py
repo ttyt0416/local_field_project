@@ -763,9 +763,9 @@ class VideoContractTest(unittest.TestCase):
         payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
         with patch.object(video, "_request_structured_object", return_value=plan):
             result = video._enhance_video_prompt(payload)
-        self.assertIn("[Shot 1] first style first camera first audio first text", result.improved_prompt.contents)
+        self.assertIn("[Shot 1] first style first timeline first camera first audio first text", result.improved_prompt.contents)
         self.assertNotIn("At 00:00:00", result.improved_prompt.contents)
-        self.assertNotIn("first timeline", result.improved_prompt.contents)
+        self.assertIn("first timeline", result.improved_prompt.contents)
         self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera second audio second text", result.improved_prompt.contents)
         self.assertNotIn("negative:", result.improved_prompt.contents)
 
@@ -795,7 +795,7 @@ class VideoContractTest(unittest.TestCase):
 
         contents = video._assemble_video_prompt(plan)
 
-        self.assertIn("[Shot 1] first style first camera", contents)
+        self.assertIn("[Shot 1] first style first timeline first camera", contents)
         self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera", contents)
         self.assertTrue(all(not line.endswith("N/A") for line in contents.splitlines() if line.startswith("[Shot ")))
         self.assertIn("overall_soundscape:\nN/A", contents)
@@ -823,17 +823,17 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(request.state.provider_response, provider_response)
 
-    def test_video_prompt_fields_use_fixed_328_character_limit_without_assembled_cap(self) -> None:
+    def test_video_prompt_gives_action_and_dialogue_larger_field_budgets(self) -> None:
         for duration in (1, 5, 10):
             schema = video._video_prompt_fields_schema(["en"], duration)
             shot_schema = schema["properties"]["shots"]
             self.assertEqual(
                 [shot_schema["items"]["properties"][field]["maxLength"] for field in video._VIDEO_PROMPT_SHOT_FIELDS],
-                [328] * len(video._VIDEO_PROMPT_SHOT_FIELDS),
+                [video._VIDEO_PROMPT_FIELD_LIMITS[field] for field in video._VIDEO_PROMPT_SHOT_FIELDS],
             )
             self.assertEqual(
                 [schema["properties"][field]["maxLength"] for field in video._VIDEO_PROMPT_OVERALL_FIELDS],
-                [328] * len(video._VIDEO_PROMPT_OVERALL_FIELDS),
+                [video._VIDEO_PROMPT_FIELD_LIMITS[field] for field in video._VIDEO_PROMPT_OVERALL_FIELDS],
             )
 
         plan = {
@@ -848,7 +848,7 @@ class VideoContractTest(unittest.TestCase):
         with self.assertRaisesRegex(video._VLLMError, "필수 shot field"):
             video._validate_video_prompt_fields(
                 {
-                    "shots": [{"start_ms": 0, **{field: "x" * (329 if field == "timeline" else 328) for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+                    "shots": [{"start_ms": 0, **{field: "x" * (1537 if field == "timeline" else 328) for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
                     **{field: "x" * 328 for field in video._VIDEO_PROMPT_OVERALL_FIELDS},
                 }
             )
@@ -893,8 +893,7 @@ class VideoContractTest(unittest.TestCase):
         expected = video._assemble_video_prompt(plan)
         self.assertEqual(result.improved_prompt.contents, expected)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.6)
-        self.assertEqual(video._VIDEO_PROMPT_MAX_TOKENS, 1024)
-        self.assertEqual(request.call_args.kwargs["max_tokens"], video._VIDEO_PROMPT_MAX_TOKENS)
+        self.assertEqual(request.call_args.kwargs["max_tokens"], 3072)
         self.assertEqual(request.call_args.kwargs["timeout_seconds"], video._VIDEO_PROMPT_TIMEOUT_SECONDS)
         self.assertEqual(request.call_args.kwargs["name"], "video_prompt_shots")
         schema = request.call_args.kwargs["schema"]
@@ -905,13 +904,13 @@ class VideoContractTest(unittest.TestCase):
         self.assertEqual(shots["items"]["additionalProperties"], False)
         self.assertEqual(
             shots["items"]["properties"]["style"]["pattern"],
-            video._video_prompt_pattern(languages),
+            r"^\S(?:[\s\S]*\S)?$",
         )
         self.assertNotIn("negative", schema["properties"])
         self.assertIn("Korean, English", request.call_args.kwargs["user_prompt"])
         self.assertNotIn("expert prompt designer for MiniMax H3", request.call_args.kwargs["system_prompt"])
         self.assertIn(
-            "Translate any user-supplied content written in a language that is not among the selected output languages",
+            "Preserve user-supplied dialogue, lyrics, proper names, and readable on-screen text verbatim",
             request.call_args.kwargs["system_prompt"],
         )
 
@@ -967,6 +966,9 @@ class VideoContractTest(unittest.TestCase):
             "shots": [{"start_ms": 0, **{field: "concrete 0s-1s instruction" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
             "overall_soundscape": "quiet room tone",
             "non_diegetic_music": "N/A",
+            "subject_definitions": "<Picture 1> anchors the opening frame.",
+            "summary": "[keyframe completion] Continue the preceding scene.",
+            "retention_analysis": "<Picture 1>: fully_preserved - preserve the opening composition.",
         }
         payload = video.VideoPromptEnhancementRequest(
             prompt="continue the scene",
@@ -1005,6 +1007,76 @@ class VideoContractTest(unittest.TestCase):
         effective = video._effective_video_prompt("i2v", request)
         self.assertIn("<Picture 1>: start-image reference", effective)
         self.assertIn(improved, effective)
+
+    def test_video_prompt_preserves_korean_dialogue_and_text_with_english_prose(self) -> None:
+        audio = 'The woman (S1) says: <d>[Korean] 안녕! 잘 지냈어?</d>'
+        text = 'The sign reads "어서 오세요!".'
+        plan = {
+            "shots": [{"start_ms": 0, "style": "A woman by a doorway.", "timeline": "She opens the door and waves.", "camera": "Static shot.", "audio": audio, "text": text}],
+            "overall_soundscape": "A door latch clicks.", "non_diegetic_music": "N/A",
+        }
+        payload = video.VideoPromptEnhancementRequest(prompt='여자가 "안녕! 잘 지냈어?"라고 말한다.', mode="i2v", prompt_output_languages=["en"])
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
+            contents = video._enhance_video_prompt(payload).improved_prompt.contents
+        self.assertIn(audio, contents)
+        self.assertIn(text, contents)
+        self.assertIn("She opens the door and waves.", contents)
+        schema = request.call_args.kwargs["schema"]["properties"]["shots"]["items"]["properties"]
+        for field, value in (("audio", audio), ("text", text)):
+            self.assertIsNotNone(re.fullmatch(schema[field]["pattern"], value))
+        self.assertIn("even when those languages are not selected", request.call_args.kwargs["system_prompt"])
+
+    def test_video_prompt_budget_grows_with_shots_language_and_reference_mode(self) -> None:
+        payload = video.VideoPromptEnhancementRequest(prompt="wave", mode="i2v")
+        baseline = video._video_prompt_token_budget(payload)
+        self.assertEqual(baseline, 2048)
+        self.assertGreater(video._video_prompt_token_budget(payload.model_copy(update={"segment_prompt": "[Scene 1]\nwave\n[Scene 2]\nleave"})), baseline)
+        self.assertGreater(video._video_prompt_token_budget(payload.model_copy(update={"mode": "r2v"})), baseline)
+        self.assertGreater(video._video_prompt_token_budget(payload.model_copy(update={"prompt_output_languages": ["ko"]})), baseline)
+        self.assertEqual(video._video_prompt_token_budget(payload.model_copy(update={"segment_prompt": "\n".join(f"[Scene {index}] wave" for index in range(20))})), 8192)
+
+    def test_video_prompt_images_have_labels_and_unseen_references_are_explicit(self) -> None:
+        image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8r8AAAAASUVORK5CYII="
+        payload = video.VideoPromptEnhancementRequest(prompt="raise a hand", mode="fl2v", duration=6.5, references=[
+            video.VideoPromptReference(kind="image", index=1, role="first_frame", filename="start.png", image_data_url=image),
+            video.VideoPromptReference(kind="image", index=2, role="last_frame", filename="end.png", image_data_url=image),
+        ])
+        plan = {"shots": [{"start_ms": 0, "style": "The person in <Picture 1>.", "timeline": "The person raises one hand into the pose of <Picture 2>.", "camera": "Static shot.", "audio": "N/A", "text": "N/A"}], "overall_soundscape": "Quiet room tone.", "non_diegetic_music": "N/A"}
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
+            contents = video._enhance_video_prompt(payload).improved_prompt.contents
+        self.assertEqual(request.call_args.kwargs["image_inputs"], [("<Picture 1>", image), ("<Picture 2>", image)])
+        self.assertIn('"role": "last_frame"', request.call_args.kwargs["user_prompt"])
+        self.assertIn("never claim to have inspected that frame", request.call_args.kwargs["system_prompt"])
+        self.assertTrue(contents.startswith("Frame alignment:"))
+        self.assertIn("6.50 seconds", contents)
+        self.assertIn("raises one hand", contents)
+        generation = video.VideoGenerationRequest(prompt="raise a hand", prompt_enhancement_enabled=True, improved_prompt=contents)
+        self.assertEqual(video._effective_video_prompt("fl2v", generation), contents)
+
+    def test_r2v_enhancement_has_six_sections_and_keeps_first_shot_action(self) -> None:
+        plan = {
+            "subject_definitions": "<Subject 1> is the person in <Picture 1>.",
+            "summary": "[reference generation] The person walks to the doorway.",
+            "retention_analysis": "<Subject 1>: fully_preserved - preserve identity and clothes.",
+            "shots": [{"start_ms": 0, "style": "Natural daylight.", "timeline": "<Subject 1> walks to the doorway.", "camera": "The camera tracks the person.", "audio": "Soft footsteps.", "text": "N/A"}],
+            "overall_soundscape": "Footsteps over quiet room tone.", "non_diegetic_music": "N/A",
+        }
+        payload = video.VideoPromptEnhancementRequest(prompt="walk to the doorway", mode="r2v", references=[video.VideoPromptReference(kind="image", index=1, role="identity")])
+        with patch.object(video, "_request_structured_object", return_value=plan) as request:
+            contents = video._enhance_video_prompt(payload).improved_prompt.contents
+        headings = re.findall(r"^(\w+):", contents, flags=re.MULTILINE)
+        self.assertEqual(headings, ["subject_definitions", "summary", "retention_analysis", "detailed_description", "overall_soundscape", "non_diegetic_music"])
+        self.assertIn("[Shot 1] <Subject 1> walks to the doorway.", contents)
+        self.assertIn('"preview": "unavailable"', request.call_args.kwargs["user_prompt"])
+        self.assertEqual(request.call_args.kwargs["image_inputs"], [])
+        self.assertIn("subject_definitions", request.call_args.kwargs["schema"]["required"])
+        with self.assertRaises(video._VLLMError):
+            video._validate_video_prompt_fields({key: value for key, value in plan.items() if key != "retention_analysis"}, "r2v")
+
+    def test_video_prompt_preview_rejects_remote_urls_and_invalid_image_data(self) -> None:
+        for value in ("https://example.com/image.png", "data:image/png;base64,aW52YWxpZA==", "data:image/png;base64,a"):
+            with self.assertRaises(ValidationError):
+                video.VideoPromptReference(kind="image", index=1, role="first_frame", image_data_url=value)
 
     def test_duplicate_video_prompt_languages_are_rejected(self) -> None:
         with self.assertRaises(ValidationError):

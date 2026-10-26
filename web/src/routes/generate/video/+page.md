@@ -16,3 +16,7 @@ I2V·FL2V·R2V source card는 12rem preview만 제공한다. Ref image/video/aud
 MOSS 생성물 소스 선택은 T2I 방식만 표시해 Qwen의 I2I/R2I 분류와 구분한다.
 
 전체 스타일·배경과 각 장면에 동영상 PromptLibrary를 연결한다. 저장 문장을 뒤에 추가할 때 setPrompt/updateScenePrompt를 통해 기존 개선 결과를 초기화해 변경된 원문과 맞지 않는 개선문이 남지 않도록 한다.
+
+프롬프트 개선은 선택한 기기·저장 이미지의 768픽셀 JPEG preview와 실제 참조 번호·역할을 전달한다. 저장 원본은 인증된 uploads source API로 읽고 모든 오류는 기존 개선 버튼의 try/catch와 toast로 표시한다. 영상·음성은 metadata만 전달한다. 후속 구간은 실제 continuation mode를 사용하고 생성 전 final frame은 preview 없이 Picture 1로 예약한다. 참조 선택·삭제 시 기존 개선문을 초기화한다. 설명 언어 선택은 원문 대사·가사·화면 글자의 언어를 바꾸지 않는다.
+
+이미지 미리보기를 구성하거나 vLLM 개선을 기다리는 동안 참조 선택·해제를 비활성화해 응답이 다른 입력 목록에 적용되지 않도록 한다.

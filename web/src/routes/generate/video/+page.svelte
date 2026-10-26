@@ -20,7 +20,8 @@
 	import VideoMedia from '../../../../components/media/video.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { videoGenerationStore, type VideoLibraryAsset, type VideoMode } from '$lib/stores/video-generation.svelte';
-	import { apiForm, apiJson } from '$lib/utils/api';
+	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
+	import { buildVideoPromptReferences, createVideoPromptPreview, type VideoPromptSource } from '$lib/utils/video-prompt-references';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
@@ -465,7 +466,7 @@
 	}
 
 	function openSelection(target: SelectionTarget) {
-		if (generating) return;
+		if (generating || isPromptEnhancing) return;
 		const imageTarget = target !== 'videos' && target !== 'audios';
 		selectionTarget = target;
 		selectionSource = imageTarget ? 'stored' : 'device';
@@ -576,6 +577,7 @@
 		const available = selectionMultiple ? Math.max(selectionMax - currentSelectionCount(), 0) : 1;
 		const files = Array.from(event.currentTarget.files ?? []).slice(0, available);
 		if (!files.length) return;
+		resetImprovedPrompts();
 		if (selectionTarget === 'first') {
 			firstFile = files[0];
 			selectedFirst = null;
@@ -594,16 +596,19 @@
 	}
 
 	function removeFirstSelection() {
+		resetImprovedPrompts();
 		firstFile = null;
 		selectedFirst = null;
 	}
 
 	function removeLastSelection() {
+		resetImprovedPrompts();
 		lastFile = null;
 		selectedLast = null;
 	}
 
 	function removeReferenceImage(index: number) {
+		resetImprovedPrompts();
 		if (index < selectedReferenceImages.length) {
 			selectedReferenceImages = selectedReferenceImages.filter((_, currentIndex) => currentIndex !== index);
 			return;
@@ -613,6 +618,7 @@
 	}
 
 	function removeReferenceVideo(index: number) {
+		resetImprovedPrompts();
 		if (index < selectedReferenceVideos.length) {
 			selectedReferenceVideos = selectedReferenceVideos.filter((_, currentIndex) => currentIndex !== index);
 			return;
@@ -622,6 +628,7 @@
 	}
 
 	function removeReferenceAudio(index: number) {
+		resetImprovedPrompts();
 		if (index < selectedReferenceAudios.length) {
 			selectedReferenceAudios = selectedReferenceAudios.filter((_, currentIndex) => currentIndex !== index);
 			return;
@@ -650,6 +657,7 @@
 
 	function applyStoredAssets(assetsToApply: StoredMediaAsset[]) {
 		if (!selectionTarget) return;
+		resetImprovedPrompts();
 		const existing = currentSelectionCount();
 		const available = selectionMultiple ? Math.max(selectionMax - existing, 0) : 1;
 		const existingIds = selectionTarget === 'images' ? selectedReferenceImages.map((asset) => asset.file_id) : selectionTarget === 'videos' ? selectedReferenceVideos.map((asset) => asset.file_id) : selectedReferenceAudios.map((asset) => asset.file_id);
@@ -690,18 +698,35 @@
 	}
 
 	async function requestPromptEnhancement(index: number, previousSegmentPrompt: string | null) {
+		function source(file: File | null, asset: VideoLibraryAsset | null): VideoPromptSource | null {
+			return file ? { filename: file.name, file } : asset ? { filename: asset.filename, fileId: asset.file_id } : null;
+		}
+		function sources(files: File[], assets: VideoLibraryAsset[]): VideoPromptSource[] {
+			return [...assets.map((asset) => ({ filename: asset.filename, fileId: asset.file_id })), ...files.map((file) => ({ filename: file.name, file }))];
+		}
+		const references = await buildVideoPromptReferences({
+			mode, continuationMode, segmentIndex: index,
+			first: source(firstFile, selectedFirst), last: source(lastFile, selectedLast),
+			images: sources(referenceImageFiles, selectedReferenceImages),
+			videos: sources(referenceVideoFiles, selectedReferenceVideos),
+			audios: sources(referenceAudioFiles, selectedReferenceAudios)
+		}, async (reference) => {
+			const content = reference.file ?? await apiBlob(`uploads/${encodeURIComponent(reference.fileId!)}/source`);
+			return createVideoPromptPreview(content);
+		});
 		const result = await apiJson<{ improved_prompt: { contents: string } }>('generation/video/enhance-prompt', {
 			method: 'POST',
 			timeout: 600_000,
 			json: {
 				prompt: prompt.trim(),
 				segment_prompt: serializeSegmentScenes(segmentScenes[index]),
-				mode: index === 0 ? mode : 'r2v',
+				mode: index === 0 ? mode : continuationMode,
 				duration: segmentDuration(index),
 				segment_index: index,
 				segment_count: segmentCount,
 				previous_segment_prompt: previousSegmentPrompt,
-				prompt_output_languages: promptOutputLanguages
+				prompt_output_languages: promptOutputLanguages,
+				references
 			}
 		});
 		return normalizeVideoReferenceMarkers(result.improved_prompt.contents);
@@ -1194,11 +1219,11 @@
 
 						{#if mode === 'i2v'}
 							<div class="space-y-3">
-								<OutlinedButton class="w-full" onclick={() => openSelection('first')}><HardDrive size={16} />시작 이미지 선택</OutlinedButton>
+								<OutlinedButton disabled={isPromptEnhancing || generating} class="w-full" onclick={() => openSelection('first')}><HardDrive size={16} />시작 이미지 선택</OutlinedButton>
 								{#if firstFile || selectedFirst?.url}
 									<div class="grid grid-cols-2 gap-3">
 										<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-											<IconOutlinedButton variant="filled" ariaLabel="시작 이미지 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
+											<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel="시작 이미지 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
 												<X size={15} strokeWidth={2} />
 											</IconOutlinedButton>
 											{#if firstFile}
@@ -1215,10 +1240,10 @@
 							<div class="space-y-4">
 								<div class="grid grid-cols-2 gap-4">
 									<div class="space-y-3">
-										<OutlinedButton class="w-full" onclick={() => openSelection('first')}><HardDrive size={16} />첫 프레임 선택</OutlinedButton>
+										<OutlinedButton disabled={isPromptEnhancing || generating} class="w-full" onclick={() => openSelection('first')}><HardDrive size={16} />첫 프레임 선택</OutlinedButton>
 										{#if firstFile || selectedFirst?.url}
 											<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-												<IconOutlinedButton variant="filled" ariaLabel="첫 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
+												<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel="첫 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeFirstSelection}>
 													<X size={15} strokeWidth={2} />
 												</IconOutlinedButton>
 												{#if firstFile}
@@ -1231,10 +1256,10 @@
 										{/if}
 									</div>
 									<div class="space-y-3">
-										<OutlinedButton class="w-full" onclick={() => openSelection('last')}><HardDrive size={16} />마지막 프레임 선택</OutlinedButton>
+										<OutlinedButton disabled={isPromptEnhancing || generating} class="w-full" onclick={() => openSelection('last')}><HardDrive size={16} />마지막 프레임 선택</OutlinedButton>
 										{#if lastFile || selectedLast?.url}
 											<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-												<IconOutlinedButton variant="filled" ariaLabel="마지막 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeLastSelection}>
+												<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel="마지막 프레임 선택 해제" class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={removeLastSelection}>
 													<X size={15} strokeWidth={2} />
 												</IconOutlinedButton>
 												{#if lastFile}
@@ -1251,12 +1276,12 @@
 						{:else}
 							<div class="space-y-5">
 								<div class="space-y-3">
-									<OutlinedButton class="w-full" onclick={() => openSelection('images')}><HardDrive size={16} />참조 이미지 추가</OutlinedButton>
+									<OutlinedButton disabled={isPromptEnhancing || generating} class="w-full" onclick={() => openSelection('images')}><HardDrive size={16} />참조 이미지 추가</OutlinedButton>
 									{#if selectedReferenceImages.length + referenceImageFiles.length > 0}
 										<div class="grid grid-cols-2 gap-3">
 											{#each selectedReferenceImages as asset, index (asset.file_id)}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton variant="filled" ariaLabel={`참조 이미지 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(index)}>
+													<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel={`참조 이미지 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													{#if asset.url}
@@ -1269,7 +1294,7 @@
 											{/each}
 											{#each referenceImageFiles as file, index}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton variant="filled" ariaLabel={`참조 이미지 ${selectedReferenceImages.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(selectedReferenceImages.length + index)}>
+													<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel={`참조 이미지 ${selectedReferenceImages.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceImage(selectedReferenceImages.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<ImageMedia source={file} sourceType="local" alt={`참조 이미지 ${selectedReferenceImages.length + index + 1}`} class="h-48" />
@@ -1281,12 +1306,12 @@
 								</div>
 
 								<div class="space-y-3">
-									<OutlinedButton class="w-full" onclick={() => openSelection('videos')}><HardDrive size={16} />참조 동영상 추가</OutlinedButton>
+									<OutlinedButton disabled={isPromptEnhancing || generating} class="w-full" onclick={() => openSelection('videos')}><HardDrive size={16} />참조 동영상 추가</OutlinedButton>
 									{#if selectedReferenceVideos.length + referenceVideoFiles.length > 0}
 										<div class="grid grid-cols-2 gap-3">
 											{#each selectedReferenceVideos as asset, index (asset.file_id)}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton variant="filled" ariaLabel={`참조 동영상 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(index)}>
+													<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel={`참조 동영상 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													{#if asset.url}
@@ -1299,7 +1324,7 @@
 											{/each}
 											{#each referenceVideoFiles as file, index}
 												<div class="relative overflow-hidden rounded-xl border border-border bg-muted">
-													<IconOutlinedButton variant="filled" ariaLabel={`참조 동영상 ${selectedReferenceVideos.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(selectedReferenceVideos.length + index)}>
+													<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel={`참조 동영상 ${selectedReferenceVideos.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceVideo(selectedReferenceVideos.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<VideoMedia source={file} preview={false} muted={true} class="h-48 [&>video]:h-full" />
@@ -1311,12 +1336,12 @@
 								</div>
 
 								<div class="space-y-3">
-									<OutlinedButton class="w-full" onclick={() => openSelection('audios')}><HardDrive size={16} />참조 오디오 추가</OutlinedButton>
+									<OutlinedButton disabled={isPromptEnhancing || generating} class="w-full" onclick={() => openSelection('audios')}><HardDrive size={16} />참조 오디오 추가</OutlinedButton>
 									{#if selectedReferenceAudios.length + referenceAudioFiles.length > 0}
 										<div class="grid grid-cols-2 gap-3">
 											{#each selectedReferenceAudios as _asset, index ( _asset.file_id)}
 												<div class="relative flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-border bg-primary/5 p-3 text-center">
-													<IconOutlinedButton variant="filled" ariaLabel={`참조 오디오 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(index)}>
+													<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel={`참조 오디오 ${index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<AudioLines size={34} class="text-primary" />
@@ -1325,7 +1350,7 @@
 											{/each}
 											{#each referenceAudioFiles as _file, index}
 												<div class="relative flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border border-border bg-primary/5 p-3 text-center">
-													<IconOutlinedButton variant="filled" ariaLabel={`참조 오디오 ${selectedReferenceAudios.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(selectedReferenceAudios.length + index)}>
+													<IconOutlinedButton disabled={isPromptEnhancing || generating} variant="filled" ariaLabel={`참조 오디오 ${selectedReferenceAudios.length + index + 1} 선택 해제`} class="absolute right-2 top-2 z-10 size-8 bg-card/90" onclick={() => removeReferenceAudio(selectedReferenceAudios.length + index)}>
 														<X size={15} strokeWidth={2} />
 													</IconOutlinedButton>
 													<AudioLines size={34} class="text-primary" />
