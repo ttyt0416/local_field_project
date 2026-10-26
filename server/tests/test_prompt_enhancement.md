@@ -1,5 +1,3 @@
-# Prompt enhancement tests
+# 이미지 프롬프트 개선 검증
 
-Image prompt enhancement의 Anima natural-language and tag calls, Illustrious tag call, Krea2 natural-language call이 모두 `temperature=0.6`을 사용하는지 검증한다. Structured output character pattern과 safe length-exhaustion telemetry contract도 검증한다.
-
-제거된 Krea 프롬프트 강화 테스트를 Qwen 편집 경로 검증으로 대체한다. Qwen은 별도 vLLM 요청 대신 생성 그래프의 로컬 I2I 프롬프트 강화 모델을 사용한다.
+Anima·MOSS는 같은 vLLM 자연어+Danbooru 태그 경로와 temperature 0.6을 사용하고 Illustrious는 검증된 태그만 반환하는지 확인한다. Qwen은 이미지 편집용 시스템 지시와 자연어 전용 structured output을 사용하며 태그 검색을 호출하지 않는다. 한국어·문장부호·줄바꿈이 공통 vLLM JSON 응답 파싱을 통과하는지 검증한다. 기존 기본 문자 패턴, 공유 vLLM 모델과 길이 제한 진단 계약도 유지한다.

@@ -20,6 +20,7 @@
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
+	import { enhanceImagePrompt } from '$lib/utils/prompt-enhancement';
 	import { formatElapsedSeconds, formatFileSize } from '$lib/utils/generation';
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 	import { imageGenerationModeTabs, imageGenerationFamilyTabs as imageModelFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
@@ -28,7 +29,6 @@
 	type ImageFamilyTab = ImageFamily;
 	type ImageDimensions = { width: number; height: number };
 	type ImageOptions = {
-		prompt_enhancer_available?: boolean;
 		checkpoints: string[];
 		loras: string[];
 		embeddings: string[];
@@ -138,7 +138,10 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	let presetSuccess = $state('');
 	let positivePromptPrefix = $state('');
 	let prompt = $state('');
-	let promptEnhancementEnabled = $state(true);
+	let promptEnhancementEnabled = $state(false);
+	let improvedPrompt = $state('');
+	let enhancingPrompt = $state(false);
+	let promptEnhancementError = $state('');
 	let negativePromptPrefix = $state('');
 	let negativePrompt = $state('');
 	let checkpoint = $state('');
@@ -288,7 +291,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 	function applyGenerationParameters(parameters: ImageGenerationParameters) {
 		if (parameters.generation_mode !== 'i2i' || (parameters.model_family && parameters.model_family !== family)) return;
-		promptEnhancementEnabled = parameters.prompt_enhancement_enabled ?? true;
+		promptEnhancementEnabled = parameters.prompt_enhancement_enabled ?? false;
+		improvedPrompt = parameters.improved_prompt ?? '';
 		positivePromptPrefix = parameters.positive_prompt_prefix ?? '';
 		prompt = parameters.prompt;
 		negativePromptPrefix = parameters.negative_prompt_prefix ?? '';
@@ -314,7 +318,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 	function imagePresetInitialValues(): PresetValues {
 		return {
-			...(family === 'qwen_image_2_1' ? { prompt_enhancement_enabled: promptEnhancementEnabled } : {}),
+			prompt_enhancement_enabled: promptEnhancementEnabled,
+			...(improvedPrompt.trim() ? { improved_prompt: improvedPrompt.trim() } : {}),
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
 			negative_prompt_prefix: family === 'qwen_image_2_1' ? '' : negativePromptPrefix.trim(),
@@ -355,9 +360,13 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 	function applyPreset(preset: Preset, announce = false) {
 		const values = preset.values;
-		if (family === 'qwen_image_2_1' && values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
+		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
+		if (values.improved_prompt !== undefined) improvedPrompt = values.improved_prompt;
 		if (values.positive_prompt_prefix !== undefined) positivePromptPrefix = values.positive_prompt_prefix;
-		if (values.prompt !== undefined) prompt = values.prompt;
+		if (values.prompt !== undefined) {
+			prompt = values.prompt;
+			improvedPrompt = values.improved_prompt ?? '';
+		}
 		if (values.negative_prompt_prefix !== undefined) negativePromptPrefix = values.negative_prompt_prefix;
 		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
 		if (values.checkpoint !== undefined && options.checkpoints.includes(values.checkpoint)) checkpoint = values.checkpoint;
@@ -649,13 +658,33 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			generationError = 'Embedding을 추가하면 프롬프트 길이 제한을 초과합니다.';
 			return;
 		}
-		if (embeddingTarget === 'positive') prompt = next;
+		if (embeddingTarget === 'positive') { prompt = next; improvedPrompt = ''; }
 		else negativePrompt = next;
 		embeddingModalOpen = false;
 	}
 
+	async function enhancePrompt() {
+		if (enhancingPrompt || generating) return;
+		promptEnhancementError = '';
+		if (!prompt.trim()) {
+			promptEnhancementError = '개선할 프롬프트를 입력해 주세요.';
+			return;
+		}
+		enhancingPrompt = true;
+		try {
+			const original = prompt.trim();
+			const improved = await enhanceImagePrompt(family, original);
+			if (prompt.trim() === original) improvedPrompt = improved;
+		} catch (error) {
+			promptEnhancementError = getErrorMessage(error);
+		} finally {
+			enhancingPrompt = false;
+		}
+	}
+
 	function validateInputs() {
-		if (family === 'qwen_image_2_1' && promptEnhancementEnabled && !options.prompt_enhancer_available) return 'Qwen 프롬프트 강화 모델을 준비하거나 프롬프트 강화를 꺼 주세요.';
+		if (enhancingPrompt) return '프롬프트 개선이 끝난 뒤 시도해 주세요.';
+		if (promptEnhancementEnabled && !improvedPrompt.trim()) return '개선된 프롬프트를 먼저 생성해 주세요.';
 		if (optionsLoading) return '모델 목록을 불러오는 중입니다.';
 		if (optionsError) return '모델 목록을 다시 불러온 뒤 시도해 주세요.';
 		if (!sourceFile && !sourceFileId) return '변환할 소스 이미지를 선택해 주세요.';
@@ -720,7 +749,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
         const references = isReferenceEdit ? referenceImages.map(imageSource) : [];
 		form.append('payload' , JSON.stringify({
 			model_family: requestFamily,
-			prompt_enhancement_enabled: family === 'qwen_image_2_1' && promptEnhancementEnabled,
+			prompt_enhancement_enabled: promptEnhancementEnabled,
+			improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
 			source,
 			references,
 			positive_prompt_prefix: positivePromptPrefix.trim(),
@@ -975,13 +1005,24 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 								<label for="i2i-prompt" class="text-sm font-medium">{isReferenceEdit ? '수정 지시' : '긍정 프롬프트'}</label>
 								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
 							</div>
-							<textarea id="i2i-prompt" bind:value={prompt} rows="5" maxlength="5000" required disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
-							<PromptLibrary kind="image" value={prompt} disabled={generating} onchange={(value) => (prompt = value)} />
-                            {#if family === 'qwen_image_2_1'}
-                                <label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-3 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} disabled={generating} class="size-4 accent-primary" /><span>LLM 프롬프트 강화</span></label>
-                                <p class="text-xs leading-5 text-muted-foreground">원본과 참조를 함께 읽어 수정 지시를 구체화합니다. 생성 시간이 추가되며, 끄면 입력한 지시를 그대로 사용합니다.</p>
-                                {#if promptEnhancementEnabled && !options.prompt_enhancer_available}<p class="text-xs text-amber-600" role="status">프롬프트 강화 모델을 준비 중입니다.</p>{/if}
-                            {/if}
+							<textarea id="i2i-prompt" bind:value={prompt} oninput={() => (improvedPrompt = '')} rows="5" maxlength="5000" required disabled={generating || enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+							<PromptLibrary kind="image" value={prompt} disabled={generating || enhancingPrompt} onchange={(value) => { prompt = value; improvedPrompt = ''; }} />
+							<div class="flex flex-wrap items-center gap-2">
+								<label for="i2i-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground">
+									<input id="i2i-prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} disabled={generating || enhancingPrompt} class="size-4 accent-primary" />
+									<span>프롬프트 개선</span><span>{promptEnhancementEnabled ? 'ON' : 'OFF'}</span>
+								</label>
+								<OutlinedButton type="button" loading={enhancingPrompt} disabled={generating || !prompt.trim() || !promptEnhancementEnabled} class="min-h-9 px-3 text-xs" onclick={() => void enhancePrompt()}>
+									<Sparkles size={14} strokeWidth={1.9} /><span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
+								</OutlinedButton>
+							</div>
+							{#if family === 'qwen_image_2_1'}<p class="text-xs leading-5 text-muted-foreground">수정 지시를 자연어로 다듬습니다. 원본·참조 이미지는 생성 단계에서 반영됩니다.</p>{/if}
+							{#if promptEnhancementEnabled}
+								<label class="block space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3" for="i2i-improved-prompt">
+									<span class="text-sm font-medium">개선된 프롬프트</span>
+									<textarea id="i2i-improved-prompt" bind:value={improvedPrompt} rows="5" disabled={generating || enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+								</label>
+							{/if}
 						</div>
 
 						<div class="space-y-2">
@@ -1069,7 +1110,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 						</div>
 
 						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
-							<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || Boolean(optionsError) || (sourceFile ? sourceMetadataLoading || !sourceDimensions : !sourceFileId) || !checkpoint || !samplerName || !scheduler} class="w-full">
+							<PrimaryButton type="submit" loading={generating} disabled={enhancingPrompt || optionsLoading || Boolean(optionsError) || (sourceFile ? sourceMetadataLoading || !sourceDimensions : !sourceFileId) || !checkpoint || !samplerName || !scheduler} class="w-full">
 								<Sparkles size={17} strokeWidth={1.9} />
 								<span>{uploading ? '소스 이미지 업로드 중' : generating ? '이미지 변환 중' : '이미지 변환'}</span>
 							</PrimaryButton>
@@ -1224,6 +1265,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		<div class="fixed right-4 top-4 z-50"><Toast state="positive" title="프리셋" message={presetSuccess} onclose={() => (presetSuccess = '')} /></div>
 	{:else if sourceError}
 		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="소스 이미지 확인 실패" message={sourceError} onclose={() => (sourceError = '')} /></div>
+	{:else if promptEnhancementError}
+		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="프롬프트 개선 실패" message={promptEnhancementError} onclose={() => (promptEnhancementError = '')} /></div>
 	{:else if generationError}
 		<div class="fixed right-4 top-4 z-50"><Toast state="negative" title="이미지 변환 실패" message={generationError} onclose={() => (generationError = '')} /></div>
 	{:else if successMessage}

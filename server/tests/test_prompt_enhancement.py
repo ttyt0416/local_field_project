@@ -1,7 +1,7 @@
+import json
 import unittest
 from unittest.mock import patch
 
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.configs.constants import DEFAULT_VLLM_MODEL, settings
@@ -15,7 +15,7 @@ from app.comfyui import (
     _request_structured_object,
     _VLLMError,
 )
-from app.prompts import IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT, IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT
+from app.prompts import IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT, IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT, IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT
 
 
 class PromptEnhancementTest(unittest.TestCase):
@@ -97,12 +97,35 @@ class PromptEnhancementTest(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["system_prompt"], IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT)
         self.assertEqual(request.call_args.kwargs["temperature"], 0.6)
 
-    def test_qwen_edit_enhancement_is_deferred_to_local_comfy_llm(self) -> None:
-        with patch("app.comfyui._request_structured_content") as request:
-            with self.assertRaises(HTTPException) as caught:
-                _enhance_prompt("a red apple", "qwen_image_2_1")
-        self.assertEqual(caught.exception.status_code, 422)
-        request.assert_not_called()
+    def test_moss_enhancement_uses_anima_tags_and_natural_language(self) -> None:
+        with (
+            patch("app.comfyui.search_danbooru_tags", return_value=["solo", "still_life"]),
+            patch("app.comfyui._request_structured_content", side_effect=["soft studio lighting", "solo, still_life"]) as request,
+            patch("app.comfyui.validate_danbooru_tags", return_value=["solo", "still_life"]),
+        ):
+            result = _enhance_prompt("a red apple", "moss")
+        self.assertEqual(result.improved_prompt.contents, "solo, still_life, soft studio lighting")
+        self.assertEqual(request.call_args_list[0].kwargs["system_prompt"], IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT)
+        self.assertEqual(request.call_args_list[1].kwargs["system_prompt"], IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT)
+
+    def test_qwen_edit_enhancement_uses_natural_language_without_tag_lookup(self) -> None:
+        with (
+            patch("app.comfyui._request_structured_content", return_value='배경만 바꾸고 "안녕!" 문구는 유지하세요.') as request,
+            patch("app.comfyui.search_danbooru_tags") as tags,
+        ):
+            result = _enhance_prompt("배경만 변경", "qwen_image_2_1")
+        self.assertEqual(result.improved_prompt.contents, '배경만 바꾸고 "안녕!" 문구는 유지하세요.')
+        self.assertEqual(request.call_args.kwargs["system_prompt"], IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT)
+        self.assertEqual(request.call_args.kwargs["pattern"], r"^[\s\S]+$")
+        tags.assert_not_called()
+
+    def test_qwen_natural_language_accepts_unicode_punctuation_and_newlines(self) -> None:
+        content = '배경만 바꾸세요.\n인물과 "안녕!"은 유지하세요.'
+        response = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"contents": content})}}]}
+        with patch("app.comfyui._request_vllm_json", return_value=response) as request:
+            result = _enhance_prompt("배경 변경", "qwen_image_2_1")
+        self.assertEqual(result.improved_prompt.contents, content)
+        self.assertEqual(request.call_args.args[0]["model"], settings.vllm_model)
 
     def test_structured_output_uses_the_allowed_character_pattern(self) -> None:
         with patch(

@@ -50,6 +50,13 @@ class MossWorkflowTest(unittest.TestCase):
         self.assertEqual(graph["14"]["class_type"], "SkipLayerGuidanceDiTSimple")
         self.assertFalse({"LoadImage", "ReferenceLatent", "UC_MOSSImageEditPatcher"} & {node["class_type"] for node in graph.values()})
 
+    def test_improved_anima_style_prompt_preserves_moss_layout_text(self):
+        settings = MossSettings(layout_enabled=True, elements=[{"kind": "text", "text": "HELLO", "x": 0, "y": 0, "width": 0.5, "height": 0.5}])
+        graph, _ = comfyui._build_prompt(self.request(moss=settings, prompt_enhancement_enabled=True, improved_prompt="poster, soft studio lighting"))
+        text = json.loads(graph["5"]["inputs"]["text"])
+        self.assertEqual(text["summary"]["caption"], "poster, soft studio lighting")
+        self.assertEqual(text["items"][0]["text"], "HELLO")
+
     def test_t2i_options_work_without_external_reference_package(self):
         def node(**inputs):
             return {"input": {"required": {key: [values] for key, values in inputs.items()}}}

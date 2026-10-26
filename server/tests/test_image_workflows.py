@@ -52,6 +52,20 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["7"]["class_type"], "EmptyLatentImage")
         self.assertEqual(workflow["8"]["inputs"]["denoise"], 1.0)
 
+    def test_i2i_anima_and_illustrious_use_improved_prompt_and_keep_denoise(self) -> None:
+        for family in ("anima", "illustrious"):
+            with self.subTest(family=family):
+                payload = comfyui.ImageToImageGenerationRequest(
+                    **{**self._request(family).model_dump(), "prompt_enhancement_enabled": True, "improved_prompt": "portrait, soft lighting", "positive_prompt_prefix": "masterpiece"},
+                    source={"file_index": 0}, denoise=0.55,
+                )
+                graph, _ = comfyui._build_prompt(payload, input_image="source.png", denoise=payload.denoise)
+                self.assertEqual(graph["5"]["inputs"]["text"], "masterpiece, portrait, soft lighting")
+                self.assertEqual(graph["8"]["inputs"]["denoise"], 0.55)
+                payload.prompt_enhancement_enabled = False
+                graph, _ = comfyui._build_prompt(payload, input_image="source.png", denoise=payload.denoise)
+                self.assertEqual(graph["5"]["inputs"]["text"], "masterpiece, 1girl, portrait")
+
     def test_image_request_defaults_to_an_empty_negative_prompt(self) -> None:
         payload = comfyui.ImageGenerationRequest(prompt="portrait", checkpoint="Anima/anima_aestheticV11.safetensors")
 

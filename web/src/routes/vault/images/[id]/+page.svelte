@@ -181,6 +181,7 @@
 			model_family: generation.model_family,
 			moss: generation.moss,
 			prompt_enhancement_enabled: generation.prompt_enhancement_enabled,
+			improved_prompt: generation.improved_prompt ?? undefined,
 			generation_mode: generation.generation_mode,
 			source_file_id: generation.source_file_id,
 			reference_images: generation.reference_images,
@@ -243,7 +244,8 @@
 			scheduler: generation.scheduler,
 			seed: String(generation.seed),
 			random_seed: false,
-			prompt_enhancement_enabled: generation.prompt_enhancement_enabled
+			prompt_enhancement_enabled: generation.prompt_enhancement_enabled,
+			improved_prompt: generation.improved_prompt ?? undefined
 		};
 	}
 

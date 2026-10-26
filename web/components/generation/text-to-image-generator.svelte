@@ -17,6 +17,7 @@
 	import SamplingSelectionModal from '../presets/sampling-selection-modal.svelte';
 	import { SERVER_URL } from '$lib/configs/constants';
 	import { apiJson } from '$lib/utils/api';
+	import { enhanceImagePrompt } from '$lib/utils/prompt-enhancement';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
@@ -267,13 +268,13 @@
 			generationError = 'Embedding을 추가하면 프롬프트 길이 제한을 초과합니다.';
 			return;
 		}
-		if (embeddingTarget === 'positive') prompt = next;
+		if (embeddingTarget === 'positive') { prompt = next; improvedPrompt = ''; }
 		else negativePrompt = next;
 		embeddingModalOpen = false;
 	}
 
 	function selectedPresetFieldCount() {
-		return presetFieldOptions.filter(({ key }) => (key === 'moss' ? modelFamily === 'moss' : key === 'prompt_enhancement' ? modelFamily !== 'moss' : true) && selectedPresetFields[key]).length;
+		return presetFieldOptions.filter(({ key }) => (key === 'moss' ? modelFamily === 'moss' : true) && selectedPresetFields[key]).length;
 	}
 
 	function setPresetField(key: PresetField, checked: boolean) {
@@ -338,7 +339,7 @@
 			values.random_seed = randomSeed;
 			if (!randomSeed && seed.trim()) values.seed = seed.trim();
 		}
-		if (modelFamily !== 'moss' && selectedPresetFields.prompt_enhancement) {
+		if (selectedPresetFields.prompt_enhancement) {
 			values.prompt_enhancement_enabled = promptEnhancementEnabled;
 			if (improvedPrompt.trim()) values.improved_prompt = improvedPrompt.trim();
 		}
@@ -393,10 +394,13 @@
 		const values = preset.values;
 		if (modelFamily === 'moss' && values.moss) moss = mossSettings(values.moss);
 		if (values.positive_prompt_prefix !== undefined) positivePromptPrefix = values.positive_prompt_prefix;
-		if (values.prompt !== undefined) prompt = values.prompt;
+		if (values.prompt !== undefined) {
+			prompt = values.prompt;
+			improvedPrompt = values.improved_prompt ?? '';
+		}
 		if (values.negative_prompt_prefix !== undefined) negativePromptPrefix = values.negative_prompt_prefix;
 		if (values.negative_prompt !== undefined) negativePrompt = values.negative_prompt;
-		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = modelFamily === 'moss' ? false : values.prompt_enhancement_enabled;
+		if (values.prompt_enhancement_enabled !== undefined) promptEnhancementEnabled = values.prompt_enhancement_enabled;
 		if (values.improved_prompt !== undefined) {
 			improvedPrompt = values.improved_prompt;
 		}
@@ -433,6 +437,8 @@
 		if (modelFamily === 'moss') moss = mossSettings(parameters.moss);
 		positivePromptPrefix = parameters.positive_prompt_prefix ?? '';
 		prompt = parameters.prompt;
+		promptEnhancementEnabled = parameters.prompt_enhancement_enabled ?? false;
+		improvedPrompt = parameters.improved_prompt ?? '';
 		negativePromptPrefix = parameters.negative_prompt_prefix ?? '';
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
@@ -628,6 +634,7 @@
 	}
 
 	async function enhancePrompt() {
+		if (enhancingPrompt || generating) return;
 		promptEnhancementError = '';
 		if (!prompt.trim()) {
 			promptEnhancementError = '개선할 프롬프트를 입력해 주세요.';
@@ -635,16 +642,9 @@
 		}
 		enhancingPrompt = true;
 		try {
-			const result = await apiJson<{
-				improved_prompt: { contents: string };
-			}>('generation/image/enhance-prompt', {
-				method: 'POST',
-				timeout: 600_000,
-				json: { model_family: modelFamily, prompt: prompt.trim() }
-			});
-			const resultPrompt = result.improved_prompt.contents.trim();
-			if (!resultPrompt) throw new Error('개선된 프롬프트가 비어 있습니다.');
-			improvedPrompt = resultPrompt;
+			const original = prompt.trim();
+			const improved = await enhanceImagePrompt(modelFamily, original);
+			if (prompt.trim() === original) improvedPrompt = improved;
 		} catch (error) {
 			promptEnhancementError = getErrorMessage(error);
 		} finally {
@@ -791,9 +791,8 @@
 								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
 								<div class="flex items-center gap-2">
 									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
-									{#if modelFamily !== 'moss'}
 									<label for="prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
-										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} class="peer sr-only" />
+										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} disabled={generating || enhancingPrompt} class="peer sr-only" />
 										<span>프롬프트 개선</span>
 										<span class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground peer-checked:bg-primary/10 peer-checked:text-primary">{promptEnhancementEnabled ? 'ON' : 'OFF'}</span>
 									</label>
@@ -807,10 +806,9 @@
 										<Sparkles size={14} strokeWidth={1.9} />
 										<span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
 									</OutlinedButton>
-									{/if}
 								</div>
 							</div>
-							<textarea id="prompt" bind:value={prompt} rows="5" required class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+							<textarea id="prompt" bind:value={prompt} oninput={() => (improvedPrompt = '')} rows="5" required disabled={generating || enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 							<PromptLibrary kind="image" value={prompt} disabled={generating || enhancingPrompt} onchange={(value) => { prompt = value; improvedPrompt = ''; }} />
 							{#if promptEnhancementEnabled}
 								<div class="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
@@ -1027,7 +1025,7 @@
 					<span class="text-xs text-muted-foreground">{selectedPresetFieldCount()}개 선택</span>
 				</div>
 				<div class="grid gap-2 sm:grid-cols-2">
-					{#each presetFieldOptions.filter(({ key }) => key === 'moss' ? modelFamily === 'moss' : key === 'prompt_enhancement' ? modelFamily !== 'moss' : true) as field}
+					{#each presetFieldOptions.filter(({ key }) => key === 'moss' ? modelFamily === 'moss' : true) as field}
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">
 							<input type="checkbox" checked={selectedPresetFields[field.key]} onchange={(event) => setPresetField(field.key, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" />
 							<span>{field.label}</span>

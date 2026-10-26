@@ -4,6 +4,7 @@ export type ImageGenerationParameters = {
 	model_family?: 'anima' | 'illustrious' | 'krea2' | 'moss' | 'qwen_image_2_1';
 	moss?: Partial<MossSettings>;
 	prompt_enhancement_enabled?: boolean;
+	improved_prompt?: string;
 	generation_mode?: 't2i' | 'i2i';
 	source_file_id?: string | null;
 	source_image_url?: string | null;

@@ -13,3 +13,5 @@ References:
 YuE2 music enhancement keeps Style concise (language, genre, vocals, BPM, instruments and production), excludes lyrics/ABC from Style, and keeps only singable words plus section tags in Lyrics. Short durations receive compact structures; explicit instrumental requests can return `[Instrumental]`.
 
 Music vLLM structured output: Style is `{language, genre, vocals, tempo_bpm, instruments, mood, production}`; Lyrics is `{sections: [{kind, lines}]}`. Extra keys, wrong types, tags/newlines in raw fields and unselected languages are rejected in server validation. The server orders Style fields, adds BPM, generates enum section tags and joins lyric lines/sections. The public response remains `{contents}` for editable UI proposals. Invalid provider output is attached to the existing error audit; no free-form fallback is used.
+
+Qwen Image 2.1의 vLLM 개선은 IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT를 사용한다. 자연어 수정 지시만 출력하고 원문 언어·읽을 텍스트·변경/유지 조건·참조 관계를 보존한다. 입력 이미지를 볼 수 없음을 명시해 내용을 지어내지 않도록 한다. 태그와 설명을 추가하지 않는다.

@@ -14,3 +14,5 @@ MOSS 재생성은 moss 설정을 함께 전달한다. 화면에서 기본값과 
 재생성 모델 family에 qwen_image_2_1을 허용하며 원본·참조 순서와 실행 파라미터를 I2I 페이지에 전달한다.
 
 prompt_enhancement_enabled를 원본·다중 참조와 함께 재생성 파라미터로 전달한다.
+
+improved_prompt를 선택 필드로 전달해 T2I·I2I 모두 개선 활성 상태와 본문을 함께 복원한다.

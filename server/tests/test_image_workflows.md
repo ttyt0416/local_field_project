@@ -8,3 +8,5 @@ Anima·Illustrious의 기존 loader·LoRA·I2I·prefix·source ownership 계약�
 
 
 Illustrious 체크포인트 미설치 상태에서도 옵션 조회가 성공하고, 설치된 LoRA·샘플러 목록은 유지하며 없는 체크포인트로 생성하면 422가 발생하는 회귀 검증을 포함한다.
+
+Anima·Illustrious I2I에서 개선 활성 시 Prefix+개선 본문을 사용하면서 denoise를 유지하고, 끄면 Prefix+원문으로 돌아가는지 검증한다.

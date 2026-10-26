@@ -40,6 +40,7 @@ from .generation_events import generation_event_broker, generation_key
 from .moss import MossSettings, layout_prompt as moss_layout_prompt
 from .prompts import (
     IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+    IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT,
@@ -64,8 +65,6 @@ _MAX_IMAGE_INPUT_SIZE = 50 * 1024 * 1024
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_SAMPLER = "er_sde"
 _DEFAULT_SCHEDULER = "simple"
-_QWEN21_PROMPT_ENHANCER = "folder://Qwen/PromptEnhancer/"
-_QWEN21_PE_NODES = ("TextGenerate", "BatchImagesNode", "ResizeAndPadImage", "StringCompare", "ComfySwitchNode")
 _QWEN21_TURBO_SCHEDULER = "qwen_2_1_turbo"
 _QWEN21_TURBO_SIGMAS = "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0"
 _EDIT_MODELS = {
@@ -137,8 +136,6 @@ class ImageGenerationRequest(BaseModel):
         if not isinstance(values, dict) or values.get("model_family") not in _EDIT_MODELS:
             return values
         values = dict(values)
-        if values["model_family"] == "qwen_image_2_1":
-            values.setdefault("prompt_enhancement_enabled", True)
         values.setdefault("cfg", 1.0)
         values.setdefault("steps", _EDIT_MODELS[values["model_family"]]["steps"])
         values.setdefault("sampler_name", "euler")
@@ -966,7 +963,7 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
     default_checkpoint = next(iter(checkpoints), "")
     return ImageGenerationOptions(
         model_family=model_family,
-        prompt_enhancer_available=model_family == "qwen_image_2_1" and bool(_folder_choices(data, "CLIPLoader", "clip_name", _QWEN21_PROMPT_ENHANCER)) and all(name in data for name in _QWEN21_PE_NODES),
+        prompt_enhancer_available=True,
         checkpoints=checkpoints,
         loras=loras,
         embeddings=embeddings,
@@ -1053,6 +1050,8 @@ def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list
 
 
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
+    if payload.prompt_enhancement_enabled:
+        _effective_positive_prompt(payload)
     family_name = {"anima": "Anima", "illustrious": "Illustrious", "moss": "MOSS", "qwen_image_2_1": "Qwen Image 2.1 Turbo"}[payload.model_family]
     if options.model_family != payload.model_family or payload.checkpoint not in options.checkpoints:
         raise HTTPException(status_code=422, detail=f"선택한 {family_name} 체크포인트를 찾을 수 없습니다.")
@@ -1076,8 +1075,6 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
     if payload.model_family == "qwen_image_2_1":
-        if payload.prompt_enhancement_enabled and not options.prompt_enhancer_available:
-            raise HTTPException(status_code=503, detail="Qwen 프롬프트 강화 모델이 준비되지 않았습니다. 다운로드 후 사용하거나 프롬프트 강화를 꺼 주세요.")
         if payload.cfg != 1 or payload.steps != 8 or payload.sampler_name != "euler" or payload.scheduler != _QWEN21_TURBO_SCHEDULER:
             raise HTTPException(status_code=422, detail="Qwen 2.1 Turbo는 공식 8스텝·CFG 1·Euler 설정을 사용합니다.")
     if payload.model_family in _EDIT_MODELS:
@@ -1098,7 +1095,7 @@ def _combined_prompt(prefix: str, prompt: str, label: str) -> str:
 
 def _effective_positive_prompt(payload: ImageGenerationRequest) -> str:
     base_prompt = payload.prompt.strip()
-    if not payload.prompt_enhancement_enabled or payload.model_family == "qwen_image_2_1":
+    if not payload.prompt_enhancement_enabled:
         return _combined_prompt(payload.positive_prompt_prefix, base_prompt, "긍정 프롬프트")
     improved_prompt = (payload.improved_prompt or "").strip()
     if not improved_prompt:
@@ -1318,25 +1315,6 @@ def _build_qwen21_edit_prompt(payload: ImageGenerationRequest, input_image: str,
         graph[load_id] = {"class_type": "LoadImage", "inputs": {"image": filename}}
         graph[scale_id] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": [load_id, 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 32}}
         graph["12"]["inputs"][f"images.image_{index}"] = [scale_id, 0]
-    if payload.prompt_enhancement_enabled:
-        graph["30"] = {"class_type": "CLIPLoader", "inputs": {"clip_name": _QWEN21_PROMPT_ENHANCER, "type": "qwen_image", "device": "default"}}
-        images = {}
-        for index in range(1, len(input_references) + 2):
-            pad_id = str(200 + index)
-            graph[pad_id] = {"class_type": "ResizeAndPadImage", "inputs": {"image": graph["12"]["inputs"][f"images.image_{index}"], "target_width": 1024, "target_height": 1024, "padding_color": "white", "interpolation": "lanczos"}}
-            images[f"images.image{index - 1}"] = [pad_id, 0]
-        graph["32"] = {"class_type": "BatchImagesNode", "inputs": images}
-        graph["31"] = {"class_type": "TextGenerate", "inputs": {
-            "clip": ["30", 0], "image": ["32", 0], "prompt": _effective_positive_prompt(payload),
-            "system_prompt": (Path(__file__).parent / "workflows" / "qwen21_edit_prompt_enhancer.txt").read_text(encoding="utf-8"),
-            "max_length": 4096, "sampling_mode": "on", "sampling_mode.temperature": 1.0,
-            "sampling_mode.top_k": 20, "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
-            "sampling_mode.repetition_penalty": 1.0, "sampling_mode.seed": seed,
-            "thinking": True, "use_default_template": True, "mtp": "off",
-        }}
-        graph["33"] = {"class_type": "StringCompare", "inputs": {"string_a": ["31", 0], "string_b": "", "mode": "Equal", "case_sensitive": True}}
-        graph["34"] = {"class_type": "ComfySwitchNode", "inputs": {"switch": ["33", 0], "on_true": _effective_positive_prompt(payload), "on_false": ["31", 0]}}
-        graph["12"]["inputs"]["prompt"] = ["34", 0]
     return graph, seed
 
 
@@ -1436,19 +1414,16 @@ def _request_bytes(path: str) -> tuple[bytes, str | None]:
 
 
 def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptEnhancementResponse:
-    if model_family == "moss":
-        raise HTTPException(status_code=422, detail="MOSS는 입력한 장면 설명과 레이아웃을 직접 사용합니다.")
-    if model_family == "qwen_image_2_1":
-        raise HTTPException(status_code=422, detail="Qwen 프롬프트 강화는 생성 시 원본·참조 이미지와 함께 실행됩니다.")
     prompt = prompt.strip()
-    if model_family in _EDIT_MODELS:
+    if model_family == "qwen_image_2_1":
         return PromptEnhancementResponse(
             improved_prompt=PromptEnhancementContent(
                 contents=_request_structured_content(
-                    system_prompt=IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+                    system_prompt=IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
                     user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
                     max_tokens=768,
                     temperature=0.6,
+                    pattern=r"^[\s\S]+$",
                 )
             )
         )
@@ -1460,7 +1435,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
             max_tokens=768,
             temperature=0.6,
         )
-        if model_family == "anima"
+        if model_family in {"anima", "moss"}
         else ""
     )
     raw_tags = _request_structured_content(

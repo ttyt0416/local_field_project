@@ -16,3 +16,5 @@ Qwen 2.1 Turbo 결과는 qwen_image_2_1 family로 표시하고 원본·참조 �
 이미지 기록의 prompt_enhancement_enabled를 프리셋과 재생성으로 전달한다.
 
 Qwen 생성 상세에 LLM 프롬프트 강화 사용 여부를 표시한다.
+
+공통 vLLM 개선 결과인 improved_prompt를 재생성 상태와 프리셋 초기값에 포함한다. 모든 이미지 family에서 원문과 개선 결과를 분리해 보존한다.

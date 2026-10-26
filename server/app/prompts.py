@@ -8,6 +8,17 @@ IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "If the input is already detailed, lightly polish it without changing its meaning."
 )
 
+IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
+    "You are an expert prompt editor for Qwen Image 2.1 image editing. "
+    "Rewrite the user's editing instruction as one concise, natural-language instruction. "
+    "Preserve the requested changes, subject identities, reference-image relationships, readable text, and constraints. "
+    "Clearly describe what to change and what to preserve. "
+    "You cannot see the source or reference images; never invent their contents. "
+    "Keep the user's language and exact quoted text. "
+    "Do not return Danbooru tags, negative prompts, explanations, headings, quotation wrappers, or markdown. "
+    "Return only the final editing instruction in prose."
+)
+
 IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT = (
     "You select Danbooru tags for an image-generation prompt. "
     "Return relevant comma-separated Danbooru tags from the supplied candidate list. "

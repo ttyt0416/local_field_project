@@ -79,25 +79,30 @@ class Qwen21WorkflowTest(unittest.TestCase):
                 asyncio.run(comfyui.create_image_to_image_generation(request.model_dump_json(), [], user))
             resolve.assert_not_called()
 
-    def test_prompt_enhancer_reads_all_references_with_official_thinking_settings(self):
-        request = self.request(prompt_enhancement_enabled=True)
-        self.assertEqual(comfyui._effective_positive_prompt(request), request.prompt)
+    def test_vllm_improved_prose_reaches_encoder_without_local_llm_nodes(self):
+        request = self.request(prompt_enhancement_enabled=True, improved_prompt="배경만 파란색으로 바꾸고 인물은 유지하세요.", positive_prompt_prefix="Keep the composition")
         graph, _ = comfyui._build_prompt(request, input_image="source.png", input_references=["style.png"])
-        self.assertEqual(graph["12"]["inputs"]["prompt"], ["34", 0])
-        self.assertEqual(graph["34"]["inputs"]["on_true"], request.prompt)
-        self.assertEqual(graph["34"]["inputs"]["on_false"], ["31", 0])
-        self.assertEqual(graph["33"]["inputs"]["string_b"], "")
-        self.assertEqual(graph["31"]["class_type"], "TextGenerate")
-        self.assertEqual(graph["30"]["inputs"]["clip_name"], "Qwen/PromptEnhancer/renamed.safetensors")
-        self.assertTrue(graph["31"]["inputs"]["thinking"])
-        self.assertEqual(graph["31"]["inputs"]["max_length"], 4096)
-        self.assertEqual(graph["31"]["inputs"]["sampling_mode.top_k"], 20)
-        self.assertEqual(graph["32"]["inputs"], {"images.image0": ["201", 0], "images.image1": ["202", 0]})
-        self.assertEqual(graph["201"]["inputs"]["image"], ["11", 0])
-        self.assertEqual(graph["202"]["inputs"]["image"], graph["12"]["inputs"]["images.image_2"])
+        self.assertEqual(graph["12"]["inputs"]["prompt"], "Keep the composition, 배경만 파란색으로 바꾸고 인물은 유지하세요.")
+        self.assertEqual(graph["12"]["inputs"]["images.image_1"], ["11", 0])
+        self.assertIn("images.image_2", graph["12"]["inputs"])
+        self.assertNotIn("TextGenerate", {node["class_type"] for node in graph.values()})
+        options = self.options()
+        self.assertTrue(options.prompt_enhancer_available)
+        comfyui._validate_model_choice(request, options)
+
+    def test_enabled_enhancement_requires_improved_prose(self):
         with self.assertRaises(HTTPException) as caught:
-            comfyui._validate_model_choice(request, self.options())
-        self.assertEqual(caught.exception.status_code, 503)
+            comfyui._build_prompt(self.request(prompt_enhancement_enabled=True), input_image="source.png")
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertIn("개선된 프롬프트", caught.exception.detail)
+
+    def test_missing_improvement_is_rejected_before_source_resolution(self):
+        request = self.request(prompt_enhancement_enabled=True)
+        with patch.object(comfyui, "_image_options", return_value=self.options()), patch.object(comfyui, "_resolve_image_source") as resolve:
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(comfyui.create_image_to_image_generation(request.model_dump_json(), [], UserResponse(id=uuid4(), username="tester")))
+        self.assertEqual(caught.exception.status_code, 422)
+        resolve.assert_not_called()
 
     def test_edit_requires_source_and_has_i2i_preset_namespace(self):
         with self.assertRaises(HTTPException):
