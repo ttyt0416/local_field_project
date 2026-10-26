@@ -26,7 +26,7 @@ class ThumbnailImportTest(unittest.TestCase):
         patcher = patch.dict('os.environ', {'ANIMADEX_DATA_DIR': temporary.name})
         patcher.start()
         self.addCleanup(patcher.stop)
-        audit = patch.object(assets, 'record_api_error')
+        audit = patch.object(assets, 'record_exception')
         self.audit = audit.start()
         self.addCleanup(audit.stop)
         config = patch.object(assets, 'settings', SimpleNamespace(auth_secret='synthetic-thumbnail-signing-secret'))
@@ -167,7 +167,7 @@ class ThumbnailImportTest(unittest.TestCase):
 
 class ThumbnailConnectionTest(unittest.TestCase):
     def setUp(self):
-        for name, value in [('_THUMBNAIL_CONNECTION', SimpleNamespace()), ('record_api_call', MagicMock()), ('record_api_error', MagicMock())]:
+        for name, value in [('_THUMBNAIL_CONNECTION', SimpleNamespace()), ('record_api_call', MagicMock()), ('record_exception', MagicMock())]:
             patcher = patch.object(animadex, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)

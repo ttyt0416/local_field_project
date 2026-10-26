@@ -10,3 +10,7 @@
 - 음악 job은 `generation/music/{prompt_id}/events`를 구독하고 같은 경로의 cancel API를 사용한다. 완료된 audio URL·filename·size를 store에 보관한다.
 
 3D job의 generationMode(mesh|rigging)를 생성 응답과 active snapshot에서 보존한다. RIGGING 탭은 해당 모드의 최근 메모리 job을 복원하고 MESH 탭은 진행 중인 메시 작업을 복원한다. 탭 전환으로 컴포넌트가 unmount되어도 전역 SSE는 유지된다. 3D 취소 응답의 실제 terminal 상태와 결과를 반영해 완료와 취소가 경합할 때 완료 결과를 잃지 않는다.
+
+## 동작·오류 기록
+
+SSE JSON 파싱 실패를 reportApiError로 기록한다. 연결 오류는 streamSse가 기록하며 의도적인 취소는 제외한다.

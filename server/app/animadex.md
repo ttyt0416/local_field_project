@@ -9,3 +9,7 @@
 `GET /tags/catalogue/{kind}/thumbnail/{key}`는 유효한 이미지 전용 서명 URL 또는 기존 로그인 Bearer 인증으로 로컬 파일만 `image/webp`로 반환한다. 서명 없는 익명 요청은 401, 만료·변조된 서명은 403이다. key는 소문자 64자리 hex만 허용한다. 인증된 검색 응답은 저장된 파일에 한해 상대 thumb_url, mtime 버전, 15분 만료·서명을 포함하며 브라우저로 export 토큰·CDN 주소를 전달하지 않는다. private cache와 nosniff를 설정한다. 썸네일 저장·delta 상태는 `animadex_assets.md`에 정리했다.
 
 이전 SSL WRONG_VERSION_NUMBER는 로컬 ASUS 공유기의 AiProtection 차단 페이지가 TLS 대신 HTTP로 반환되어 발생했다. 차단 해제 후 버전 1780120177의 메타데이터를 정상 가져왔다. [공식 export 절차](https://github.com/zetaneko/AnimaDex/blob/main/docs/import-from-site.md), [CSV 필드](https://github.com/zetaneko/AnimaDex/blob/main/docs/data-format.md)를 기준으로 구현했다.
+
+## 동작·오류 기록
+
+썸네일 재시도, HTTP·네트워크 실패, 가져오기 오류를 record_exception으로 보존한다. HTTP 본문은 기록 스레드가 읽고 닫으며 가져오기 실패 상태도 원인 문구를 저장한다.

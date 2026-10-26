@@ -9,3 +9,7 @@ HTTP audit middleware는 route가 request state에 둔 failed provider response�
 리깅 router `/generation/3d/rigging`는 3D의 동적 prompt_id 경로보다 먼저 등록한다. HTTP audit는 기존 middleware를 사용하고, 리깅 서비스 내부 호출과 worker 오류도 audit/error DB에 기록한다.
 
 `/tags/gelbooru`와 `/tags/catalogue`는 인증된 로컬 카탈로그 검색 router다. 시작 시 스키마만 준비하고 외부 데이터 다운로드나 동기화를 자동 실행하지 않는다.
+
+## 동작·오류 기록
+
+HTTP/검증 예외의 원인 체인을 보존하고 직접 반환한 오류 Response는 실제 본문을 기록한다. /web/events와 /web/errors는 DB 저장 완료를 기다리지 않고 204를 반환한다. 사용자 식별은 JWT 서명·만료를 검증하며 사용자 DB 조회를 기다리지 않는다. 웹 이벤트는 요소 경로·모달·시각·사용자·방문자·세션과 라우트 정보를 받는다.

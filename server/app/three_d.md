@@ -13,3 +13,7 @@ Model: `VAST-AI/TripoSplat` revision `56a96e603204ec410c4da60c13ea4fa09a2169a9`.
 3D API는 generation_mode=rigging row의 상태 조회·SSE·취소를 rigging.py에 위임한다. MESH의 TripoSplat graph는 변경하지 않는다. 리깅 status에는 generation_mode와 nullable message를 포함하고, ComfyUI queue 조회를 사용하지 않는다.
 
 The five loader inputs are resolved from `diffusion_models/TripoSplat/`, `clip_vision/TripoSplat/`, `vae/TripoSplat/Image/`, `vae/TripoSplat/Splat/`, and `background_removal/TripoSplat/`, including subfolders. Each role uses its first sorted live path, regardless of filename. Readiness checks the same folders used by graph construction.
+
+## 동작·오류 기록
+
+준비 상태 복구 응답, 3D SSE 예외, ComfyUI history 실행 실패를 공통 유틸로 기록한다. 리깅 오류는 rigging 유틸 경로를 사용한다.

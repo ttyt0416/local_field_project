@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from starlette.responses import StreamingResponse
 
+from .audit import audit_stream, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
@@ -557,7 +558,7 @@ async def video_generation_events(
     if generation is None or generation["mode"] != mode or generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="영상 생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        _stream_video_events(prompt_id, mode, user.id),
+        audit_stream(_stream_video_events(prompt_id, mode, user.id), operation="video.events", user_id=user.id, context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -580,6 +581,7 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
             try:
                 video = await asyncio.to_thread(_video_output, generation, user_id)
             except StorageError as exc:
+                record_exception(exc, operation="video.events", user_id=user_id, context={"prompt_id": prompt_id})
                 yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
                 return
             yield _sse_message(
@@ -1478,7 +1480,8 @@ def _delete_internal_sequence_files(file_ids: Sequence[object], user_id: uuid.UU
             continue
         try:
             storage_delete_file(file_id=file_id, owner_id=str(user_id))
-        except StorageError:
+        except StorageError as exc:
+            record_exception(exc, operation="video.sequence.cleanup", user_id=user_id, context={"file_id": file_id})
             continue
 
 
@@ -1550,6 +1553,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
+        record_remote_error(comfy_status, operation=f"comfyui.video.history/{active_prompt_id}", user_id=user_id)
         update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
         _delete_internal_sequence_files(generation.get("segment_file_ids", []), user_id)
         return VideoGenerationStatus(
@@ -1757,8 +1761,8 @@ def _sync_video_output(
         if next_prompt_id:
             try:
                 cancel_comfy_generation(next_prompt_id)
-            except _ComfyUIError:
-                pass
+            except _ComfyUIError as exc:
+                record_exception(exc, operation="video.sequence.cancel", user_id=user_id, context={"prompt_id": next_prompt_id})
         raise
     finally:
         if frame_file_id:

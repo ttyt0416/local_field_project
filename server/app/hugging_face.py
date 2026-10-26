@@ -105,8 +105,8 @@ def open_download(url: str, token: str, resume_from: int, opener: Any):
         except HTTPError as exc:
             code = exc.code
             location = exc.headers.get("Location")
-            exc.close()
             if code in {301, 302, 303, 307, 308} and location:
+                exc.close()
                 current = urljoin(current, location)
                 continue
             if code in {401, 403}:

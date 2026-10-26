@@ -13,10 +13,11 @@ import threading
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, ValidationError
 
+from .audit import exception_message, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .comfyui import _ComfyUIError
 from .database import (create_three_d_generation, get_three_d_generation,
-                       get_three_d_generation_by_id, record_api_call, record_api_error, update_three_d_generation_status)
+                       get_three_d_generation_by_id, record_api_call, update_three_d_generation_status)
 from .storage import StorageError, download_file, enabled, upload_file
 
 
@@ -37,6 +38,7 @@ def request_worker(method, path, *, content=None, user_id=None):
         if not token:
             raise OSError('empty token')
     except OSError as exc:
+        record_exception(exc, operation="rigging.credentials", user_id=user_id)
         raise _ComfyUIError('SkinTokens 실행 서비스가 설정되지 않았습니다.') from exc
     request = Request(os.getenv('RIGGING_URL', 'http://host.docker.internal:8190').rstrip('/') + path,
                       method=method, data=content,
@@ -49,9 +51,7 @@ def request_worker(method, path, *, content=None, user_id=None):
             return body if path.endswith('/result') else json.loads(body)
     except (HTTPError, URLError, TimeoutError, ValueError) as exc:
         code = exc.code if isinstance(exc, HTTPError) else 503
-        record_api_error(method=method, path='skintokens:' + path.split('?')[0], status_code=code,
-                         error_type=type(exc).__name__, error_message=str(exc), client_ip=None,
-                         user_agent='Local Field rigging', user_id=user_id)
+        record_exception(exc, operation='skintokens:' + path.split('?')[0], status_code=code, user_id=user_id)
         raise _ComfyUIError('SkinTokens 실행 서비스에 연결할 수 없습니다.') from exc
     finally:
         record_api_call(method=method, path='skintokens:' + path.split('?')[0], status_code=code,
@@ -113,8 +113,8 @@ async def create_rigging(payload: str = Form(...), file: UploadFile | None = Fil
             rigging_options=parsed.model_dump(mode='json', exclude={'source_generation_id'}))
         try:
             await asyncio.to_thread(request_worker, 'POST', f'/jobs/{prompt_id}?' + urlencode({'temperature': parsed.temperature, 'num_beams': parsed.num_beams}), content=content, user_id=user.id)
-        except _ComfyUIError:
-            update_three_d_generation_status(prompt_id=prompt_id, user_id=user.id, status='failed', stage='failed', error_message='SkinTokens 작업을 시작하지 못했습니다.')
+        except _ComfyUIError as exc:
+            update_three_d_generation_status(prompt_id=prompt_id, user_id=user.id, status='failed', stage='failed', error_message=exception_message(exc))
             raise
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -177,9 +177,7 @@ def _sync_status(generation, user_id):
         update_three_d_generation_status(prompt_id=prompt_id, user_id=user_id, status=state,
                                         stage=remote.get('stage', state), error_message=message)
         if message and generation['status'] != 'failed':
-            record_api_error(method='WORKER', path=f'skintokens:/jobs/{prompt_id}', status_code=500,
-                error_type='RiggingError', error_message=message, client_ip=None,
-                user_agent='Local Field rigging', user_id=user_id)
+            record_remote_error(remote, operation=f'skintokens:/jobs/{prompt_id}', user_id=user_id)
         if state in {'failed', 'cancelled'}:
             try:
                 request_worker('POST', f'/jobs/{prompt_id}/ack', user_id=user_id)

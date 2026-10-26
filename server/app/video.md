@@ -23,3 +23,7 @@ I2V·FL2V·R2V workflow는 `diffusion_models/MiniMaxH3/`에서 선택한 UNET을
 세 video workflow의 `SaveVideo`는 ComfyUI V3 DynamicCombo API 형식에 맞춰 `format`과 `codec`을 평탄한 선택값으로 `/prompt`에 전달한다. ComfyUI가 이를 실행 시 내부 dynamic input object로 재구성하므로 중첩된 `format` object를 workflow에 넣지 않는다.
 
 자동 인코더·video/audio VAE·PDD·업스케일 모델은 comfyui.md의 역할 폴더에서 검색한다. PDD 파일명·체크포인트 이름의 고정 매핑은 없으며 실제 모델 호환성은 PDD node의 fingerprint 검사로 확인한다. 업스케일 기록에는 실제 선택된 경로를 저장한다.
+
+## 동작·오류 기록
+
+영상 SSE, 원격 history 실패, 시퀀스 정리·후속 작업 취소 실패를 공통 유틸로 보존한다. 정상 heartbeat 타임아웃은 제외한다.

@@ -272,5 +272,6 @@ def _run(command: list[str], timeout: int, error_message: str, *, capture_output
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         raise MediaEditError(error_message) from exc
     if completed.returncode != 0:
-        raise MediaEditError(error_message)
+        error = subprocess.CalledProcessError(completed.returncode, command, output=completed.stdout, stderr=completed.stderr)
+        raise MediaEditError(error_message) from error
     return completed.stdout if capture_output else ""

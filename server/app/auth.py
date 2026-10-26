@@ -12,6 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from psycopg.errors import UniqueViolation
 
+from .audit import record_exception
 from .configs.constants import settings
 from .database import get_connection, record_auth_event
 
@@ -212,7 +213,8 @@ def _verify_password(password: str, stored_hash: str) -> bool:
             p=int(p),
         )
         return secrets.compare_digest(digest.hex(), digest_hex)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        record_exception(exc, operation="auth.password_hash")
         return False
 
 

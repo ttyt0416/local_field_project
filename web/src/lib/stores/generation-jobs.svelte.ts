@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { SERVER_URL } from '$lib/configs/constants';
 import { apiJson, streamSse } from '$lib/utils/api';
+import { reportApiError } from '$lib/utils/telemetry';
 
 export type GenerationJobKind = 'image' | 'video' | '3d' | 'music';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -186,7 +187,9 @@ class GenerationJobStore {
 		let data: Record<string, unknown> = {};
 		try {
 			data = JSON.parse(rawData) as Record<string, unknown>;
-		} catch {
+		} catch (error) {
+			const job = this.jobs[key];
+			if (job) reportApiError(error, this.path(job), 'SSE');
 			return;
 		}
 		const status = this.status(data.status ?? eventName);

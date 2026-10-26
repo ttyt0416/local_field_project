@@ -1,12 +1,14 @@
 from collections.abc import Iterable
 from datetime import datetime, timezone
 import json
+import logging
 from typing import Any
 import uuid
 
 import psycopg
 
 from .configs.constants import DEFAULT_EMBEDDING_DIMENSIONS, settings
+from .audit import fire_and_forget, redact
 
 
 _MIGRATION_STATEMENTS: tuple[str, ...] = (
@@ -754,6 +756,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "ALTER TABLE api_error_logs ADD COLUMN IF NOT EXISTS provider_response JSONB",
+    "ALTER TABLE api_error_logs ADD COLUMN IF NOT EXISTS error_details JSONB",
 )
 
 
@@ -775,31 +778,41 @@ _WEB_LOG_SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
-    CREATE INDEX IF NOT EXISTS web_event_logs_page_path_idx ON web_event_logs(page_path)
+    CREATE INDEX IF NOT EXISTS web_event_logs_page_path_prefix_idx ON web_event_logs (left(page_path, 512))
     """,
     """
     CREATE INDEX IF NOT EXISTS web_event_logs_user_id_idx ON web_event_logs(user_id)
     """,
+    "DROP INDEX IF EXISTS web_event_logs_page_path_idx",
+    "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS event_id UUID",
+    "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS client_occurred_at TIMESTAMPTZ",
+    "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS visitor_id UUID",
+    "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS session_id UUID",
+    "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS target_path TEXT",
+    "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS target_context JSONB",
+    "CREATE UNIQUE INDEX IF NOT EXISTS web_event_logs_event_id_idx ON web_event_logs(event_id) WHERE event_id IS NOT NULL",
 )
 
 
-def get_connection() -> psycopg.Connection[Any]:
+def get_connection(*, audit: bool = False) -> psycopg.Connection[Any]:
     return psycopg.connect(
         host=settings.db_host,
         port=settings.db_port,
         dbname=settings.postgres_db,
         user=settings.postgres_user,
         password=settings.postgres_password,
+        **({"connect_timeout": 3, "options": "-c statement_timeout=5000 -c lock_timeout=2000"} if audit else {}),
     )
 
 
-def get_web_log_connection() -> psycopg.Connection[Any]:
+def get_web_log_connection(*, audit: bool = False) -> psycopg.Connection[Any]:
     return psycopg.connect(
         host=settings.web_log_db_host,
         port=settings.web_log_db_port,
         dbname=settings.web_log_postgres_db,
         user=settings.web_log_postgres_user,
         password=settings.web_log_postgres_password,
+        **({"connect_timeout": 3, "options": "-c statement_timeout=5000 -c lock_timeout=2000"} if audit else {}),
     )
 
 
@@ -1406,7 +1419,7 @@ def fail_model_download(download_id: uuid.UUID, error_message: str) -> None:
     with get_connection() as connection:
         connection.execute(
             "UPDATE model_downloads SET status = 'failed', error_message = %s WHERE id = %s AND status = 'downloading'",
-            (error_message[:1000], download_id),
+            (redact(error_message), download_id),
         )
 
 
@@ -2450,82 +2463,66 @@ def record_api_call(
     )
 
 
-def record_api_error(
-    *,
-    method: str,
-    path: str,
-    status_code: int,
-    error_type: str,
-    error_message: str,
-    client_ip: str | None,
-    user_agent: str | None,
-    user_id: Any = None,
-    provider_response: dict[str, Any] | None = None,
-) -> None:
-    _record(
-        """
-        INSERT INTO api_error_logs
-            (method, path, status_code, error_type, error_message, provider_response, client_ip, user_agent, user_id)
-        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
-        """,
-        (
-            method,
-            path,
-            status_code,
-            error_type,
-            error_message[:1000],
-            json.dumps(provider_response, ensure_ascii=False) if provider_response is not None else None,
-            client_ip,
-            user_agent,
-            user_id,
-        ),
-    )
+_API_ERROR_INSERT = """
+    INSERT INTO api_error_logs
+        (method, path, status_code, error_type, error_message, provider_response, client_ip, user_agent, user_id, error_details)
+    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb)
+"""
 
 
-def record_web_event(
-    *,
-    event_type: str,
-    page_path: str,
-    from_path: str | None,
-    target_type: str,
-    target_id: str | None,
-    target_label: str | None,
-    target_href: str | None,
-    client_ip: str | None,
-    user_agent: str | None,
-    user_id: Any = None,
-) -> None:
+def _api_error_parameters(*, method: str, path: str, status_code: int, error_type: str,
+                          error_message: str, client_ip: str | None, user_agent: str | None,
+                          user_id: Any = None, provider_response: dict[str, Any] | None = None,
+                          error_details: dict[str, Any] | None = None) -> tuple[Any, ...]:
+    return (method, redact(path), status_code, error_type[:128], redact(error_message),
+            json.dumps(redact(provider_response), ensure_ascii=False, default=str) if provider_response is not None else None,
+            client_ip, user_agent, user_id,
+            json.dumps(redact(error_details), ensure_ascii=False, default=str) if error_details is not None else None)
+
+
+def record_api_error(**payload: Any) -> None:
     try:
-        with get_web_log_connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO web_event_logs
-                    (event_type, page_path, from_path, target_type, target_id, target_label,
-                     target_href, client_ip, user_agent, user_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    event_type,
-                    page_path,
-                    from_path,
-                    target_type,
-                    target_id,
-                    target_label,
-                    target_href,
-                    client_ip,
-                    user_agent,
-                    user_id,
-                ),
-            )
+        _record(_API_ERROR_INSERT, _api_error_parameters(**payload))
     except Exception:
-        # Logging must not replace the original API response or exception.
-        return
+        logging.getLogger(__name__).exception("Could not prepare API error audit")
+
+
+def _write_api_error(**payload: Any) -> None:
+    _write_record(_API_ERROR_INSERT, _api_error_parameters(**payload))
+
+
+def record_web_event(*, event_type: str, page_path: str, from_path: str | None,
+                     target_type: str, target_id: str | None, target_label: str | None,
+                     target_href: str | None, client_ip: str | None, user_agent: str | None,
+                     user_id: Any = None, event_id: Any = None, client_occurred_at: Any = None,
+                     visitor_id: Any = None, session_id: Any = None, target_path: str | None = None,
+                     target_context: dict[str, Any] | None = None) -> None:
+    try:
+        parameters = (event_type, redact(page_path), redact(from_path), target_type, redact(target_id), redact(target_label),
+                      redact(target_href), client_ip, user_agent, user_id, event_id, client_occurred_at,
+                      visitor_id, session_id, redact(target_path),
+                      json.dumps(redact(target_context or {}), ensure_ascii=False, default=str))
+        fire_and_forget(_write_web_event, parameters, channel="web")
+    except Exception:
+        logging.getLogger(__name__).exception("Could not prepare web interaction audit")
+
+
+def _write_web_event(parameters: tuple[Any, ...]) -> None:
+    with get_web_log_connection(audit=True) as connection:
+        connection.execute("""
+            INSERT INTO web_event_logs
+                (event_type, page_path, from_path, target_type, target_id, target_label,
+                 target_href, client_ip, user_agent, user_id, event_id, client_occurred_at,
+                 visitor_id, session_id, target_path, target_context)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (event_id) WHERE event_id IS NOT NULL DO NOTHING
+        """, parameters)
 
 
 def _record(statement: str, parameters: Iterable[Any]) -> None:
-    try:
-        with get_connection() as connection:
-            connection.execute(statement, tuple(parameters))
-    except Exception:
-        # Logging must not replace the original API response or exception.
-        return
+    fire_and_forget(_write_record, statement, tuple(parameters))
+
+
+def _write_record(statement: str, parameters: tuple[Any, ...]) -> None:
+    with get_connection(audit=True) as connection:
+        connection.execute(statement, parameters)

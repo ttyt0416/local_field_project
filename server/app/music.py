@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.responses import StreamingResponse
 
+from .audit import audit_stream, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
@@ -186,6 +187,7 @@ def music_options(_: UserResponse = Depends(current_user)) -> MusicGenerationOpt
     try:
         missing = _readiness()
     except _ComfyUIError as exc:
+        record_exception(exc, operation="music.options")
         return MusicGenerationOptions(model="YuE2", service_available=False, detail=str(exc))
     detail = f"YuE2 실행 항목이 준비되지 않았습니다: {', '.join(missing)}" if missing else "" if storage_enabled() else "스토리지 설정이 없습니다."
     return MusicGenerationOptions(model="YuE2", service_available=not missing and storage_enabled(), detail=detail)
@@ -297,7 +299,7 @@ async def music_events(
     if generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="음악 생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        _stream_events(prompt_id, user.id),
+        audit_stream(_stream_events(prompt_id, user.id), operation="music.events", user_id=user.id, context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
@@ -313,6 +315,7 @@ async def _stream_events(prompt_id: str, user_id: uuid.UUID):
         try:
             current = await asyncio.to_thread(_history_status, generation, user_id)
         except (StorageError, _ComfyUIError) as exc:
+            record_exception(exc, operation="music.events", user_id=user_id, context={"prompt_id": prompt_id})
             yield _sse("error", {"prompt_id": prompt_id, "message": str(exc)})
             return
         event = current.status if current.status in {"completed", "failed", "cancelled"} else "status"
@@ -455,6 +458,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> MusicGene
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     if str(comfy_status.get("status_str", "")) in {"error", "failed"}:
+        record_remote_error(comfy_status, operation=f"comfyui.music.history/{prompt_id}", user_id=user_id)
         update_music_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
         current = get_music_generation(prompt_id, user_id) or generation
         return _status_from_row(current, user_id, progress=progress)

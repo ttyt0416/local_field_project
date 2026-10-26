@@ -76,7 +76,7 @@ class RiggingTest(unittest.TestCase):
         with (patch.object(rigging, 'request_worker', return_value={'status': 'failed', 'stage': 'failed', 'message': 'invalid mesh'}),
               patch.object(rigging, 'get_three_d_generation', side_effect=[self.row, failed]),
               patch.object(rigging, 'update_three_d_generation_status') as update,
-              patch.object(rigging, 'record_api_error')):
+              patch.object(rigging, 'record_remote_error')):
             result = rigging.history_status(self.row, self.user.id)
         self.assertEqual(result.message, 'invalid mesh')
         self.assertEqual(update.call_args.kwargs['error_message'], 'invalid mesh')

@@ -1,4 +1,5 @@
 import { apiBlob } from './api';
+import { reportApiError } from './telemetry';
 
 function isExternalUrl(source: string) {
 	return /^(https?:)?\/\//.test(source);
@@ -8,7 +9,7 @@ export async function downloadMedia(source: string, filename: string) {
 	try {
 		const blob = isExternalUrl(source)
 			? await fetch(source).then((response) => {
-					if (!response.ok) throw new Error('download failed');
+					if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}: ${response.statusText}`), { response });
 					return response.blob();
 				})
 			: await apiBlob(source);
@@ -20,7 +21,8 @@ export async function downloadMedia(source: string, filename: string) {
 		link.click();
 		link.remove();
 		window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-	} catch {
-		throw new Error('콘텐츠를 다운로드하지 못했습니다.');
+	} catch (error) {
+		if (isExternalUrl(source)) reportApiError(error, source, 'GET');
+		throw new Error('콘텐츠를 다운로드하지 못했습니다.', { cause: error });
 	}
 }

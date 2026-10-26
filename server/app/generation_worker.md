@@ -15,3 +15,7 @@
 프런트는 모든 generation kind의 generation별 SSE endpoint를 구독한다. SSE는 연결 시 DB snapshot을 한 번 전송한 뒤 worker가 publish한 상태·완료·실패 이벤트를 받으며, 연결이 끊기면 재연결 후 DB snapshot으로 누락된 상태를 보완한다. 실제 inference와 video queue 실행은 이 계약 테스트에서 호출하지 않는다.
 
 SkinTokens 리깅 row는 동일 3D reconciler에서 독립 실행 서비스 상태를 동기화한다. generation_mode가 rigging이면 ComfyUI WebSocket listener를 시작하지 않는다. 재시작 후 queued·processing row도 같은 경로로 복구한다.
+
+## 동작·오류 기록
+
+이미지·영상·음악·3D 각각의 reconcile, progress WebSocket 재연결, 전체 동기화 실패를 작업·사용자·prompt_id와 함께 공통 유틸로 기록한다. 정상 폴링 타임아웃과 취소는 제외한다.

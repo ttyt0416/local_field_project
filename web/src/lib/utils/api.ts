@@ -4,15 +4,9 @@ import { SERVER_URL } from '$lib/configs/constants';
 
 export const ACCESS_TOKEN_KEY = 'local-field.access-token';
 
-export type WebEvent = {
-	event_type: 'click' | 'route';
-	page_path: string;
-	from_path?: string | null;
-	target_type: string;
-	target_id?: string | null;
-	target_label?: string | null;
-	target_href?: string | null;
-};
+export { trackWebEvent } from './telemetry';
+export type { WebEvent } from './telemetry';
+import { reportApiError } from './telemetry';
 
 const api = ky.create({
 	baseUrl: `${SERVER_URL.replace(/\/+$/, '')}/`,
@@ -69,7 +63,8 @@ export async function apiJson<T>(path: string, options?: Options) {
 	try {
 		return await api(path, options).json<T>();
 	} catch (error) {
-		throw new Error(getErrorMessage(error));
+		reportApiError(error, path, options?.method ?? 'GET');
+		throw new Error(getErrorMessage(error), { cause: error });
 	}
 }
 
@@ -77,14 +72,16 @@ export async function apiForm<T>(path: string, form: FormData, options?: Options
 	try {
 		return await api(path, { ...options, method: options?.method ?? 'POST', body: form }).json<T>();
 	} catch (error) {
-		throw new Error(getErrorMessage(error));
+		reportApiError(error, path, options?.method ?? 'POST');
+		throw new Error(getErrorMessage(error), { cause: error });
 	}
 }
 export async function apiBlob(path: string, options?: Options) {
 	try {
 		return await api(path, options).blob();
 	} catch (error) {
-		throw new Error(getErrorMessage(error));
+		reportApiError(error, path, options?.method ?? 'GET');
+		throw new Error(getErrorMessage(error), { cause: error });
 	}
 }
 
@@ -92,15 +89,8 @@ export async function apiDelete(path: string) {
 	try {
 		await api(path, { method: 'DELETE' });
 	} catch (error) {
-		throw new Error(getErrorMessage(error));
-	}
-}
-
-export async function trackWebEvent(event: WebEvent) {
-	try {
-		await api('web/events', { method: 'POST', json: event, timeout: 5_000, keepalive: true });
-	} catch {
-		// Telemetry must not block the interaction it records.
+		reportApiError(error, path, 'DELETE');
+		throw new Error(getErrorMessage(error), { cause: error });
 	}
 }
 
@@ -158,6 +148,7 @@ export async function streamSse(
 			}
 		}
 	} catch (error) {
-		throw new Error(getErrorMessage(error));
+		reportApiError(error, path, 'GET');
+		throw new Error(getErrorMessage(error), { cause: error });
 	}
 }

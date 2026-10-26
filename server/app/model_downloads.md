@@ -22,3 +22,7 @@ Hugging Face 전송은 공용 worker의 크기 검사·Range·진행률·SHA 검
 MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model 표기는 MOSS family로 통합한다. Civitai MOSS checkpoint는 Diffusion Model로 분류하고 `diffusion_models/MOSS`, MOSS LoRA는 `loras/MOSS`를 기본 저장 위치로 제안한다. 이름에 MOSS가 포함된 다른 폴더를 자동 선택하지 않는다. 다운로드 요청의 subfolder가 비어 있어도 해당 MOSS 폴더를 사용하며, 명시한 하위폴더는 유지한다. MOSS 폴더가 없거나 안전하지 않으면 기존 경로 검증으로 요청을 거부하고 root로 대체하지 않는다. 폴더 생성은 기존 폴더 선택 모달에서 수행한다.
 
 조회·enqueue·worker는 사용자별 저장 토큰만 사용한다. 저장 토큰이 없으면 Civitai 다운로드는 토큰 등록을 요구하고 Hugging Face 공개 모델은 무토큰으로 받는다. Civitai metadata의 인증 헤더는 ContextVar로 요청별 격리하며 scope 종료 시 초기화한다. 인증 metadata 요청은 자동 리디렉션을 허용하지 않는다.
+
+## 동작·오류 기록
+
+다운로드 워커의 서비스·파일·네트워크·타임아웃 오류는 원문을 기록하고 실제 원인 문구를 실패 상태에 저장한다. 초기화·작업 조회 실패, 설치 파일 stat와 추천 폴더 탐색 실패도 기록한다.

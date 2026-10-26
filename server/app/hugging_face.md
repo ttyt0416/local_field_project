@@ -9,3 +9,7 @@
 기준: [공식 API 클라이언트의 model_info](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/hf_api.py), [공식 다운로드/CDN 문서](https://huggingface.co/docs/hub/models-downloading).
 
 토큰은 다운로드 관리에서 사용자별 저장이 가능하며 제한 모델 오류는 해당 화면의 API 토큰과 저장소 접근 승인을 안내한다.
+
+## 동작·오류 기록
+
+실패 HTTP 응답은 기록 스레드에서 원문을 읽고 닫도록 보존한다. 정상 리디렉션 응답은 즉시 닫는다.

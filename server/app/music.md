@@ -11,3 +11,7 @@ Model: `Comfy-Org/YuE2` revision `2f76ca75e6ee094169de899cc7fc99d6887e2196`. Nat
 Music vLLM structured output: Style is `{language, genre, vocals, tempo_bpm, instruments, mood, production}`; Lyrics is `{sections: [{kind, lines}]}`. Extra keys, wrong types, tags/newlines in raw fields and unselected languages are rejected in server validation. The server orders Style fields, adds BPM, generates enum section tags and joins lyric lines/sections. The public response remains `{contents}` for editable UI proposals. Invalid provider output is attached to the existing error audit; no free-form fallback is used.
 
 Readiness and the submitted loader graph use the same live folder search. The lexicographically first installed checkpoint is selected without matching a filename.
+
+## 동작·오류 기록
+
+준비 상태 복구 응답, 음악 SSE 예외, ComfyUI history 실행 실패를 공통 오류 유틸로 기록한다. SSE 시작 뒤 예외도 기록한다.

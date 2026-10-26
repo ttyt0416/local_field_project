@@ -19,7 +19,7 @@ class CatalogueImportTest(unittest.TestCase):
         patcher = patch.dict('os.environ', {'ANIMADEX_DATA_DIR': temporary.name})
         patcher.start()
         self.addCleanup(patcher.stop)
-        audit = patch.object(animadex, 'record_api_error')
+        audit = patch.object(animadex, 'record_exception')
         self.import_audit = audit.start()
         self.addCleanup(audit.stop)
 
@@ -53,7 +53,7 @@ class CatalogueImportTest(unittest.TestCase):
         response = MagicMock()
         response.status = 200
         response.read.return_value = b'{}'
-        with patch("app.animadex.record_api_call"), patch("app.animadex.record_api_error"), patch("app.animadex._OPENER.open") as opener:
+        with patch("app.animadex.record_api_call"), patch("app.animadex.record_exception"), patch("app.animadex._OPENER.open") as opener:
             opener.return_value.__enter__.return_value = response
             animadex._read_url("https://animadex.net/api/export/manifest", token="synthetic-token", manifest=True)
             self.assertEqual(opener.call_args.args[0].get_header("X-export-token"), "synthetic-token")

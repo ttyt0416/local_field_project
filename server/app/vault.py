@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from .audit import record_exception
 from .auth import UserResponse, current_user
 from .comfyui import _request_bytes, cancel_image_generation
 from .database import (
@@ -474,14 +475,14 @@ def edit_vault_video(
     except Exception as exc:
         try:
             storage_delete_file(file_id=edited_file_id, owner_id=str(user.id))
-        except StorageError:
-            pass
+        except StorageError as cleanup_error:
+            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": edited_file_id})
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="편집한 영상을 저장하지 못했습니다.") from exc
     if edited_id is None:
         try:
             storage_delete_file(file_id=edited_file_id, owner_id=str(user.id))
-        except StorageError:
-            pass
+        except StorageError as cleanup_error:
+            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": edited_file_id})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
     return VideoEditResponse(generation_id=edited_id)
 
@@ -899,14 +900,14 @@ def edit_vault_image(
     except Exception as exc:
         try:
             storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
-        except StorageError:
-            pass
+        except StorageError as cleanup_error:
+            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": storage_file_id})
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="편집한 이미지를 저장하지 못했습니다.") from exc
     if edited_id is None:
         try:
             storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
-        except StorageError:
-            pass
+        except StorageError as cleanup_error:
+            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": storage_file_id})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
     return ImageEditResponse(generation_id=edited_id)
 
@@ -1113,7 +1114,8 @@ def _generation_file_size(generation: dict, user_id: UUID, include_storage_looku
         return None
     try:
         return storage_file_size(file_id=storage_file_id, owner_id=str(user_id))
-    except StorageError:
+    except StorageError as exc:
+        record_exception(exc, operation="vault.file_size", user_id=user_id, context={"file_id": storage_file_id})
         return None
 
 

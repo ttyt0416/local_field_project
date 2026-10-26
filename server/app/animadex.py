@@ -20,10 +20,11 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from starlette.responses import FileResponse
 
+from .audit import exception_message, record_exception
 from .animadex_assets import AssetSyncError, catalogue_lock, plan_thumbnails, read_state, sync_thumbnails, thumbnail_path, thumbnail_url, verify_signature
 from .auth import UserResponse, current_user, _bearer
 from .danbooru import _like_escape
-from .database import get_connection, record_api_call, record_api_error
+from .database import get_connection, record_api_call
 
 
 router = APIRouter(prefix="/tags/catalogue", tags=["AnimaDex local catalogue"])
@@ -90,7 +91,9 @@ def _read_thumbnail(url: str, limit: int) -> tuple[int, bytes]:
             return response.status, raw
         except HTTPError:
             raise
-        except (OSError, HTTPClientError):
+        except (OSError, HTTPClientError) as exc:
+            if not attempt:
+                record_exception(exc, operation="animadex.thumbnail.retry")
             connection.close()
             _THUMBNAIL_CONNECTION.connection = None
             if attempt:
@@ -123,15 +126,14 @@ def _read_url(url: str, *, token: str = "", manifest: bool = False, resource: Li
         return raw
     except HTTPError as exc:
         code = exc.code
-        exc.close()
+        record_exception(exc, operation=f"animadex.export.{resource}", status_code=code)
         raise CatalogueImportError(f"AnimaDex 내보내기 요청이 실패했습니다. (HTTP {code})", status_code=code) from None
-    except (URLError, OSError, TimeoutError, HTTPClientError):
+    except (URLError, OSError, TimeoutError, HTTPClientError) as exc:
+        record_exception(exc, operation=f"animadex.export.{resource}", status_code=code)
         raise CatalogueImportError("AnimaDex 파일 서버의 TLS 또는 네트워크 연결 오류로 로컬 카탈로그를 가져오지 못했습니다.") from None
     finally:
         path = "/upstream/animadex/export/manifest" if manifest else f"/upstream/animadex/export/{resource}"
         record_api_call(method="GET", path=path, status_code=code, client_ip=None, user_agent="LocalField/0.1", user_id=None)
-        if code != 200:
-            record_api_error(method="GET", path=path, status_code=code, error_type="CatalogueImportError", error_message="AnimaDex export request failed", client_ip=None, user_agent="LocalField/0.1", user_id=None)
 
 
 def _csv(raw: bytes, required: set[str]) -> list[dict]:
@@ -228,10 +230,10 @@ def sync_catalogue(progress=None, *, concurrency: int = 8) -> dict[str, int]:
             return {**result, **{f'thumbnails_{key}': value for key, value in stats.items()}}
     except (CatalogueImportError, AssetSyncError, ValueError, TypeError, OSError) as exc:
         message = str(exc) if isinstance(exc, (CatalogueImportError, AssetSyncError)) else "AnimaDex 내보내기 파일을 읽거나 저장하지 못했습니다."
-        record_api_error(method='IMPORT', path='/internal/animadex/import', status_code=502, error_type='CatalogueImportError', error_message=message, client_ip=None, user_agent='LocalField/0.1', user_id=None)
+        record_exception(exc, operation="animadex.import", status_code=502)
         with get_connection() as connection:
             connection.execute("""INSERT INTO tag_catalogue_imports (source, error_message) VALUES ('animadex', %s)
-                ON CONFLICT (source) DO UPDATE SET last_attempt_at = CURRENT_TIMESTAMP, error_message = EXCLUDED.error_message""", (message,))
+                ON CONFLICT (source) DO UPDATE SET last_attempt_at = CURRENT_TIMESTAMP, error_message = EXCLUDED.error_message""", (exception_message(exc),))
         raise CatalogueImportError(message) from None
 
 

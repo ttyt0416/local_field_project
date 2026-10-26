@@ -29,3 +29,7 @@ image_generations의 moss JSONB 열은 MOSS 생성 방식·레이아웃·참조 
 사용자별 download_tokens는 provider와 암호문·수정 시각을 저장한다. saved_prompts는 image/video 문장만 저장하며 두 테이블 모두 사용자 삭제 시 함께 제거한다. 스키마 추가는 IF NOT EXISTS로 반복 실행 가능하다.
 
 Gelbooru 태그와 AnimaDex 엔트리는 별도 로컬 테이블과 trigram 검색 인덱스를 사용한다. tag_catalogue_imports는 출처별 원본 버전·마지막 성공 시각·최근 실패 원인을 보관한다. 기존 Danbooru 테이블과 벡터에는 영향을 주지 않는다.
+
+## 동작·오류 기록
+
+API·인증·웹 로그 쓰기는 별도 큐로 전달하고 완료를 기다리지 않는다. 기록 연결 3초·쿼리 5초·잠금 2초 제한을 적용한다. api_error_logs.error_details에 예외 체인·스택·외부 응답을 저장하고 메시지 1,000자 절단을 제거한다. 웹 로그에 event_id, client_occurred_at, visitor_id, session_id, target_path, target_context를 추가한다. 긴 URL은 TEXT로 보존하고 인덱스는 앞 512자를 사용한다. event_id 중복은 무시한다. 다운로드 실패 상태에도 원문을 저장한다.

@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
 
+from .audit import record_exception
 from .auth import UserResponse, current_user
 from .database import create_media_asset, delete_media_asset, get_media_asset, list_reusable_media
 from .media_editing import MediaEditError, edit_video, probe_video
@@ -251,9 +252,8 @@ def reusable_media(
         url = None
         try:
             url = storage_read_url(file_id=asset["file_id"], owner_id=str(user.id))
-        except StorageError:
-            # A stale object remains visible without a preview until it is repaired or removed.
-            pass
+        except StorageError as exc:
+            record_exception(exc, operation="uploads.preview", user_id=user.id, context={"file_id": asset["file_id"]})
         result.append(MediaAssetResponse(**asset, url=url))
     return MediaAssetPage(
         items=result,
@@ -283,5 +283,5 @@ def _read_url(file_id: str, user: UserResponse) -> str:
 def _remove_storage_file(file_id: str, user: UserResponse) -> None:
     try:
         storage_delete_file(file_id=file_id, owner_id=str(user.id))
-    except StorageError:
-        pass
+    except StorageError as exc:
+        record_exception(exc, operation="uploads.cleanup", user_id=user.id, context={"file_id": file_id})

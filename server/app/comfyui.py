@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import RedirectResponse, StreamingResponse
 
+from .audit import audit_stream, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .configs.constants import settings
 from .danbooru import DanbooruError, search_danbooru_tags, validate_danbooru_tags
@@ -308,6 +309,7 @@ def record_comfy_progress(
             queue_position=None,
         )
     if event_name == "execution_error":
+        record_remote_error(data, operation="comfyui.execution", user_id=user_id)
         return _set_progress_state(prompt_id, user_id, status="failed")
     return False
 
@@ -329,7 +331,8 @@ async def stream_comfy_progress(client_id: str, stop_event: asyncio.Event) -> As
                 continue
             try:
                 message = json.loads(raw_message)
-            except (TypeError, json.JSONDecodeError):
+            except (TypeError, json.JSONDecodeError) as exc:
+                record_exception(exc, operation="comfyui.websocket.decode", context={"client_id": client_id})
                 continue
             event_name = message.get("type") if isinstance(message, dict) else None
             data = message.get("data") if isinstance(message, dict) else None
@@ -340,7 +343,8 @@ async def stream_comfy_progress(client_id: str, stop_event: asyncio.Event) -> As
 def _queue_position(prompt_id: str) -> int | None:
     try:
         queue = _request_json("GET", "/queue")
-    except _ComfyUIError:
+    except _ComfyUIError as exc:
+        record_exception(exc, operation="comfyui.queue", context={"prompt_id": prompt_id})
         return None
     for queue_name in ("queue_running", "queue_pending"):
         entries = queue.get(queue_name)
@@ -603,7 +607,7 @@ async def image_generation_events(
     if generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        _stream_generation_events(prompt_id, client_id, user.id),
+        audit_stream(_stream_generation_events(prompt_id, client_id, user.id), operation="image.events", user_id=user.id, context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -674,6 +678,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
             try:
                 images = await asyncio.to_thread(_stored_image_outputs, generation, user_id)
             except StorageError as exc:
+                record_exception(exc, operation="image.events", user_id=user_id, context={"prompt_id": prompt_id})
                 yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
                 return
             yield _sse_message(
@@ -772,6 +777,8 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
     comfy_status: dict[str, Any] = raw_status if isinstance(raw_status, dict) else {}
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
+        if generation is None or generation.get("status") != "failed":
+            record_remote_error(comfy_status, operation=f"comfyui.image.history/{prompt_id}", user_id=user_id)
         update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
         return ImageGenerationStatus(
             prompt_id=prompt_id,

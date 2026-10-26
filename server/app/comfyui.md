@@ -58,3 +58,7 @@ MOSS LoRA는 `loras/MOSS/` 및 하위폴더에서 파일명과 관계없이 선�
 | H3 보조 모델 | pdd_acc/MiniMaxH3/Ref2VA, pdd_acc/MiniMaxH3/FL2VA, latent_upscale_models/MiniMaxH3 |
 | YuE2 음악 | checkpoints/YuE2 |
 | TripoSplat 3D | diffusion_models/TripoSplat, clip_vision/TripoSplat, vae/TripoSplat/Image, vae/TripoSplat/Splat, background_removal/TripoSplat |
+
+## 동작·오류 기록
+
+큐 조회 복구, WebSocket 파싱, 이미지 SSE 오류를 원문 유틸로 기록한다. execution_error와 history 실패는 원격 예외 종류·문구·traceback을 포함한다. SSE 시작 이후 예외도 audit_stream으로 보존한다.

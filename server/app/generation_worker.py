@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from typing import Any
 
+from .audit import record_exception
 from .comfyui import _history_generation_status, generation_progress, record_comfy_progress, stream_comfy_progress
 from .database import (
     get_image_generation,
@@ -33,7 +34,8 @@ def reconcile_active_generations() -> None:
         try:
             result = _history_generation_status(generation["prompt_id"], generation["user_id"])
             _publish_if_changed("image", generation, previous_status, result.status, result.model_dump(mode="json"))
-        except Exception:
+        except Exception as exc:
+            record_exception(exc, operation="generation.reconcile.image", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
             logger.exception("이미지 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("image", generation, previous_status)
 
@@ -42,7 +44,8 @@ def reconcile_active_generations() -> None:
         try:
             result = _history_status(generation, generation["user_id"])
             _publish_if_changed("video", generation, previous_status, result.status, result.model_dump(mode="json"))
-        except Exception:
+        except Exception as exc:
+            record_exception(exc, operation="generation.reconcile.video", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
             logger.exception("동영상 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("video", generation, previous_status)
 
@@ -51,7 +54,8 @@ def reconcile_active_generations() -> None:
         try:
             result = _three_d_history_status(generation, generation["user_id"])
             _publish_if_changed("3d", generation, previous_status, result.status, result.model_dump(mode="json"))
-        except Exception:
+        except Exception as exc:
+            record_exception(exc, operation="generation.reconcile.3d", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
             logger.exception("3D 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("3d", generation, previous_status)
 
@@ -60,7 +64,8 @@ def reconcile_active_generations() -> None:
         try:
             result = _music_history_status(generation, generation["user_id"])
             _publish_if_changed("music", generation, previous_status, result.status, result.model_dump(mode="json"))
-        except Exception:
+        except Exception as exc:
+            record_exception(exc, operation="generation.reconcile.music", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
             logger.exception("음악 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("music", generation, previous_status)
 
@@ -154,7 +159,8 @@ async def _watch_progress(kind: str, generation: dict[str, Any], stop_event: asy
                     prompt_id, user_id, event_name, data, accepted_prompt_id=active_prompt_id
                 ):
                     continue
-        except Exception:
+        except Exception as exc:
+            record_exception(exc, operation="generation.progress", user_id=user_id, context={"kind": kind, "prompt_id": prompt_id})
             logger.debug("%s 생성 progress WebSocket 연결을 재시도합니다: %s", kind, prompt_id, exc_info=True)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=2)
@@ -181,7 +187,8 @@ async def run_generation_reconciler(stop_event: asyncio.Event) -> None:
                 for key in set(listeners) - active_keys:
                     listeners.pop(key).cancel()
                 await asyncio.to_thread(reconcile_active_generations)
-            except Exception:
+            except Exception as exc:
+                record_exception(exc, operation="generation.reconciler")
                 logger.exception("생성 작업 목록을 동기화하지 못했습니다.")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=_RECONCILE_INTERVAL_SECONDS)

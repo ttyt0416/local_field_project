@@ -25,6 +25,7 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from .audit import exception_message, record_exception
 from .auth import UserResponse, current_user
 from .configs.constants import settings
 from . import hugging_face as hf
@@ -250,7 +251,8 @@ def installed_models(_: UserResponse = Depends(current_user)) -> list[InstalledM
                 continue
             try:
                 file_stat = path.stat()
-            except OSError:
+            except OSError as exc:
+                record_exception(exc, operation="models.installed.stat", context={"path": str(path)})
                 continue
             result.append(
                 InstalledModelResponse(
@@ -826,7 +828,8 @@ def _suggested_subfolder(model_type: ModelType, base_model: str | None) -> str:
             (path for path in directory.rglob("*") if path.is_dir() and not path.is_symlink()),
             key=lambda path: (len(path.relative_to(directory).parts), str(path.relative_to(directory)).casefold()),
         )
-    except (CivitaiError, OSError):
+    except (CivitaiError, OSError) as exc:
+        record_exception(exc, operation="models.suggested_subfolder")
         return ""
     for candidate in candidates:
         relative = candidate.relative_to(directory)
@@ -1215,7 +1218,7 @@ def _header_int(response: Any, name: str) -> int | None:
     return parsed if parsed is not None and parsed >= 0 else None
 
 
-async def run_model_download_worker(stop_event: asyncio.Event) -> None:
+async def _run_model_download_worker(stop_event: asyncio.Event) -> None:
     await asyncio.to_thread(reset_model_downloads)
     while not stop_event.is_set():
         job = await asyncio.to_thread(claim_model_download)
@@ -1224,12 +1227,23 @@ async def run_model_download_worker(stop_event: asyncio.Event) -> None:
                 await asyncio.to_thread(_process_model_download, job)
             except _ModelDownloadCancelled:
                 continue
-            except (CivitaiError, hf.HuggingFaceError) as exc:
-                await asyncio.to_thread(fail_model_download, job["id"], str(exc))
-            except (OSError, URLError, TimeoutError, ValueError):
-                await asyncio.to_thread(fail_model_download, job["id"], "모델 파일 다운로드에 실패했습니다.")
+            except (CivitaiError, hf.HuggingFaceError, OSError, URLError, TimeoutError, ValueError) as exc:
+                record_exception(exc, operation="models.download", user_id=job["user_id"],
+                                 context={"download_id": str(job["id"]), "filename": job.get("filename"), "provider": job.get("provider")})
+                await asyncio.to_thread(fail_model_download, job["id"], exception_message(exc))
+            except Exception as exc:
+                record_exception(exc, operation="models.download", user_id=job["user_id"], context={"download_id": str(job["id"])})
+                raise
             continue
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=2)
         except asyncio.TimeoutError:
             pass
+
+
+async def run_model_download_worker(stop_event: asyncio.Event) -> None:
+    try:
+        await _run_model_download_worker(stop_event)
+    except Exception as exc:
+        record_exception(exc, operation="models.download.worker")
+        raise

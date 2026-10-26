@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
 
-from .database import record_api_error
+from .audit import record_exception
 from .configs.constants import settings
 
 
@@ -102,8 +102,8 @@ def read_state() -> dict:
         state = json.loads(path.read_text('utf-8'))
         if isinstance(state, dict) and isinstance(state.get('assets'), dict):
             return state
-    except (ValueError, OSError):
-        pass
+    except (ValueError, OSError) as exc:
+        record_exception(exc, operation="animadex.state.read", context={"path": str(path)})
     return {}
 
 
@@ -158,11 +158,10 @@ def sync_thumbnails(entries: list[tuple], manifest: dict, index: dict, fetch: Ca
             atomic_write(job['path'], raw)
             return 'downloaded'
         except ValueError as exc:
-            if isinstance(exc, AssetSyncError):
-                record_api_error(method='GET', path='/upstream/animadex/export/thumbnail', status_code=502, error_type='AssetSyncError', error_message='AnimaDex thumbnail is not a valid WebP file', client_ip=None, user_agent='LocalField/0.1', user_id=None)
+            record_exception(exc, operation="animadex.thumbnail", status_code=getattr(exc, 'status_code', 502), context={"path": str(job['path'])})
             return 'missing' if getattr(exc, 'status_code', None) == 404 else 'failed'
-        except OSError:
-            record_api_error(method='GET', path='/upstream/animadex/export/thumbnail', status_code=500, error_type='AssetSyncError', error_message='AnimaDex thumbnail could not be saved locally', client_ip=None, user_agent='LocalField/0.1', user_id=None)
+        except OSError as exc:
+            record_exception(exc, operation="animadex.thumbnail.save", context={"path": str(job['path'])})
             return 'failed'
 
     def save():

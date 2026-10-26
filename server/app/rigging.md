@@ -7,3 +7,7 @@
 worker 상태는 기존 3D reconciler·조회·SSE에서 동기화하며 완료 GLB를 Storage에 보관한 뒤 worker에 ack하여 임시 바이트를 정리한다. 완료된 row는 worker가 없어도 조회할 수 있다. 단일 backend process 내 lock으로 중복 저장과 완료·취소 경합을 막는다. 현재 backend 배포는 단일 uvicorn process다. 수평 확장 시 DB claim이 추가로 필요하다.
 
 호스트 worker 연결은 인증된 내부 API다. worker 요청은 기존 audit DB에, 실행 실패는 error DB와 generation error_message에 남긴다. 다른 사용자 generation ID를 통한 source 접근은 거부한다.
+
+## 동작·오류 기록
+
+자격 파일·HTTP·네트워크·JSON 예외를 원문 유틸로 보존한다. 시작 실패 상태에 원인 문구를 저장하며 원격 실패 응답 전체도 기록한다. ack 실패는 request_worker에서 기록한다.

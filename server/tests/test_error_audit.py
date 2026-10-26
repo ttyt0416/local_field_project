@@ -18,7 +18,7 @@ class ErrorAuditTest(unittest.TestCase):
         async def call_next(_: Request) -> Response:
             return Response(status_code=503)
 
-        with patch.object(main, "record_api_error") as record_error, patch.object(main, "record_api_call"):
+        with patch.object(database, "record_api_error") as record_error, patch.object(main, "record_api_call"):
             asyncio.run(main.audit_api_requests(request, call_next))
 
         self.assertEqual(record_error.call_args.kwargs["provider_response"], provider_response)

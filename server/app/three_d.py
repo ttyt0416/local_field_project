@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import StreamingResponse
 
+from .audit import audit_stream, record_exception, record_remote_error
 from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
@@ -128,6 +129,7 @@ def three_d_options(_: UserResponse = Depends(current_user)) -> ThreeDOptions:
     try:
         missing_nodes, missing_models = _readiness()
     except _ComfyUIError as exc:
+        record_exception(exc, operation="3d.options")
         return ThreeDOptions(ready=False, missing_nodes=[], missing_models=[], presets=_PRESETS, detail=str(exc))
     missing = [*missing_nodes, *missing_models]
     detail = f"TripoSplat 실행 항목이 준비되지 않았습니다: {', '.join(missing)}" if missing else "" if storage_enabled() else "스토리지 설정이 없습니다."
@@ -247,7 +249,7 @@ async def three_d_events(
     if generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="3D 생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        _stream_events(prompt_id, user.id),
+        audit_stream(_stream_events(prompt_id, user.id), operation="3d.events", user_id=user.id, context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
@@ -263,6 +265,7 @@ async def _stream_events(prompt_id: str, user_id: uuid.UUID):
         try:
             current = await asyncio.to_thread(_history_status, generation, user_id)
         except (StorageError, _ComfyUIError) as exc:
+            record_exception(exc, operation="3d.events", user_id=user_id, context={"prompt_id": prompt_id})
             yield _sse("error", {"prompt_id": prompt_id, "message": str(exc)})
             return
         event = current.status if current.status in {"completed", "failed", "cancelled"} else "status"
@@ -394,6 +397,7 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> ThreeDGen
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     if str(comfy_status.get("status_str", "")) in {"error", "failed"}:
+        record_remote_error(comfy_status, operation=f"comfyui.3d.history/{prompt_id}", user_id=user_id)
         update_three_d_generation_status(
             prompt_id=prompt_id, user_id=user_id, status="failed", stage="failed"
         )
