@@ -8,6 +8,12 @@ Video는 공통 사용자 의도·물리적 연속성·화자·원문 보존 규
 
 실제 선택 목록에서 생성한 reference manifest가 Picture·Video·Audio 번호와 역할의 기준이다. 이미지는 labeled preview를 보고 묘사하고, preview가 없는 참조는 보거나 들었다고 가정하지 않는다. 후속 구간의 Picture 1은 생성 전인 마지막 프레임이므로 실제로 관찰했다고 주장하지 않는다. 대사·가사·화면 글자는 원문과 문장부호를 보존하고, 설명문만 선택 언어로 작성한다.
 
+사용자가 제공한 `MiniMax_H3_Video_Prompt_Assistant_1.rtf`에서 카메라 일관성, 참조별 유지·변경 조건, 행동의 중간 과정 규칙을 선별했다. 각 shot은 시작 상태에서 접촉·자세·위치·물체 상태의 관찰 가능한 변화를 거쳐 요청된 결과에 도달하도록 묘사한다. 이 단계를 나누기 위해 불필요한 동작이나 cut을 추가하지 않는다. 카메라의 위치·방향·초점거리를 구분하고 같은 요소의 상반된 동작은 시간 순서로 표현한다. 이동 뒤 정지, tracking과 pan, dolly zoom처럼 가능한 조합은 유지한다. 참조는 사용자와 manifest가 지정한 역할에 해당하는 속성을 보존하고 요청된 의상·배경·동작 변경을 구분한다. R2V retention_analysis에는 구체적인 유지 속성·요청된 변경·참조 강도를 명시하며 역할 밖의 변경을 정체성 손실로 취급하지 않는다.
+
+RTF의 인터뷰·언어 질문·최종 확인·코드블록 출력은 도입하지 않는다. 기존 JSON 출력, 설명 언어 선택, 독립 오디오 참조, 구간 연결 계약을 유지한다.
+
+참조 역할의 판단 예시도 명시한다. 정체성만 제공하는 이미지는 Subject 정의 안에서 출처로 인용하고 보존 판단은 해당 Subject에 기록한다. 이미지 자체가 독립적인 프레임·구도 anchor일 때만 별도 Picture 보존 항목을 만든다. 정체성만 참조한 얼굴·머리를 유지하면서 요청대로 의상·배경을 바꾼 경우 그 정체성 역할은 fully_preserved다. 음색만 참조하고 원음을 복사하지 않는 오디오는 reference이며 visual-only attribute_transfer를 사용하지 않는다. Subject label은 angle bracket 형식을 유지한다.
+
 참고한 공개 자료:
 
 - https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt
