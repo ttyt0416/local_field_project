@@ -1,0 +1,1 @@
+Vite의 파일 허용 목록을 변경하지 않고 브라우저 검증 페이지를 준비한다. `node web/tests/prepare-telemetry.mjs`를 실행하면 기존 TypeScript 의존성으로 실제 telemetry 유틸과 DOM 테스트를 변환해 임시 `web/static/audit-check.html`을 만든다. fetch는 테스트가 대체하며 실제 로그 서버로 요청하지 않는다. Vite 개발 서버의 `/audit-check.html`을 연 뒤 결과를 확인하고 생성한 HTML과 개발 캐시를 삭제한다.
