@@ -30,7 +30,10 @@ from .comfyui import (
     cancel_comfy_generation,
     _queue_position,
     _comfy_url,
+    _family_choices,
     _node_choices,
+    _folder_choices,
+    _resolve_model_inputs,
     generation_progress,
     reset_generation_progress,
     _request_bytes,
@@ -69,34 +72,13 @@ _MAX_SEED = 2**63 - 1
 _MAX_INPUT_SIZE = 50 * 1024 * 1024
 _SEGMENT_SECONDS = 10.0
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-_EROS_CHECKPOINT = "MiniMaxH3/10Eros_Max_h3_hybrid_beta5.safetensors"
-_DASIWA_CHECKPOINT = "MiniMaxH3/DasiwaMinimaxH3_dasiwaHybridV1_int8.safetensors"
+_MINIMAX_CHECKPOINT_PREFIX = "MiniMaxH3/"
 _MINIMAX_LORA_PREFIX = "MiniMax/"
 _PDD_FILES = {
-    "fl2va": "minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors",
-    "ref2va": "minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors",
+    "fl2va": "folder://MiniMaxH3/FL2VA/",
+    "ref2va": "folder://MiniMaxH3/Ref2VA/",
 }
-_PDD_CHECKPOINT_PARTITIONS = {_EROS_CHECKPOINT: "ref2va", _DASIWA_CHECKPOINT: "ref2va"}
 _PDD_STEPS = {4, 6, 8}
-_VIDEO_CHECKPOINTS = {
-    "i2v": {
-        "eros": _EROS_CHECKPOINT,
-        "dasiwa": _DASIWA_CHECKPOINT,
-    },
-    "fl2v": {
-        "eros": _EROS_CHECKPOINT,
-        "dasiwa": _DASIWA_CHECKPOINT,
-    },
-    "r2v": {
-        "eros": _EROS_CHECKPOINT,
-        "dasiwa": _DASIWA_CHECKPOINT,
-    },
-}
-_VIDEO_CHECKPOINT_MODELS = {
-    checkpoint: model
-    for checkpoints in _VIDEO_CHECKPOINTS.values()
-    for model, checkpoint in checkpoints.items()
-}
 _VIDEO_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
 _VIDEO_PROMPT_NON_WHITESPACE_COMMON_CHARS = r"\x21-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E"
 _VIDEO_PROMPT_LANGUAGE_CHARS = {
@@ -129,7 +111,7 @@ _DEFAULT_VIDEO_SAMPLER = "res_multistep"
 _DEFAULT_VIDEO_SCHEDULER = "simple"
 _LEARNED_UPSCALE_MODE = "learned_3d"
 _LEARNED_UPSCALE_NODE = "MinimaxH3LatentUpscaler3D"
-_LEARNED_UPSCALE_MODEL = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+_LEARNED_UPSCALE_MODEL = "folder://MiniMaxH3/"
 _LEARNED_UPSCALE_ALIGN = 32
 
 
@@ -473,7 +455,7 @@ async def create_video(
         target_width=request.output_width if request.upscale_enabled else None,
         target_height=request.output_height if request.upscale_enabled else None,
         upscale_scale=request.effective_upscale_scale,
-        upscale_model=_LEARNED_UPSCALE_MODEL if request.upscale_enabled else None,
+        upscale_model=next((node["inputs"]["model_name"] for node in prompt.values() if node.get("class_type") == _LEARNED_UPSCALE_NODE), None),
         aspect_ratio=request.aspect_ratio,
         megapixels=request.megapixels,
         sampler_name=request.sampler_name,
@@ -660,11 +642,8 @@ def _sse_message(event_name: str, data: dict[str, Any]) -> str:
 
 def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOptions:
     object_info = _request_json("GET", "/object_info")
-    available = set(_node_choices(object_info, "UNETLoader", "unet_name"))
-    checkpoints = [checkpoint for checkpoint in _VIDEO_CHECKPOINTS[mode].values() if checkpoint in available]
-    default_checkpoint = _DASIWA_CHECKPOINT
-    if default_checkpoint not in checkpoints:
-        raise _ComfyUIError("기본 Dasiwa 영상 checkpoint를 ComfyUI에서 찾을 수 없습니다.")
+    checkpoints = _family_choices(object_info, "UNETLoader", "unet_name", _MINIMAX_CHECKPOINT_PREFIX)
+    default_checkpoint = next(iter(checkpoints), "")
     loras = [
         name
         for name in _node_choices(object_info, "LoraLoaderModelOnly", "lora_name")
@@ -675,13 +654,13 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
     if not samplers or not schedulers:
         raise _ComfyUIError("ComfyUI에서 영상 sampler 또는 scheduler 목록을 찾을 수 없습니다.")
     pdd_files = (
-        set(_node_choices(object_info, "MiniMaxH3PDDAccApply", "pdd_file"))
+        _folder_choices(object_info, "MiniMaxH3PDDAccApply", "pdd_file", _PDD_FILES["ref2va"])
         if "MiniMaxH3PDDAccApply" in object_info
-        else set()
+        else []
     )
     learned_upscale_available = (
         _LEARNED_UPSCALE_NODE in object_info
-        and _LEARNED_UPSCALE_MODEL in _node_choices(object_info, _LEARNED_UPSCALE_NODE, "model_name")
+        and bool(_folder_choices(object_info, _LEARNED_UPSCALE_NODE, "model_name", _LEARNED_UPSCALE_MODEL))
         and {"LTXVSeparateAVLatent", "LTXVConcatAVLatent"}.issubset(object_info)
     )
     return VideoGenerationOptions(
@@ -693,7 +672,7 @@ def _video_options(mode: Literal["i2v", "fl2v", "r2v"]) -> VideoGenerationOption
         schedulers=schedulers,
         default_sampler=_DEFAULT_VIDEO_SAMPLER if _DEFAULT_VIDEO_SAMPLER in samplers else samplers[0],
         default_scheduler=_DEFAULT_VIDEO_SCHEDULER if _DEFAULT_VIDEO_SCHEDULER in schedulers else schedulers[0],
-        pdd_available=_PDD_FILES["ref2va"] in pdd_files,
+        pdd_available=bool(pdd_files),
         learned_upscale_available=learned_upscale_available,
     )
 
@@ -725,11 +704,8 @@ def _validate_video_sampling(mode: Literal["i2v", "fl2v", "r2v"], request: Video
         raise HTTPException(status_code=422, detail="선택한 영상 scheduler를 찾을 수 없습니다.")
 
 
-def _pdd_file(checkpoint: str | None) -> str:
-    partition = _PDD_CHECKPOINT_PARTITIONS.get(checkpoint or _DASIWA_CHECKPOINT)
-    if partition is None:
-        raise HTTPException(status_code=422, detail="선택한 영상 checkpoint는 PDD를 지원하지 않습니다.")
-    return _PDD_FILES[partition]
+def _pdd_file() -> str:
+    return _PDD_FILES["ref2va"]
 
 
 def _validate_video_pdd(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGenerationRequest) -> None:
@@ -739,7 +715,6 @@ def _validate_video_pdd(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGener
         raise HTTPException(status_code=422, detail="PDD Steps는 4, 6 또는 8만 사용할 수 있습니다.")
     if not _video_options(mode).pdd_available:
         raise HTTPException(status_code=422, detail="PDD LoRA 또는 custom node를 ComfyUI에서 찾을 수 없습니다.")
-    _pdd_file(request.checkpoint)
 
 
 def _validate_learned_upscale(mode: Literal["i2v", "fl2v", "r2v"], request: VideoGenerationRequest) -> None:
@@ -754,15 +729,17 @@ def _effective_video_steps(request: VideoGenerationRequest) -> int:
         return request.steps
     if request.use_pdd:
         return 8
-    return 6 if request.checkpoint == _EROS_CHECKPOINT else 4
+    return 4
 
 
-def _workflow_checkpoint(mode: str, checkpoint: str | None) -> tuple[str, str]:
-    model = _VIDEO_CHECKPOINT_MODELS.get(checkpoint or _DASIWA_CHECKPOINT)
-    selected = _VIDEO_CHECKPOINTS.get(mode, {}).get(model or "")
-    if selected is None:
+def _workflow_checkpoint(mode: str, checkpoint: str | None) -> str:
+    if mode not in _ALLOWED_MODES:
         raise _ComfyUIError("영상 checkpoint 구성이 올바르지 않습니다.")
-    return model or "", selected
+    if checkpoint is None:
+        return _validated_video_checkpoint(mode, None)
+    if not checkpoint.startswith(_MINIMAX_CHECKPOINT_PREFIX):
+        raise _ComfyUIError("영상 checkpoint는 MiniMaxH3 폴더 안에 있어야 합니다.")
+    return checkpoint
 
 
 def _configure_video_sampling(
@@ -1288,7 +1265,7 @@ def _build_prompt(
     *,
     effective_prompt: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
-    model, checkpoint = _workflow_checkpoint(mode, request.checkpoint)
+    checkpoint = _workflow_checkpoint(mode, request.checkpoint)
     try:
         workflow_name = f"video_{mode}.json"
         with (_WORKFLOW_DIR / workflow_name).open(encoding="utf-8") as handle:
@@ -1318,7 +1295,7 @@ def _build_prompt(
     _inject_video_loras(
         prompt,
         request.loras,
-        pdd_file=_pdd_file(request.checkpoint) if request.use_pdd else None,
+        pdd_file=_pdd_file() if request.use_pdd else None,
         pdd_steps=steps,
     )
     if request.upscale_enabled:
@@ -1354,6 +1331,7 @@ def _build_prompt(
                 "inputs": {"audio": _upload_to_comfy(resolved, asset, "audio")},
             }
             prompt["5"]["inputs"][f"ref_audios.ref_audio_{index}"] = [str(200 + index), 0]
+    _resolve_model_inputs(prompt, _request_json("GET", "/object_info"))
     return prompt, seed
 
 

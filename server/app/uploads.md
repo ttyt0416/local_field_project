@@ -8,7 +8,6 @@
 
 `DELETE /uploads/{file_id}`는 소유권 확인 후 Storage 파일과 `media_assets` row를 삭제한다. Storage 삭제 실패 시 DB row를 유지해 재시도할 수 있다.
 
-FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
 
 ## MOSS
 

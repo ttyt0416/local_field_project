@@ -10,4 +10,4 @@ Qwen 2.1 Turbo 분류는 I2I/R2I 전용이므로 T2I 방식 탭을 표시하지 
 
 MOSS 레이아웃과 Qwen LLM 강화 저장 항목은 목록에서 사용자용 이름으로 표시한다.
 
-신규 family 메뉴는 Anima·Illustrious·MOSS·Qwen 2.1 Turbo를 제공한다. FLUX 3 선택 메뉴는 제거하고 저장된 데이터는 유지한다. 모델 미설치 시 빈 옵션과 안내를 사용하여 프리셋 조회·편집을 허용한다. 빠르게 family를 전환해도 오래된 옵션 응답은 현재 선택을 덮어쓰지 않는다.
+신규 family 메뉴는 Anima·Illustrious·MOSS·Qwen 2.1 Turbo를 제공한다. 모델 미설치 시 빈 옵션과 안내를 사용하여 프리셋 조회·편집을 허용한다. 빠르게 family를 전환해도 오래된 옵션 응답은 현재 선택을 덮어쓰지 않는다.

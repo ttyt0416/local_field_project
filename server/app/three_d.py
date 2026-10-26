@@ -18,7 +18,8 @@ from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
     _queue_position,
-    _node_choices,
+    _missing_model_folders,
+    _resolve_model_inputs,
     _request_bytes,
     _request_json,
     cancel_comfy_generation,
@@ -54,13 +55,6 @@ _PRESETS: dict[str, dict[str, int | str]] = {
     "preview": {"steps": 12, "num_gaussians": 32768, "mesh_resolution": 192},
     "standard": {"steps": 20, "num_gaussians": 131072, "mesh_resolution": 256},
     "high": {"steps": 30, "num_gaussians": 262144, "mesh_resolution": 384},
-}
-_REQUIRED_MODELS = {
-    ("UNETLoader", "unet_name"): "triposplat_fp16.safetensors",
-    ("CLIPVisionLoader", "clip_name"): "dino_v3_vit_h.safetensors",
-    ("VAELoader", "vae_name"): "flux2-vae.safetensors",
-    ("VAELoader", "vae_name#splat"): "triposplat_vae_decoder_fp16.safetensors",
-    ("LoadBackgroundRemovalModel", "bg_removal_name"): "birefnet.safetensors",
 }
 _STAGE_BY_NODE = {
     **{node: "background_cleanup" for node in ("1", "2", "3", "4", "5", "6")},
@@ -362,6 +356,7 @@ def _build_prompt(request: ThreeDGenerationRequest, comfy_filename: str) -> tupl
     prompt["13"]["inputs"].update(seed=seed, num_gaussians=preset["num_gaussians"])
     prompt["14"]["inputs"]["resolution"] = preset["mesh_resolution"]
     prompt["15"]["inputs"]["filename_prefix"] = f"3d/LocalField_TripoSplat_{uuid.uuid4().hex[:12]}"
+    _resolve_model_inputs(prompt, _request_json("GET", "/object_info"))
     return prompt, seed
 
 
@@ -372,8 +367,7 @@ def _readiness() -> tuple[list[str], list[str]]:
         raise _ComfyUIError("TripoSplat workflow를 읽을 수 없습니다.") from exc
     object_info = _request_json("GET", "/object_info")
     missing_nodes = sorted({node["class_type"] for node in workflow.values()} - object_info.keys())
-    missing_models = [name for (kind, key), name in _REQUIRED_MODELS.items()
-                      if name not in _node_choices(object_info, kind, key.split("#")[0])]
+    missing_models = _missing_model_folders(workflow, object_info)
     return missing_nodes, missing_models
 
 

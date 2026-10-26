@@ -4,4 +4,4 @@
 
 MOSS I2I 거부 응답이 JSON으로 직렬화되어 422로 전달되는지 검증한다.
 
-MOSS 체크포인트는 diffusion_models/MOSS 하위폴더 기준으로 인식한다. Miao와 중첩 폴더의 임의 파일명이 선택·생성 그래프에 전달되고, 폴더 밖의 공식 파일명과 MOSS-other 폴더는 제외되는지 확인한다. 기본 모델은 MOSS/moss_image_sft_bf16.safetensors다.
+MOSS 체크포인트는 diffusion_models/MOSS 하위폴더 기준으로 인식한다. Miao와 중첩 폴더의 임의 파일명이 선택·생성 그래프에 전달되고, 폴더 밖의 공식 파일명과 MOSS-other 폴더는 제외되는지 확인한다. 기본 모델은 정렬된 첫 설치 경로다.

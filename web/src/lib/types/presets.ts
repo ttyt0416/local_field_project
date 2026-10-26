@@ -1,17 +1,16 @@
 import type { MossSettings } from './moss';
 
 export type ImageGenerationMode = 't2i' | 'i2i';
-export type ImageModelFamily = 'anima' | 'illustrious' | 'krea2' | 'flux3_klein' | 'moss' | 'qwen_image_2_1';
-export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_illustrious' | 'i2i_illustrious' | 't2i_krea2' | 'i2i_krea2' | 'i2i_flux3_klein' | 't2i_moss' | 'i2i_qwen_image_2_1';
+export type ImageModelFamily = 'anima' | 'illustrious' | 'krea2' | 'moss' | 'qwen_image_2_1';
+export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_illustrious' | 'i2i_illustrious' | 't2i_krea2' | 'i2i_krea2' | 't2i_moss' | 'i2i_qwen_image_2_1';
 export const imageModelFamilyTabs: { value: ImageModelFamily; label: string }[] = [
 	{ value: 'anima', label: 'ANIMA' },
 	{ value: 'illustrious', label: 'ILLUSTRIOUS' },
 	{ value: 'moss', label: 'MOSS' },
 	{ value: 'qwen_image_2_1', label: 'QWEN 2.1 TURBO' },
-	{ value: 'flux3_klein', label: 'FLUX 3 KLEIN' }
 ];
-export const imageGenerationFamilyTabs = imageModelFamilyTabs.filter((tab) => tab.value !== 'flux3_klein');
-export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2', flux3_klein: 'FLUX 3 Klein', moss: 'MOSS', qwen_image_2_1: 'Qwen 2.1 Turbo' };
+export const imageGenerationFamilyTabs = imageModelFamilyTabs;
+export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2', moss: 'MOSS', qwen_image_2_1: 'Qwen 2.1 Turbo' };
 export const imageGenerationModeTabs: { value: ImageGenerationMode; label: string }[] = [
 	{ value: 't2i', label: 'T2I' },
 	{ value: 'i2i', label: 'I2I' }
@@ -25,7 +24,6 @@ export const imagePresetCategories: { value: ImagePresetType; label: string; gen
 	{ value: 't2i_moss', label: 'T2I (MOSS)', generationMode: 't2i', modelFamily: 'moss' },
 	{ value: 't2i_krea2', label: 'T2I (Krea2)', generationMode: 't2i', modelFamily: 'krea2' },
 	{ value: 'i2i_krea2', label: 'I2I (Krea2)', generationMode: 'i2i', modelFamily: 'krea2' },
-	{ value: 'i2i_flux3_klein', label: 'I2I (FLUX 3 Klein)', generationMode: 'i2i', modelFamily: 'flux3_klein' }
 ];
 export type PresetType = ImagePresetType | 'video';
 export type VideoMode = 'i2v' | 'fl2v' | 'r2v';

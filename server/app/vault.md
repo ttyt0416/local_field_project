@@ -14,7 +14,6 @@
 
 Bulk 삭제는 삭제 가능한 Storage 파일을 먼저 모두 지운 뒤 DB row를 삭제한다. Storage 삭제 하나라도 실패하면 DB row를 유지한다. 해당 파일이 `media_assets` 또는 snapshot 밖의 다른 image/video generation에서 참조되면 Storage 원본은 보존한다.
 
-FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
 
 이미지 detail의 reference_images는 저장된 추가 참조 목록과 사용자별 읽기 URL을 반환한다. 새 참조 컬럼이 비어 있는 기존 row는 빈 목록으로 처리한다.
 

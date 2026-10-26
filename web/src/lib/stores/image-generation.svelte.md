@@ -4,7 +4,6 @@
 
 Anima·Illustrious와 T2I·I2I가 추가된 뒤에는 `model_family`, `generation_mode`, `source_file_id`, `source_image_url`, `denoise`도 선택적으로 전달한다. 상세 화면은 mode에 맞는 route와 family query로 이동하고 destination은 state를 한 번 소비한다. 브라우저 영구 저장소에는 generation 설정을 남기지 않는다.
 
-FLUX 3 Klein 편집은 `model_family="flux3_klein"`, `generation_mode="i2i"`, `i2i_flux3_klein` preset namespace로 구분한다. 신규 family 선택에서 Krea2는 제거하며 이전 생성 데이터는 유지한다.
 
 재생성 파라미터의 reference_images는 추가 참조의 file_id·filename·url을 순서대로 전달한다. 소스 이미지와 구분하며 localStorage에는 저장하지 않는다.
 

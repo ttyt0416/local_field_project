@@ -2,14 +2,14 @@
   "1": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "MiniMaxH3/DasiwaMinimaxH3_dasiwaHybridV1_int8.safetensors",
+      "unet_name": "__CHECKPOINT__",
       "weight_dtype": "default"
     }
   },
   "2": {
     "class_type": "CLIPLoader",
     "inputs": {
-      "clip_name": "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
+      "clip_name": "folder://MiniMaxH3/",
       "type": "minimax",
       "device": "default"
     }
@@ -17,13 +17,13 @@
   "3": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "MiniMaxH3/minimax_h3_video_vae_fp16.safetensors"
+      "vae_name": "folder://MiniMaxH3/Video/"
     }
   },
   "4": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "MiniMaxH3/minimax_h3_audio_vae_fp32.safetensors"
+      "vae_name": "folder://MiniMaxH3/Audio/"
     }
   },
   "5": {

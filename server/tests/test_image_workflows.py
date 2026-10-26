@@ -10,17 +10,24 @@ from uuid import uuid4
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from model_fixtures import model_object_info
+
 from app import comfyui
 from app.auth import UserResponse
 from app.configs.constants import settings
 
 
 class ImageWorkflowFamilyTest(unittest.TestCase):
+    def setUp(self):
+        request = patch.object(comfyui, "_request_json", return_value=model_object_info())
+        request.start()
+        self.addCleanup(request.stop)
+
     def _request(self, family: comfyui.ModelFamily = "anima") -> comfyui.ImageGenerationRequest:
         checkpoint = (
             "Anima/anima_aestheticV11.safetensors"
             if family == "anima"
-            else comfyui._EDIT_MODELS[family]["checkpoint"]
+            else "Qwen/custom.safetensors"
             if family in comfyui._EDIT_MODELS
             else "Illustrious/unholyDesireMixSinister_v80.safetensors"
         )
@@ -87,38 +94,9 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(workflow["5"]["inputs"]["clip"], ["1", 1])
         self.assertEqual(workflow["9"]["inputs"]["vae"], ["1", 2])
 
-    def test_flux3_edit_uses_reference_latents_and_image_aware_prompt_upsampling(self) -> None:
-        payload = self._request("flux3_klein")
-        payload.cfg = 1
-        workflow, seed = comfyui._build_prompt(payload, input_image="source.png")
-        self.assertEqual(seed, 123)
-        self.assertEqual(workflow["3"]["inputs"]["type"], "flux3")
-        self.assertEqual(workflow["4"]["inputs"]["vae_name"], "flux3-klein-vae.safetensors")
-        self.assertEqual(workflow["14"]["class_type"], "TextGenerate")
-        self.assertEqual(workflow["14"]["inputs"]["image"], ["11", 0])
-        self.assertEqual(workflow["5"]["inputs"]["text"], ["14", 0])
-        self.assertEqual(workflow["12"]["class_type"], "ReferenceMultiLatent")
-        self.assertEqual(workflow["12"]["inputs"]["images.image0"], ["11", 0])
-        self.assertEqual(workflow["8"]["inputs"]["positive"], ["12", 0])
-        self.assertEqual(workflow["8"]["inputs"]["negative"], ["12", 1])
-        self.assertEqual(workflow["8"]["inputs"]["latent_image"], ["12", 2])
-        self.assertEqual(workflow["8"]["inputs"]["denoise"], 1)
-
-    def test_flux3_multi_reference_order_is_shared_by_upsampler_and_diffusion(self) -> None:
-        request = self._request("flux3_klein")
-        graph, _ = comfyui._build_prompt(request, input_image="source.png", input_references=["person.png", "shirt.png"])
-        self.assertEqual(graph["103"]["inputs"]["image"], "person.png")
-        self.assertEqual(graph["106"]["inputs"]["image"], "shirt.png")
-        self.assertEqual(graph["12"]["inputs"]["images.image0"], ["11", 0])
-        self.assertEqual(graph["12"]["inputs"]["images.image1"], ["104", 0])
-        self.assertEqual(graph["12"]["inputs"]["images.image2"], ["107", 0])
-        self.assertEqual(graph["15"]["inputs"], {"images.image0": ["90", 0], "images.image1": ["105", 0], "images.image2": ["108", 0]})
-        self.assertEqual(graph["14"]["inputs"]["image"], ["15", 0])
-        self.assertEqual(graph["8"]["inputs"]["latent_image"], ["12", 2])
-
     def test_reference_upload_indices_are_complete_and_unique(self) -> None:
         request = comfyui.ImageToImageGenerationRequest(
-            **self._request("flux3_klein").model_dump(),
+            **self._request("qwen_image_2_1").model_dump(),
             source=comfyui.ImageSource(file_id="a" * 32),
             references=[comfyui.ImageSource(file_index=0), comfyui.ImageSource(file_id="b" * 32)],
         )
@@ -134,7 +112,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
 
     def test_multi_reference_submission_preserves_storage_ids_and_order(self) -> None:
         request = comfyui.ImageToImageGenerationRequest(
-            **self._request("flux3_klein").model_dump(),
+            **self._request("qwen_image_2_1").model_dump(),
             source=comfyui.ImageSource(file_id="a" * 32),
             references=[comfyui.ImageSource(file_id="b" * 32), comfyui.ImageSource(file_id="c" * 32)],
         )
@@ -149,15 +127,6 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
             asyncio.run(comfyui.create_image_to_image_generation(payload=request.model_dump_json(), files=[], user=UserResponse(id=uuid4(), username="tester")))
         self.assertEqual(submit.call_args.kwargs["input_references"], ["b" * 32 + ".png", "c" * 32 + ".png"])
         self.assertEqual([item["file_id"] for item in submit.call_args.kwargs["reference_images"]], ["b" * 32, "c" * 32])
-
-    def test_flux3_defaults_use_full_reference_edit_sampling(self) -> None:
-        request = comfyui.ImageToImageGenerationRequest(
-            model_family="flux3_klein", prompt="change the shirt to blue",
-            checkpoint=comfyui._EDIT_MODELS["flux3_klein"]["checkpoint"],
-            source=comfyui.ImageSource(file_index=0),
-        )
-        self.assertEqual((request.cfg, request.steps, request.denoise), (1, 16, 1))
-        self.assertEqual((request.sampler_name, request.scheduler), ("euler", "simple"))
 
     def test_edit_models_require_a_source_image(self) -> None:
         for family in comfyui._EDIT_MODELS:
@@ -193,28 +162,18 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         self.assertEqual(comfyui._node_choices(combo, "Node", "value"), ["a", "b"])
 
     def test_family_options_are_isolated(self) -> None:
-        object_info = {
-            "UNETLoader": {"input": {"required": {"unet_name": [["Anima/a.safetensors", "flux3-image-klein-int8-convrot.safetensors", "Other/x.safetensors"]]}}},
-            "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["Illustrious/i.safetensors", "Other/y.safetensors"]]}}},
-            "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [["Anima/lora.safetensors"]]}}},
-            "LoraLoader": {"input": {"required": {"lora_name": [["Illustrious/lora.safetensors"]]}}},
-            "CLIPLoader": {"input": {"required": {"clip_name": [["qwen3vl_4b_int8_convrot.safetensors", comfyui._FLUX3_PROMPT_UPSAMPLER]]}}},
-            "VAELoader": {"input": {"required": {"vae_name": [["qwen_image_vae.safetensors", "flux3-klein-vae.safetensors"]]}}},
-            "ReferenceMultiLatent": {}, "TextGenerate": {}, "BatchImagesNode": {}, "ResizeAndPadImage": {}, "ImageScaleToTotalPixels": {},
-            "KSampler": {"input": {"required": {"sampler_name": [["er_sde"]], "scheduler": [["simple"]]}}},
-        }
+        object_info = model_object_info()
+        object_info["UNETLoader"]["input"]["required"]["unet_name"] = [["Anima/a.safetensors", "Qwen/custom.safetensors", "Other/x.safetensors"]]
+        object_info["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"] = [["Illustrious/i.safetensors", "Other/y.safetensors"]]
+        object_info["LoraLoaderModelOnly"]["input"]["required"]["lora_name"] = [["Anima/lora.safetensors"]]
+        object_info["LoraLoader"] = {"input": {"required": {"lora_name": [["Illustrious/lora.safetensors"]]}}}
         with patch.object(comfyui, "_request_json", return_value=object_info):
             anima = comfyui._image_options("anima")
             illustrious = comfyui._image_options("illustrious")
-            flux = comfyui._image_options("flux3_klein")
         self.assertEqual(anima.checkpoints, ["Anima/a.safetensors"])
         self.assertEqual(anima.loras, ["Anima/lora.safetensors"])
         self.assertEqual(illustrious.checkpoints, ["Illustrious/i.safetensors"])
         self.assertEqual(illustrious.loras, ["Illustrious/lora.safetensors"])
-        self.assertEqual(flux.checkpoints, ["flux3-image-klein-int8-convrot.safetensors"])
-        self.assertEqual(flux.default_cfg, 1)
-        self.assertEqual(flux.default_steps, 16)
-        self.assertEqual(flux.loras, [])
 
     def test_missing_illustrious_checkpoint_keeps_preset_options_available(self) -> None:
         object_info = {
@@ -276,7 +235,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         with (
             patch.object(comfyui, "_image_options"),
             patch.object(comfyui, "_validate_model_choice"),
-            patch.object(comfyui, "_request_json", return_value={"prompt_id": "comfy-prompt"}),
+            patch.object(comfyui, "_request_json", side_effect=lambda method, *args: model_object_info() if method == "GET" else {"prompt_id": "comfy-prompt"}),
             patch.object(comfyui, "create_image_generation_record", return_value=(uuid4(), created_at)) as create_record,
         ):
             comfyui._submit_image_generation(payload, user)

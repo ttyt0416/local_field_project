@@ -6,28 +6,35 @@ from uuid import uuid4
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from model_fixtures import model_object_info
+
 from app import comfyui
 from app.auth import UserResponse
 from app.presets import PresetCreateRequest
 
 
 class Qwen21WorkflowTest(unittest.TestCase):
+    def setUp(self):
+        request = patch.object(comfyui, "_request_json", return_value=model_object_info())
+        request.start()
+        self.addCleanup(request.stop)
+
     def request(self, **values):
-        return comfyui.ImageToImageGenerationRequest(model_family="qwen_image_2_1", checkpoint=comfyui._EDIT_MODELS["qwen_image_2_1"]["checkpoint"], prompt="Replace the background", source={"file_index": 0}, seed=123, **{"prompt_enhancement_enabled": False, **values})
+        return comfyui.ImageToImageGenerationRequest(model_family="qwen_image_2_1", checkpoint="Qwen/custom.safetensors", prompt="Replace the background", source={"file_index": 0}, seed=123, **{"prompt_enhancement_enabled": False, **values})
 
     def options(self):
         model = comfyui._EDIT_MODELS["qwen_image_2_1"]
         def node(**values):
             return {"input": {"required": {key: [choices] for key, choices in values.items()}}}
-        data = {name: {} for name in model["nodes"]}
-        data.update({"UNETLoader": node(unet_name=[model["checkpoint"], "qwen_image_2.1_bf16.safetensors"]), "CLIPLoader": node(clip_name=[model["text_encoder"]]), "VAELoader": node(vae_name=[model["vae"]]), "KSampler": node(sampler_name=["euler", "heun"], scheduler=["simple", "normal"])})
+        data = {**model_object_info(), **{name: {} for name in model["nodes"]}}
+        data.update({"UNETLoader": node(unet_name=["Qwen/custom.safetensors", "Qwen/nested/renamed.safetensors", "Qwen-other/ignored.safetensors", "qwen_image_2.1_bf16.safetensors"]), "CLIPLoader": node(clip_name=["Qwen/Encoder/renamed.safetensors"]), "VAELoader": node(vae_name=["Qwen/renamed.safetensors"]), "KSampler": node(sampler_name=["euler", "heun"], scheduler=["simple", "normal"])})
         with patch.object(comfyui, "_request_json", return_value=data):
             return comfyui._image_options("qwen_image_2_1")
 
-    def test_turbo_defaults_and_options_exclude_base_checkpoint(self):
+    def test_turbo_defaults_and_options_accept_all_qwen_folder_names(self):
         request, options = self.request(), self.options()
         self.assertEqual((request.steps, request.cfg, request.denoise), (8, 1, 1))
-        self.assertEqual(options.checkpoints, [request.checkpoint])
+        self.assertEqual(options.checkpoints, [request.checkpoint, "Qwen/nested/renamed.safetensors"])
         self.assertEqual(options.default_steps, 8)
         self.assertEqual(options.samplers, ["euler"])
         self.assertEqual(options.schedulers, [comfyui._QWEN21_TURBO_SCHEDULER])
@@ -81,7 +88,7 @@ class Qwen21WorkflowTest(unittest.TestCase):
         self.assertEqual(graph["34"]["inputs"]["on_false"], ["31", 0])
         self.assertEqual(graph["33"]["inputs"]["string_b"], "")
         self.assertEqual(graph["31"]["class_type"], "TextGenerate")
-        self.assertEqual(graph["30"]["inputs"]["clip_name"], comfyui._QWEN21_PROMPT_ENHANCER)
+        self.assertEqual(graph["30"]["inputs"]["clip_name"], "Qwen/PromptEnhancer/renamed.safetensors")
         self.assertTrue(graph["31"]["inputs"]["thinking"])
         self.assertEqual(graph["31"]["inputs"]["max_length"], 4096)
         self.assertEqual(graph["31"]["inputs"]["sampling_mode.top_k"], 20)

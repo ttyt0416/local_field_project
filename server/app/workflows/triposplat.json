@@ -8,7 +8,7 @@
   "2": {
     "class_type": "LoadBackgroundRemovalModel",
     "inputs": {
-      "bg_removal_name": "birefnet.safetensors"
+      "bg_removal_name": "folder://TripoSplat/"
     }
   },
   "3": {
@@ -65,20 +65,20 @@
   "7": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "triposplat_fp16.safetensors",
+      "unet_name": "folder://TripoSplat/",
       "weight_dtype": "default"
     }
   },
   "8": {
     "class_type": "CLIPVisionLoader",
     "inputs": {
-      "clip_name": "dino_v3_vit_h.safetensors"
+      "clip_name": "folder://TripoSplat/"
     }
   },
   "9": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "flux2-vae.safetensors"
+      "vae_name": "folder://TripoSplat/Image/"
     }
   },
   "10": {
@@ -128,7 +128,7 @@
   "12": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "triposplat_vae_decoder_fp16.safetensors"
+      "vae_name": "folder://TripoSplat/Splat/"
     }
   },
   "13": {

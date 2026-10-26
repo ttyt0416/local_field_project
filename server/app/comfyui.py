@@ -62,30 +62,21 @@ _MAX_IMAGE_INPUT_SIZE = 50 * 1024 * 1024
 _FILE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_SAMPLER = "er_sde"
 _DEFAULT_SCHEDULER = "simple"
-_QWEN21_PROMPT_ENHANCER = "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors"
+_QWEN21_PROMPT_ENHANCER = "folder://Qwen/PromptEnhancer/"
 _QWEN21_PE_NODES = ("TextGenerate", "BatchImagesNode", "ResizeAndPadImage", "StringCompare", "ComfySwitchNode")
 _QWEN21_TURBO_SCHEDULER = "qwen_2_1_turbo"
 _QWEN21_TURBO_SIGMAS = "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0"
 _EDIT_MODELS = {
     "qwen_image_2_1": {
-        "checkpoint": "Qwen/qwen_image_2.1_turbo_bf16.safetensors",
-        "text_encoder": "qwen3vl_8b_int8_convrot.safetensors",
-        "vae": "qwen_image_2.1_vae_bf16.safetensors",
+        "prefix": "Qwen/",
+        "text_encoder": "folder://Qwen/Encoder/",
+        "vae": "folder://Qwen/",
         "clip_type": "qwen_image",
         "steps": 8,
         "scheduler": _QWEN21_TURBO_SCHEDULER,
         "nodes": ("TextEncodeQwenImage21", "QwenImage21Cache", "ManualSigmas", "SamplerCustomAdvanced", "KSamplerSelect", "RandomNoise", "CFGGuider", "ImageScaleToTotalPixels"),
     },
-    "flux3_klein": {
-        "checkpoint": "flux3-image-klein-int8-convrot.safetensors",
-        "text_encoder": "qwen3vl_4b_int8_convrot.safetensors",
-        "vae": "flux3-klein-vae.safetensors",
-        "clip_type": "flux3",
-        "steps": 16,
-        "nodes": ("ReferenceMultiLatent", "TextGenerate", "BatchImagesNode", "ResizeAndPadImage", "ImageScaleToTotalPixels"),
-    },
 }
-_FLUX3_PROMPT_UPSAMPLER = "qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors"
 _PROGRESS_UNSET = object()
 _progress_lock = threading.Lock()
 _progress_states: dict[str, dict[str, Any]] = {}
@@ -96,11 +87,9 @@ class LoraSelection(BaseModel):
     strength: float = Field(default=1.0)
 
 
-ModelFamily = Literal["anima", "illustrious", "flux3_klein", "moss", "qwen_image_2_1"]
-_MOSS_CHECKPOINT = "MOSS/moss_image_sft_bf16.safetensors"
-_MOSS_ENCODER = "qwen3.5_9b_int8_convrot.safetensors"
-_MOSS_VAE = "flux2-vae_small.safetensors"
-_MOSS_DMD_LORA = "MOSS/lora_latest.safetensors"
+ModelFamily = Literal["anima", "illustrious", "moss", "qwen_image_2_1"]
+_MOSS_ENCODER = "folder://MOSS/"
+_MOSS_VAE = "folder://MOSS/"
 
 
 class ImageSource(BaseModel):
@@ -920,43 +909,35 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
     if model_family == "anima":
         checkpoints = _family_choices(data, "UNETLoader", "unet_name", "Anima/")
         loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "Anima/")
-        preferred_checkpoint = "Anima/anima_aestheticV11.safetensors"
         default_cfg = 4.0
         default_steps = 30
         preferred_sampler = _DEFAULT_SAMPLER
         preferred_scheduler = _DEFAULT_SCHEDULER
     elif model_family == "moss":
         checkpoints = _family_choices(data, "UNETLoader", "unet_name", "MOSS/")
-        loras = [name for name in _node_choices(data, "LoraLoaderModelOnly", "lora_name") if "moss" in name.casefold()]
-        preferred_checkpoint = _MOSS_CHECKPOINT
+        loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "MOSS/")
         default_cfg, default_steps = 3.0, 50
         preferred_sampler, preferred_scheduler = "euler", "sgm_uniform"
-        if _MOSS_ENCODER not in _node_choices(data, "CLIPLoader", "clip_name") or _MOSS_VAE not in _node_choices(data, "VAELoader", "vae_name"):
+        if not _folder_choices(data, "CLIPLoader", "clip_name", _MOSS_ENCODER) or not _folder_choices(data, "VAELoader", "vae_name", _MOSS_VAE):
             raise _ComfyUIError("MOSS 텍스트 인코더 또는 VAE가 아직 설치되지 않았습니다.")
         if "moss_image" not in _node_choices(data, "CLIPLoader", "type") or "EmptyFlux2LatentImage" not in data:
             raise _ComfyUIError("MOSS 지원 ComfyUI 업데이트와 재시작이 필요합니다.")
     elif model_family in _EDIT_MODELS:
         model = _EDIT_MODELS[model_family]
-        checkpoints = [name for name in _node_choices(data, "UNETLoader", "unet_name") if name == model["checkpoint"]]
+        checkpoints = _family_choices(data, "UNETLoader", "unet_name", model["prefix"])
         loras = []
-        preferred_checkpoint = model["checkpoint"]
         default_cfg = 1.0
         default_steps = model["steps"]
         preferred_sampler = "euler"
         preferred_scheduler = model.get("scheduler", "simple")
-        clip_names = _node_choices(data, "CLIPLoader", "clip_name")
-        vae_names = _node_choices(data, "VAELoader", "vae_name")
         required_encoders = [model["text_encoder"]]
-        if model_family == "flux3_klein":
-            required_encoders.append(_FLUX3_PROMPT_UPSAMPLER)
-        if any(name not in clip_names for name in required_encoders) or model["vae"] not in vae_names:
+        if any(not _folder_choices(data, "CLIPLoader", "clip_name", name) for name in required_encoders) or not _folder_choices(data, "VAELoader", "vae_name", model["vae"]):
             raise _ComfyUIError("편집 모델의 텍스트 인코더 또는 VAE가 설치되지 않았습니다.")
         if any(name not in data for name in model["nodes"]):
             raise _ComfyUIError("이미지 편집에 필요한 ComfyUI 노드가 없습니다. ComfyUI를 업데이트하고 재시작해 주세요.")
     else:
         checkpoints = _family_choices(data, "CheckpointLoaderSimple", "ckpt_name", "Illustrious/")
         loras = _family_choices(data, "LoraLoader", "lora_name", "Illustrious/")
-        preferred_checkpoint = "Illustrious/unholyDesireMixSinister_v80.safetensors"
         default_cfg = 4.0
         default_steps = 30
         preferred_sampler = _DEFAULT_SAMPLER
@@ -970,10 +951,10 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
         raise _ComfyUIError(f"ComfyUI에서 {model_family.title()} 체크포인트를 찾을 수 없습니다.")
     if not samplers or not schedulers:
         raise _ComfyUIError("ComfyUI에서 sampler 또는 scheduler 목록을 찾을 수 없습니다.")
-    default_checkpoint = preferred_checkpoint if preferred_checkpoint in checkpoints else next(iter(checkpoints), "")
+    default_checkpoint = next(iter(checkpoints), "")
     return ImageGenerationOptions(
         model_family=model_family,
-        prompt_enhancer_available=model_family == "qwen_image_2_1" and _QWEN21_PROMPT_ENHANCER in _node_choices(data, "CLIPLoader", "clip_name") and all(name in data for name in _QWEN21_PE_NODES),
+        prompt_enhancer_available=model_family == "qwen_image_2_1" and bool(_folder_choices(data, "CLIPLoader", "clip_name", _QWEN21_PROMPT_ENHANCER)) and all(name in data for name in _QWEN21_PE_NODES),
         checkpoints=checkpoints,
         loras=loras,
         embeddings=embeddings,
@@ -991,6 +972,48 @@ def _family_choices(
     data: dict[str, Any], node_name: str, input_name: str, prefix: str
 ) -> list[str]:
     return [value for value in _node_choices(data, node_name, input_name) if value.startswith(prefix)]
+
+
+def _folder_choices(data: dict[str, Any], node_name: str, input_name: str, folder: str) -> list[str]:
+    return _family_choices(data, node_name, input_name, folder.removeprefix("folder://"))
+
+
+_MODEL_LOADER_INPUTS = {
+    "UNETLoader": "unet_name",
+    "CheckpointLoaderSimple": "ckpt_name",
+    "CLIPLoader": "clip_name",
+    "CLIPVisionLoader": "clip_name",
+    "VAELoader": "vae_name",
+    "LoadBackgroundRemovalModel": "bg_removal_name",
+    "MiniMaxH3PDDAccApply": "pdd_file",
+    "MinimaxH3LatentUpscaler3D": "model_name",
+}
+
+
+def _model_folder_inputs(prompt: dict[str, Any]) -> list[tuple[dict[str, Any], str, str]]:
+    result = []
+    for node in prompt.values():
+        key = _MODEL_LOADER_INPUTS.get(node.get("class_type"))
+        value = node.get("inputs", {}).get(key)
+        if key and isinstance(value, str) and value.startswith("folder://"):
+            result.append((node, key, value))
+    return result
+
+
+def _missing_model_folders(prompt: dict[str, Any], data: dict[str, Any]) -> list[str]:
+    return sorted({
+        f"{node['class_type']}.{key}: {value.removeprefix('folder://')}"
+        for node, key, value in _model_folder_inputs(prompt)
+        if not _folder_choices(data, node["class_type"], key, value)
+    })
+
+
+def _resolve_model_inputs(prompt: dict[str, Any], data: dict[str, Any]) -> None:
+    for node, key, value in _model_folder_inputs(prompt):
+        choices = _folder_choices(data, node["class_type"], key, value)
+        if not choices:
+            raise _ComfyUIError(f"{node['class_type']}.{key} 모델을 {value.removeprefix('folder://')} 폴더에서 찾을 수 없습니다.")
+        node["inputs"][key] = choices[0]
 
 
 def _installed_family_files(category: str, prefix: str) -> list[str]:
@@ -1018,7 +1041,7 @@ def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list
 
 
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
-    family_name = {"anima": "Anima", "illustrious": "Illustrious", "flux3_klein": "FLUX 3 Klein", "moss": "MOSS", "qwen_image_2_1": "Qwen Image 2.1 Turbo"}[payload.model_family]
+    family_name = {"anima": "Anima", "illustrious": "Illustrious", "moss": "MOSS", "qwen_image_2_1": "Qwen Image 2.1 Turbo"}[payload.model_family]
     if options.model_family != payload.model_family or payload.checkpoint not in options.checkpoints:
         raise HTTPException(status_code=422, detail=f"선택한 {family_name} 체크포인트를 찾을 수 없습니다.")
     lora_names = [lora.name for lora in payload.loras]
@@ -1048,8 +1071,6 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
     if payload.model_family in _EDIT_MODELS:
         if payload.width % 32 or payload.height % 32:
             raise HTTPException(status_code=422, detail="편집 이미지 가로·세로 크기는 32의 배수여야 합니다.")
-        if payload.model_family == "flux3_klein" and payload.cfg != 1:
-            raise HTTPException(status_code=422, detail="FLUX 3 Klein의 CFG는 1로 설정해 주세요.")
         if isinstance(payload, ImageToImageGenerationRequest) and payload.denoise != 1:
             raise HTTPException(status_code=422, detail="참조 이미지 편집의 Denoise는 1로 설정해 주세요.")
     if payload.width % 8 or payload.height % 8:
@@ -1084,6 +1105,19 @@ def _build_prompt(
     denoise: float = 1.0,
     input_references: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
+    prompt, seed = _build_unresolved_prompt(payload, input_image=input_image, denoise=denoise, input_references=input_references)
+    if _model_folder_inputs(prompt):
+        _resolve_model_inputs(prompt, _request_json("GET", "/object_info"))
+    return prompt, seed
+
+
+def _build_unresolved_prompt(
+    payload: ImageGenerationRequest,
+    *,
+    input_image: str | None = None,
+    denoise: float = 1.0,
+    input_references: list[str] | None = None,
+) -> tuple[dict[str, dict[str, Any]], int]:
     if payload.model_family == "moss":
         if input_image or input_references or isinstance(payload, ImageToImageGenerationRequest):
             raise HTTPException(status_code=422, detail="MOSS는 T2I에서만 사용할 수 있습니다.")
@@ -1091,9 +1125,7 @@ def _build_prompt(
     if payload.model_family in _EDIT_MODELS:
         if not input_image:
             raise HTTPException(status_code=422, detail="선택한 편집 모델에는 소스 이미지가 필요합니다.")
-        if payload.model_family == "qwen_image_2_1":
-            return _build_qwen21_edit_prompt(payload, input_image, input_references or [])
-        return _build_edit_prompt(payload, input_image, input_references or [])
+        return _build_qwen21_edit_prompt(payload, input_image, input_references or [])
     seed = payload.seed if payload.seed is not None else secrets.randbelow(_MAX_SEED + 1)
     positive_prompt = _effective_positive_prompt(payload)
     negative_prompt = _effective_negative_prompt(payload)
@@ -1108,14 +1140,14 @@ def _build_prompt(
                 "3": {
                     "class_type": "CLIPLoader",
                     "inputs": {
-                        "clip_name": "qwen_3_06b_base.safetensors",
+                        "clip_name": "folder://Anima/",
                         "type": "stable_diffusion",
                         "device": "default",
                     },
                 },
                 "4": {
                     "class_type": "VAELoader",
-                    "inputs": {"vae_name": "qwen_image_vae.safetensors"},
+                    "inputs": {"vae_name": "folder://Anima/"},
                 },
             }
         )
@@ -1294,56 +1326,6 @@ def _build_qwen21_edit_prompt(payload: ImageGenerationRequest, input_image: str,
         graph["34"] = {"class_type": "ComfySwitchNode", "inputs": {"switch": ["33", 0], "on_true": _effective_positive_prompt(payload), "on_false": ["31", 0]}}
         graph["12"]["inputs"]["prompt"] = ["34", 0]
     return graph, seed
-
-
-def _build_edit_prompt(payload: ImageGenerationRequest, input_image: str, input_references: list[str]) -> tuple[dict[str, dict[str, Any]], int]:
-    model = _EDIT_MODELS[payload.model_family]
-    seed = payload.seed if payload.seed is not None else secrets.randbelow(_MAX_SEED + 1)
-    prompt = {
-        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": payload.checkpoint, "weight_dtype": "default"}},
-        "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": model["text_encoder"], "type": model["clip_type"], "device": "default"}},
-        "4": {"class_type": "VAELoader", "inputs": {"vae_name": model["vae"]}},
-        "7": {"class_type": "LoadImage", "inputs": {"image": input_image}},
-        "11": {"class_type": "ImageScale", "inputs": {"image": ["7", 0], "upscale_method": "lanczos", "width": payload.width, "height": payload.height, "crop": "disabled"}},
-    }
-    prompt["13"] = {"class_type": "CLIPLoader", "inputs": {"clip_name": _FLUX3_PROMPT_UPSAMPLER, "type": "flux3", "device": "default"}}
-    prompt["14"] = {
-        "class_type": "TextGenerate",
-        "inputs": {
-            "clip": ["13", 0], "image": ["11", 0], "prompt": _effective_positive_prompt(payload),
-            "system_prompt": (Path(__file__).parent / "workflows" / "flux3_klein_edit_upsampler.txt").read_text(encoding="utf-8"),
-            "max_length": 3584, "sampling_mode": "on", "sampling_mode.temperature": 1.0,
-            "sampling_mode.top_k": 1, "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
-            "sampling_mode.repetition_penalty": 1.05, "sampling_mode.seed": seed,
-            "thinking": False, "use_default_template": True, "mtp": "off",
-        },
-    }
-    prompt["5"] = {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": ["14", 0]}}
-    prompt["6"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}}
-    prompt["12"] = {
-        "class_type": "ReferenceMultiLatent",
-        "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["4", 0], "resolution": "keep resolution", "images.image0": ["11", 0]},
-    }
-    if input_references:
-        prompt["90"] = {"class_type": "ResizeAndPadImage", "inputs": {"image": ["11", 0], "target_width": 1024, "target_height": 1024, "padding_color": "white", "interpolation": "lanczos"}}
-        batch_images = {"images.image0": ["90", 0]}
-        for index, filename in enumerate(input_references, start=1):
-            load_id, scale_id, pad_id = str(100 + index * 3), str(101 + index * 3), str(102 + index * 3)
-            prompt[load_id] = {"class_type": "LoadImage", "inputs": {"image": filename}}
-            prompt[scale_id] = {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": [load_id, 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 32}}
-            prompt[pad_id] = {"class_type": "ResizeAndPadImage", "inputs": {"image": [scale_id, 0], "target_width": 1024, "target_height": 1024, "padding_color": "white", "interpolation": "lanczos"}}
-            prompt["12"]["inputs"][f"images.image{index}"] = [scale_id, 0]
-            batch_images[f"images.image{index}"] = [pad_id, 0]
-        prompt["15"] = {"class_type": "BatchImagesNode", "inputs": batch_images}
-        prompt["14"]["inputs"]["image"] = ["15", 0]
-    positive, negative, latent = ["12", 0], ["12", 1], ["12", 2]
-    prompt["8"] = {
-        "class_type": "KSampler",
-        "inputs": {"model": ["1", 0], "seed": seed, "steps": payload.steps, "cfg": payload.cfg, "sampler_name": payload.sampler_name, "scheduler": payload.scheduler, "positive": positive, "negative": negative, "latent_image": latent, "denoise": 1.0},
-    }
-    prompt["9"] = {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["4", 0]}}
-    prompt["10"] = {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": f"LocalField_{payload.model_family}_I2I"}}
-    return prompt, seed
 
 
 def _stored_image_outputs(generation: dict[str, Any], user_id: uuid.UUID) -> list[ImageOutput]:

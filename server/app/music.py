@@ -20,7 +20,8 @@ from .comfyui import (
     _ComfyUIError,
     _VLLMError,
     _queue_position,
-    _node_choices,
+    _missing_model_folders,
+    _resolve_model_inputs,
     _request_bytes,
     _request_json,
     _request_structured_object,
@@ -45,7 +46,6 @@ from .storage import StorageError, enabled as storage_enabled, read_url as stora
 
 router = APIRouter(prefix="/generation/music", tags=["music generation"])
 _WORKFLOW_PATH = Path(__file__).with_name("workflows") / "music_yue2.json"
-_CHECKPOINT = "yue2_3b_int8_convrot.safetensors"
 _MAX_SEED = 2**53 - 1
 _MUSIC_PROMPT_LANGUAGE_CHARS = {
     "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
@@ -425,6 +425,7 @@ def _build_prompt(request: MusicGenerationRequest) -> tuple[dict[str, Any], int]
         prompt["3"]["inputs"]["abc"] = "" if request.planning_mode == "off" else request.abc.strip()
     prompt["6"]["inputs"]["seed"] = seed
     prompt["8"]["inputs"]["filename_prefix"] = f"audio/LocalField_YuE2_{uuid.uuid4().hex[:12]}"
+    _resolve_model_inputs(prompt, _request_json("GET", "/object_info"))
     return prompt, seed
 
 
@@ -435,8 +436,7 @@ def _readiness() -> list[str]:
         raise _ComfyUIError("YuE2 workflow를 읽을 수 없습니다.") from exc
     object_info = _request_json("GET", "/object_info")
     missing = sorted({node["class_type"] for node in workflow.values()} - object_info.keys())
-    if _CHECKPOINT not in _node_choices(object_info, "CheckpointLoaderSimple", "ckpt_name"):
-        missing.append(_CHECKPOINT)
+    missing.extend(_missing_model_folders(workflow, object_info))
     return missing
 
 
