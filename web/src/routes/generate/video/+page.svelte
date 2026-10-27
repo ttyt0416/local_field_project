@@ -720,6 +720,7 @@
 			json: {
 				prompt: prompt.trim(),
 				segment_prompt: serializeSegmentScenes(segmentScenes[index]),
+				scenes: segmentScenes[index].map((scene) => scene.trim()),
 				mode: index === 0 ? mode : continuationMode,
 				duration: segmentDuration(index),
 				segment_index: index,

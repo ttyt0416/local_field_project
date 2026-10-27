@@ -300,6 +300,7 @@ class VideoPromptReference(BaseModel):
 class VideoPromptEnhancementRequest(BaseModel):
     prompt: str = Field(max_length=5000)
     segment_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
+    scenes: list[str] | None = Field(default=None, min_length=1, max_length=360)
     mode: Literal["i2v", "fl2v", "r2v"]
     duration: float = Field(default=5)
     segment_index: int = Field(default=0, ge=0, le=359)
@@ -310,9 +311,19 @@ class VideoPromptEnhancementRequest(BaseModel):
 
     @model_validator(mode="after")
     def prompt_source_required(self) -> "VideoPromptEnhancementRequest":
-        if not self.prompt.strip() and not (self.segment_prompt or "").strip():
+        if not self.prompt.strip() and not (self.segment_prompt or "").strip() and not self.scenes:
             raise ValueError("전체 또는 구간 동영상 프롬프트가 필요합니다.")
         return self
+
+    @field_validator("scenes")
+    @classmethod
+    def valid_scenes(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        scenes = [scene.strip() for scene in value]
+        if any(not scene for scene in scenes) or sum(map(len, scenes)) > 5000:
+            raise ValueError("장면은 비어 있을 수 없으며 합계 5000자 이하여야 합니다.")
+        return scenes
 
     @field_validator("prompt_output_languages")
     @classmethod
@@ -334,6 +345,7 @@ class _VideoPromptShot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     start_ms: int = Field(ge=0)
+    scene_id: int | None = Field(default=None, ge=1, le=360, strict=True)
     style: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_LIMITS["style"])
     timeline: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_LIMITS["timeline"])
     camera: str = Field(min_length=1, max_length=_VIDEO_PROMPT_FIELD_LIMITS["camera"])
@@ -1056,9 +1068,9 @@ def _video_prompt_pattern(languages: Sequence[str]) -> str:
     return rf"^{visible_content}(?:{content}*{visible_content})?$"
 
 
-def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode: str = "i2v") -> dict[str, Any]:
+def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode: str = "i2v", *, scene_count: int = 0) -> dict[str, Any]:
     duration_ms = max(1, round(duration * 1000))
-    shot_limit = max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
+    shot_limit = scene_count or max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
     def text_field(field: str) -> dict[str, Any]:
         pattern = r"^\S(?:[\s\S]*\S)?$"
         return {"type": "string", "minLength": 1, "maxLength": _VIDEO_PROMPT_FIELD_LIMITS[field], "pattern": pattern}
@@ -1066,6 +1078,7 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode:
     overall_fields = (*_VIDEO_PROMPT_REFERENCE_FIELDS, *_VIDEO_PROMPT_OVERALL_FIELDS) if mode == "r2v" else _VIDEO_PROMPT_OVERALL_FIELDS
     shot_properties = {
         "start_ms": {"type": "integer", "minimum": 0, "maximum": duration_ms - 1},
+        **({"scene_id": {"type": "integer", "minimum": 1, "maximum": scene_count}} if scene_count else {}),
         **{
             field: text_field(field)
             for field in _VIDEO_PROMPT_SHOT_FIELDS
@@ -1076,12 +1089,12 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode:
         "properties": {
             "shots": {
                 "type": "array",
-                "minItems": 1,
+                "minItems": scene_count or 1,
                 "maxItems": shot_limit,
                 "items": {
                     "type": "object",
                     "properties": shot_properties,
-                    "required": ["start_ms", *_VIDEO_PROMPT_SHOT_FIELDS],
+                    "required": list(shot_properties),
                     "additionalProperties": False,
                 },
             },
@@ -1127,17 +1140,41 @@ def _assemble_video_prompt(fields: dict[str, Any], mode: str = "i2v", duration: 
     return _normalize_video_reference_markers(contents)
 
 
-def _validate_video_prompt_fields(fields: dict[str, Any], mode: str = "i2v") -> dict[str, Any]:
+def _validate_video_prompt_fields(fields: dict[str, Any], mode: str = "i2v", *, scene_count: int = 0, duration: float | None = None) -> dict[str, Any]:
     try:
         model = _VideoReferencePromptFields if mode == "r2v" else _VideoPromptFields
-        return model.model_validate(fields).model_dump()
+        validated = model.model_validate(fields).model_dump(exclude_none=True)
     except ValidationError as exc:
-        raise _VLLMError("vLLM 구조화 동영상 프롬프트에 필수 shot field가 없습니다.") from exc
+        raise _VLLMError("vLLM 구조화 동영상 프롬프트의 필수 shot field가 없거나 유효하지 않습니다.", provider_response=fields) from exc
+    shots = validated["shots"]
+    if scene_count:
+        if len(shots) != scene_count:
+            raise _VLLMError(f"vLLM 샷 수가 입력 장면 수({scene_count}개)와 일치하지 않습니다.", provider_response=fields)
+        if [shot.get("scene_id") for shot in shots] != list(range(1, scene_count + 1)):
+            raise _VLLMError("vLLM 샷의 장면 번호가 누락·중복되었거나 입력 순서와 다릅니다.", provider_response=fields)
+    starts = [shot["start_ms"] for shot in shots]
+    if starts[0] != 0 or any(current <= previous for previous, current in zip(starts, starts[1:])):
+        raise _VLLMError("vLLM 샷은 0초부터 시작하고 시간 순서대로 이어져야 합니다.", provider_response=fields)
+    if duration is not None and starts[-1] >= max(1, round(duration * 1000)):
+        raise _VLLMError("vLLM 샷 시작 시각이 현재 구간 길이를 벗어났습니다.", provider_response=fields)
+    return validated
+
+
+def _video_prompt_scenes(payload: VideoPromptEnhancementRequest) -> list[str]:
+    if payload.scenes is not None:
+        return payload.scenes
+    source = payload.segment_prompt or payload.prompt
+    headings = list(re.finditer(
+        r"(?im)^[ \t]*(?:\[(?:scene|shot|장면|샷)[ \t]*\d+\][ \t]*[:：.]?|(?:scene|shot|장면|샷)[ \t]*\d+[ \t]*[:：.)-])[ \t]*",
+        source,
+    ))
+    return [source[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(source)].strip()
+            for index, heading in enumerate(headings)]
 
 
 def _video_prompt_token_budget(payload: VideoPromptEnhancementRequest) -> int:
-    source = payload.segment_prompt or payload.prompt
-    shot_count = max(1, len(re.findall(r"(?im)^\s*\[?(?:scene|shot|장면|샷)\s*\d+", source)))
+    source = "\n".join(payload.scenes) if payload.scenes else payload.segment_prompt or payload.prompt
+    shot_count = max(1, len(_video_prompt_scenes(payload)))
     budget = 1024 + shot_count * 1024 + (1536 if payload.mode == "r2v" else 0)
     if any(language != "en" for language in payload.prompt_output_languages):
         budget += 1024
@@ -1147,6 +1184,16 @@ def _video_prompt_token_budget(payload: VideoPromptEnhancementRequest) -> int:
 
 def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPromptEnhancementResponse:
     languages = payload.prompt_output_languages
+    scenes = _video_prompt_scenes(payload)
+    if scenes and (any(not scene for scene in scenes) or len(scenes) > min(360, max(1, round(payload.duration * 1000)))):
+        raise HTTPException(status_code=422, detail="각 장면의 내용을 입력하고 구간 길이 안에 배치할 수 있는 장면 수를 사용하세요.")
+    scene_contract = (
+        f"Return exactly {len(scenes)} shots, one per scene_manifest entry in its given order. "
+        "Copy each entry's scene_id into its shot and keep that scene's actions in that shot. "
+        "Do not merge, omit, reorder, or add scenes, even for continuous motion. "
+        "This explicit scene contract overrides every single-shot or continuous-motion recommendation."
+        if scenes else "No explicit scene boundaries were supplied. Choose cuts only when needed."
+    )
     references = "\n".join(json.dumps({
         "label": reference.label, "role": reference.role, "filename": reference.filename,
         "preview": "attached" if reference.image_data_url else "unavailable",
@@ -1155,7 +1202,9 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
         system_prompt=f"{VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT}\n\n{VIDEO_PROMPT_ENHANCEMENT_MODE_PROMPTS[payload.mode]}",
         user_prompt=VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT.format(
             prompt=payload.prompt.strip(),
-            segment_prompt=(payload.segment_prompt or payload.prompt).strip(),
+            segment_prompt=(payload.segment_prompt or ("\n\n".join(f"[Scene {index}]\n{scene}" for index, scene in enumerate(scenes, start=1))) or payload.prompt).strip(),
+            scene_contract=scene_contract,
+            scenes=json.dumps([{"scene_id": index, "instruction": scene} for index, scene in enumerate(scenes, start=1)], ensure_ascii=False),
             mode=payload.mode,
             duration=f"{payload.duration:g}",
             segment_number=payload.segment_index + 1,
@@ -1167,10 +1216,10 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
         max_tokens=_video_prompt_token_budget(payload),
         temperature=0.6,
         timeout_seconds=_VIDEO_PROMPT_TIMEOUT_SECONDS,
-        schema=_video_prompt_fields_schema(languages, payload.duration, payload.mode),
+        schema=_video_prompt_fields_schema(languages, payload.duration, payload.mode, scene_count=len(scenes)),
         name="video_prompt_shots",
         image_inputs=[(reference.label, reference.image_data_url) for reference in payload.references if reference.image_data_url],
-    ), payload.mode)
+    ), payload.mode, scene_count=len(scenes), duration=payload.duration)
     contents = _assemble_video_prompt(fields, payload.mode, payload.duration, has_images=any(reference.role in {"first_frame", "continuation_frame"} for reference in payload.references))
     return VideoPromptEnhancementResponse(improved_prompt=VideoPromptEnhancementContent(contents=contents))
 

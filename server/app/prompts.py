@@ -72,6 +72,7 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "Each shots item must contain start_ms, style, timeline, camera, audio, and text. "
     "Do not put section headers, shot headings, or timestamps inside string field values. "
     "If the user divides the request into scenes or shots, follow each scene or shot description as closely as possible and preserve every defined shot as a separate shots item in the same order, including each requested action. "
+    "When scene_manifest contains entries, it is authoritative: return exactly one shot per entry in order and copy its scene_id. Explicit scene boundaries take priority over all continuity and single-shot recommendations in every mode. Never merge separate entries into action beats of one shot. "
     "Otherwise, keep important continuous action in one shot when continuity matters and add a cut only for meaningful new information about subject, space, state, viewpoint, or time. "
     "Fill missing motion details with physically plausible motion, gravity, contact, momentum, object interaction, and cause and effect. "
     "Make every action physically and narratively achievable within the supplied duration. "
@@ -120,14 +121,14 @@ VIDEO_PROMPT_ENHANCEMENT_MODE_PROMPTS = {
     "i2v": (
         "I2V: <Picture 1>, when supplied, is the actual opening frame at 0 seconds. "
         "Describe the visible starting state, action onset, continuous development, and resulting reaction. "
-        "Preserve the source image's style rather than imposing a new medium. Keep continuous movement in one shot unless the user requests a cut. "
+        "Preserve the source image's style rather than imposing a new medium. Only when no explicit scene or shot boundaries are supplied, keep continuous movement in one shot. "
         "Example shot data: style='The subject and setting established in <Picture 1>.', timeline='The subject raises the cup, takes one sip, then lowers it.', camera='The camera remains still.', audio='A soft cup clink.', text='N/A'. "
         "This example shows structure only; never insert its objects or actions into another request."
     ),
     "fl2v": (
         "FL2V: <Picture 1> is the exact opening frame and <Picture 2> is the exact ending frame. "
         "Describe observable intermediate motion connecting those states, including pose, object contact, camera, and composition changes. "
-        "Favor one continuous shot unless the user explicitly defines multiple shots. Reach <Picture 2> at the supplied duration end. "
+        "Only when no explicit scene or shot boundaries are supplied, favor one continuous shot. Otherwise preserve every scene as its own shot, connecting the first shot to <Picture 1> and the final shot to <Picture 2>. Reach <Picture 2> at the supplied duration end. "
         "Example timeline: 'Starting from <Picture 1>, the subject unfolds the umbrella, steps underneath it, and settles into the pose and framing in <Picture 2>.' "
         "Use only the user's actual actions and visible references, not the example's umbrella."
     ),
@@ -151,6 +152,8 @@ VIDEO_PROMPT_ENHANCEMENT_MODE_PROMPTS = {
 VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT = (
     "<global_style_and_background>\n{prompt}\n</global_style_and_background>\n"
     "<current_segment_instruction>\n{segment_prompt}\n</current_segment_instruction>\n"
+    "<scene_contract>\n{scene_contract}\n</scene_contract>\n"
+    "<scene_manifest>\n{scenes}\n</scene_manifest>\n"
     "<mode>\n{mode}\n</mode>\n"
     "<duration_seconds>\n{duration}\n</duration_seconds>\n"
     "<timeline_clock>\n0s to {duration}s in this segment only; never use global sequence timestamps.\n</timeline_clock>\n"

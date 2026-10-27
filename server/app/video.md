@@ -18,7 +18,11 @@ I2V·FL2V·R2V workflow는 `diffusion_models/MiniMaxH3/`에서 선택한 UNET을
 
 I2V와 FL2V는 shots와 두 sound field를, R2V는 추가로 subject_definitions·summary·retention_analysis를 strict JSON으로 받는다. shot은 start_ms·style·timeline·camera·audio·text를 유지한다. 각 text field 길이는 style 768, timeline 1536, camera 384, audio 2048, text 1024, sound field 각각 768자다. R2V의 정의·보존 관계는 각각 2048자, summary는 768자다. schema는 모든 Unicode 원문을 허용하고 앞뒤 공백·공백만인 field를 제한한다. 선택 언어는 설명문에 적용하며 대사·가사·이름·화면 문구는 원래 언어와 문장부호를 보존한다. 대사는 audio에서 `<d>[Language] ...</d>`와 일관된 화자 ID를 사용한다.
 
-출력 budget은 기본 2048 tokens이며 명시적인 장면/샷 수, R2V의 추가 필드, 비영어 설명문, 긴 입력에 따라 늘어나고 최대 8192다. temperature 0.6과 120초 timeout을 유지한다. 샷 수의 schema 범위와 반환 순서에 대한 기존 정책은 유지하며 추가적인 의미 검증·재시도는 도입하지 않는다. 첫 샷도 timeline을 포함하고 시간 표기만 생략한다. shot의 exact N/A는 생략하고 top-level sound field의 N/A는 유지한다. I2V·FL2V는 알려진 첫·마지막 프레임을 시작 행에서 정렬하고, R2V는 6개 공식 section 중 detailed_description으로 shot을 조립한다. 완성된 형식의 개선문은 생성 단계에서 일반 참조 header를 다시 붙이지 않는다. 사용자 편집 freeform에는 기존 참조 header 동작을 유지한다. 결과 전체의 5000자 제한은 없고 편집한 결과를 그대로 제출한다. provider length·파싱 오류는 기존 provider_response audit을 유지한다.
+개선 요청은 optional `scenes` 배열로 현재 시간 구간의 장면을 순서대로 받는다. 각 항목은 공백일 수 없고 최대 360개, 본문 합계 5000자까지 허용한다. 배열이 있으면 serialized 문장의 내부 heading을 다시 세지 않으며, 기존 client의 배열 없는 요청은 줄 시작의 `[Scene N]`, `[Shot N]`, `장면 N:`, `샷 N:` 경계를 해석한다. 별도 장면이 없으면 기존 자동 샷 수 범위를 유지한다. 명시한 장면이 N개이면 strict schema의 shots minItems·maxItems를 모두 N으로 설정하고 각 shot에 원본 장면의 `scene_id`를 요구한다. 초당 한 샷 상한을 적용하지 않으므로 짧은 후속 구간도 여러 장면을 보존할 수 있다.
+
+서버는 반환 개수가 N인지, scene_id가 정확히 1부터 N까지 입력 순서대로 있는지 검증한다. 모든 샷은 0ms부터 시작하고 이후 시작 시각이 중복 없이 증가하며 현재 구간 끝 이전이어야 한다. 잘못된 결과는 503 오류로 전달하고 반환된 구조화 객체를 기존 provider_response 오류 기록에 보존한다. 의미가 같은 문장인지까지 자동 판별하거나 실패한 결과를 조용히 재배열·분할하지 않는다. scene_id는 최종 개선문에 출력하지 않는다.
+
+출력 budget은 기본 2048 tokens이며 명시적인 장면/샷 수, R2V의 추가 필드, 비영어 설명문, 긴 입력에 따라 늘어나고 최대 8192다. temperature 0.6과 120초 timeout을 유지한다. 첫 샷도 timeline을 포함하고 시간 표기만 생략한다. shot의 exact N/A는 생략하고 top-level sound field의 N/A는 유지한다. I2V·FL2V는 알려진 첫·마지막 프레임을 시작 행에서 정렬하고, R2V는 6개 공식 section 중 detailed_description으로 shot을 조립한다. 완성된 형식의 개선문은 생성 단계에서 일반 참조 header를 다시 붙이지 않는다. 사용자 편집 freeform에는 기존 참조 header 동작을 유지한다. 결과 전체의 5000자 제한은 없고 편집한 결과를 그대로 제출한다. provider length·파싱 오류는 기존 provider_response audit을 유지한다.
 
 `POST /generation/video/{mode}/{prompt_id}/cancel`은 ComfyUI `POST /api/jobs/{prompt_id}/cancel`을 호출한다. ComfyUI가 실행 중 작업은 interrupt하고 pending 작업은 해당 ID만 dequeue하며, Local Field가 queue snapshot을 따로 읽지 않는다.
 

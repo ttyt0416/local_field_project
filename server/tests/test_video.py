@@ -737,37 +737,21 @@ class VideoContractTest(unittest.TestCase):
         self.assertIsNotNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt))
         self.assertIsNone(re.fullmatch(video._video_prompt_pattern(["ja"]), japanese_prompt.replace("動き", "move", 1)))
 
-    def test_video_prompt_does_not_revalidate_structured_shot_order(self) -> None:
+    def test_video_prompt_rejects_invalid_cut_times_and_preserves_error_for_audit(self) -> None:
         plan = {
-            "shots": [
-                {
-                    "start_ms": 3000,
-                    "style": "first style",
-                    "timeline": "first timeline",
-                    "camera": "first camera",
-                    "audio": "first audio",
-                    "text": "first text",
-                },
-                {
-                    "start_ms": 1000,
-                    "style": "second style",
-                    "timeline": "second timeline",
-                    "camera": "second camera",
-                    "audio": "second audio",
-                    "text": "second text",
-                },
-            ],
+            "shots": [],
             "overall_soundscape": "quiet ambience",
             "non_diegetic_music": "N/A",
         }
         payload = video.VideoPromptEnhancementRequest(prompt="move", mode="i2v", duration=5, prompt_output_languages=["en"])
-        with patch.object(video, "_request_structured_object", return_value=plan):
-            result = video._enhance_video_prompt(payload)
-        self.assertIn("[Shot 1] first style first timeline first camera first audio first text", result.improved_prompt.contents)
-        self.assertNotIn("At 00:00:00", result.improved_prompt.contents)
-        self.assertIn("first timeline", result.improved_prompt.contents)
-        self.assertIn("[Shot 2] At 00:01.000, second style second timeline second camera second audio second text", result.improved_prompt.contents)
-        self.assertNotIn("negative:", result.improved_prompt.contents)
+        for starts in ([3000, 4000], [0, 1000, 500], [0, 0], [0, 5000], [0, 6000]):
+            with self.subTest(starts=starts):
+                plan["shots"] = [{"start_ms": start, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}} for start in starts]
+                request = Request({"type": "http", "headers": []})
+                with patch.object(video, "_request_structured_object", return_value=plan), self.assertRaises(video.HTTPException) as raised:
+                    video.enhance_video_prompt(payload, request, self.user)
+                self.assertEqual(raised.exception.status_code, 503)
+                self.assertEqual(request.state.provider_response, plan)
 
     def test_video_prompt_omits_shot_na_placeholders_but_keeps_overall_na(self) -> None:
         plan = {
@@ -916,7 +900,7 @@ class VideoContractTest(unittest.TestCase):
 
     def test_video_prompt_enhancement_allows_empty_overall_prompt_with_segment(self) -> None:
         plan = {
-            "shots": [{"start_ms": 0, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+            "shots": [{"start_ms": 0, "scene_id": 1, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
             "overall_soundscape": "quiet ambience",
             "non_diegetic_music": "N/A",
         }
@@ -935,9 +919,62 @@ class VideoContractTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             video.VideoPromptEnhancementRequest(prompt="", mode="i2v")
 
-    def test_explicit_shots_are_preserved_by_prompt_without_schema_count_enforcement(self) -> None:
+    def test_explicit_scenes_have_one_ordered_shot_each_in_every_mode_even_in_short_segment(self) -> None:
+        scenes = ["Lift the cup.", "Take one sip.", "Set the cup down."]
+        for mode in ("i2v", "fl2v", "r2v"):
+            with self.subTest(mode=mode):
+                plan = {
+                    "shots": [{"start_ms": index * 300, "scene_id": index + 1,
+                               **{field: scene if field == "timeline" else "N/A" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}
+                              for index, scene in enumerate(scenes)],
+                    "overall_soundscape": "quiet ambience",
+                    "non_diegetic_music": "N/A",
+                    **({field: "reference details" for field in video._VIDEO_PROMPT_REFERENCE_FIELDS} if mode == "r2v" else {}),
+                }
+                payload = video.VideoPromptEnhancementRequest(prompt="A person with a cup.", scenes=scenes, mode=mode, duration=1)
+                with patch.object(video, "_request_structured_object", return_value=plan) as request:
+                    contents = video._enhance_video_prompt(payload).improved_prompt.contents
+                schema = request.call_args.kwargs["schema"]["properties"]["shots"]
+                self.assertEqual((schema["minItems"], schema["maxItems"]), (3, 3))
+                self.assertIn("scene_id", schema["items"]["required"])
+                self.assertEqual(schema["items"]["properties"]["scene_id"], {"type": "integer", "minimum": 1, "maximum": 3})
+                user_prompt = request.call_args.kwargs["user_prompt"]
+                manifest = json.loads(re.search(r"<scene_manifest>\n(.*?)\n</scene_manifest>", user_prompt).group(1))
+                self.assertEqual(manifest, [{"scene_id": index + 1, "instruction": scene} for index, scene in enumerate(scenes)])
+                self.assertEqual(re.findall(r"\[Shot (\d+)\]", contents), ["1", "2", "3"])
+                self.assertLess(contents.index(scenes[0]), contents.index(scenes[1]))
+                self.assertLess(contents.index(scenes[1]), contents.index(scenes[2]))
+                self.assertNotIn("scene_id", contents)
+
+    def test_explicit_scenes_reject_merged_missing_extra_duplicate_or_reordered_shots(self) -> None:
         plan = {
-            "shots": [{"start_ms": 0, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}],
+            "shots": [],
+            "overall_soundscape": "quiet ambience",
+            "non_diegetic_music": "N/A",
+        }
+        payload = video.VideoPromptEnhancementRequest(prompt="", scenes=["Lift.", "Sip.", "Lower."], mode="i2v", duration=6)
+        for ids in ([1], [1, 3], [1, 2, 3, 4], [1, 1, 3], [2, 1, 3], [1, None, 3]):
+            with self.subTest(ids=ids):
+                plan["shots"] = [{"start_ms": index * 1000, **({"scene_id": scene_id} if scene_id else {}),
+                                  **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}}
+                                 for index, scene_id in enumerate(ids)]
+                with patch.object(video, "_request_structured_object", return_value=plan), self.assertRaises(video._VLLMError) as raised:
+                    video._enhance_video_prompt(payload)
+                self.assertIs(raised.exception.provider_response, plan)
+
+    def test_legacy_scene_headings_and_explicit_scene_list_are_not_double_counted(self) -> None:
+        for prefix in ("[Scene {index}]", "[Shot {index}]", "장면 {index}:", "샷 {index}:"):
+            with self.subTest(prefix=prefix):
+                source = "\n\n".join(f"{prefix.format(index=index)}\n{scene}" for index, scene in enumerate(["Stand.", "Walk."], start=1))
+                payload = video.VideoPromptEnhancementRequest(prompt=source, mode="i2v")
+                self.assertEqual(video._video_prompt_scenes(payload), ["Stand.", "Walk."])
+                payload = payload.model_copy(update={"segment_prompt": source, "scenes": ["[Shot 1] Stand, then walk."]})
+                self.assertEqual(video._video_prompt_scenes(payload), ["[Shot 1] Stand, then walk."])
+
+    def test_legacy_shots_enforce_schema_count(self) -> None:
+        plan = {
+            "shots": [{"start_ms": index * 1000, "scene_id": index + 1,
+                       **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}} for index in range(2)],
             "overall_soundscape": "quiet ambience",
             "non_diegetic_music": "N/A",
         }
@@ -958,8 +995,22 @@ class VideoContractTest(unittest.TestCase):
         self.assertIn("describe each character's expression and visible action in every shot where that character appears", system_prompt)
         self.assertIn("preserve every defined shot as a separate shots item in the same order", system_prompt)
         self.assertIn("including each requested action", system_prompt)
-        self.assertEqual(shots["minItems"], 1)
-        self.assertEqual(shots["maxItems"], 5)
+        self.assertEqual(shots["minItems"], 2)
+        self.assertEqual(shots["maxItems"], 2)
+
+    def test_video_prompt_scene_list_validation(self) -> None:
+        for scenes in ([], [" "], ["valid", ""], ["x" * 5001], ["x"] * 361):
+            with self.subTest(scenes=scenes), self.assertRaises(ValidationError):
+                video.VideoPromptEnhancementRequest(prompt="context", scenes=scenes, mode="i2v")
+        payload = video.VideoPromptEnhancementRequest(prompt="", scenes=[" First. ", " Second. "], mode="i2v")
+        self.assertEqual(payload.scenes, ["First.", "Second."])
+        for source, duration in (("[Scene 1]\nStand.\n[Scene 2]", 5), ("[Scene 1]\nStand.\n[Scene 2]\nWalk.", 0.001)):
+            with self.subTest(source=source, duration=duration):
+                payload = video.VideoPromptEnhancementRequest(prompt=source, mode="i2v", duration=duration)
+                with patch.object(video, "_request_structured_object") as request, self.assertRaises(video.HTTPException) as raised:
+                    video._enhance_video_prompt(payload)
+                self.assertEqual(raised.exception.status_code, 422)
+                request.assert_not_called()
 
     def test_sequence_enhancement_uses_zero_based_local_timeline_clock(self) -> None:
         plan = {
