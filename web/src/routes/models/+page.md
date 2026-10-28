@@ -1,6 +1,6 @@
 # 다운로드 관리 화면
 
-메뉴와 화면 이름은 `다운로드 관리`이며 기존 `/models` 경로를 유지한다. 공용 Tab으로 Civitai와 Hugging Face를 선택한다. Civitai 탭의 lookup 전에는 체크포인트, Diffusion Model, LoRA, 텍스트 인코더, VAE, 임베딩 tab으로 fallback type을 고를 수 있다. Civitai lookup은 받은 type을 감지해 type이 다르면 selected tab을 자동 변경한다. `LORA`·`LoCon`·`DoRA`는 LoRA, `Checkpoint`의 base model이 Anima·MiniMax면 Diffusion Model, 그 밖의 Civitai checkpoint는 Checkpoint로 선택한다. lookup 결과의 파일·version 선택은 그 auto type을 사용한다.
+메뉴와 화면 이름은 `다운로드 관리`이며 기존 `/models` 경로를 유지한다. 공용 Tab으로 Civitai와 Hugging Face를 선택한다. Civitai 탭의 lookup 전후 모두 체크포인트, Diffusion Model, LoRA, 텍스트 인코더, VAE, 임베딩 종류를 선택할 수 있다. lookup은 받은 type을 감지해 기본 종류를 자동 선택한다. `LORA`·`LoCon`·`DoRA`는 LoRA, `Checkpoint`의 base model이 Anima·MiniMax·MOSS면 Diffusion Model, 그 밖의 checkpoint는 Checkpoint로 선택한다. VAE·TextEncoder·TextualInversion도 해당 종류를 자동 선택한다. 이후 종류를 바꿔도 조회 결과·버전·파일 선택을 유지하고, 추천 폴더는 원래 자동 종류로 돌아갈 때만 복원한다. 다운로드는 상단 또는 폴더 모달에서 최종 선택한 종류를 사용한다. 조회·버전 로딩·enqueue 중에는 종류 변경을 막는다.
 
 base model에 Anima, MiniMax, Illustrious가 있고 selected model type root 아래에 같은 family 이름의 folder가 있으면, 가장 shallow한 matching relative folder를 자동 선택한다. nested folder도 대상이며, matching folder가 없으면 root `전체`를 선택한다. 사용자는 folder dialog에서 자동 type과 folder를 다시 바꿀 수 있다.
 
@@ -16,3 +16,5 @@ MOSS LoRA의 폴더 선택·설치 목록 필터는 공통 MOSS 폴더를 사용
 Hugging Face 탭은 공용 HuggingFaceDownload 패널을 사용한다. 저장소·파일·폴더 링크와 선택 리비전을 조회해 모델 파일을 검색·선택하고 공용 폴더 모달로 저장 위치를 선택한다. 조회한 commit에 고정해 enqueue하고, 두 출처의 작업은 탭 변경 후에도 같은 진행 목록에 표시한다. 작업 요청 중 탭 전환을 막으며 Civitai URL·타입·탭 변경 후 이전 조회 응답은 적용하지 않는다.
 
 각 provider 탭 아래 DownloadToken에서 해당 서비스 API 토큰을 개인 계정에 별도로 저장·교체·삭제한다. 원문을 브라우저에 저장하지 않고 등록 상태만 조회한다.
+
+Civitai에서 사용자가 종류를 직접 선택한 뒤에는 버전을 변경해도 해당 종류를 유지한다. 새 링크 입력·새 조회에서는 다시 자동 선택한다.

@@ -227,17 +227,21 @@
 	}
 </script>
 
+{#snippet generationButton()}
+	<PrimaryButton type="submit" form="mesh-generation-form" loading={generating} deactive={!serviceAvailable} disabled={!sourceFile && !storedSource} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '3D 생성 중' : serviceAvailable ? '3D 모델 생성' : 'TripoSplat 연결 대기 중'}</span></PrimaryButton>
+{/snippet}
+
 {#if !ready}
 	<div class="flex min-h-screen items-center justify-center bg-background"><LoadingSpinner size="lg" label="3D 모델 생성 페이지를 불러오는 중" /></div>
 {:else}
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="model-result-title">
-					<div class="flex items-center justify-between gap-4">
+					<div class="flex flex-wrap items-center justify-between gap-4">
 						<div>
 							<div id="model-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
 							{#if status}<Typography as="p" variant="muted" class="mt-1">{stageLabel(stage, status)} · {status === 'queued' || status === 'processing' ? '경과' : '소요'} {formatElapsedSeconds(elapsedSeconds)}</Typography>{/if}
 						</div>
-						<Box size={22} class="text-primary" strokeWidth={1.8} />
+						{#if !generating}<div class="shrink-0">{@render generationButton()}</div>{:else}<Box size={22} class="text-primary" strokeWidth={1.8} />{/if}
 					</div>
 					<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
 						{#if modelUrl}
@@ -264,7 +268,7 @@
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="model-settings-title">
 					<div id="model-settings-title"><Typography as="h2" variant="h2">3D 생성 설정</Typography></div><p class="mt-2 text-xs leading-5 text-muted-foreground">TripoSplat · 단일 이미지에서 컬러 3D 모델을 생성합니다. GLB 메시 변환은 실험적이며 얇은 부분이나 작은 요소가 생략될 수 있습니다. 입력 여백은 모델이 자동으로 맞춥니다.</p>
 					{#if serviceDetail}<p class="text-sm text-muted-foreground">{serviceDetail}</p>{/if}
-					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form id="mesh-generation-form" class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
 							<span class="text-sm font-medium">소스 이미지</span>
 							<OutlinedButton class="w-full" disabled={generating} onclick={() => (sourceSelectionOpen = true)}><HardDrive size={16} />소스 이미지 선택</OutlinedButton>
@@ -295,7 +299,7 @@
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="model-seed"><span class="text-sm font-medium">Seed</span><input id="model-seed" type="number" min="0" step="1" bind:value={seed} disabled={generating || randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-model-seed"><input id="random-model-seed" type="checkbox" bind:checked={randomSeed} disabled={generating} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} deactive={!serviceAvailable} disabled={!sourceFile && !storedSource} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '3D 생성 중' : serviceAvailable ? '3D 모델 생성' : 'TripoSplat 연결 대기 중'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">{@render generationButton()}</div>
 					</form>
 				</section>
 			</div>

@@ -13,3 +13,5 @@ Ready 상태에서는 service detail 문구를 표시하지 않으며, lyrics �
 YuE2 연결: 최대 길이 10–900초(기본 120), 작곡 방식 `full`·`melody`·`off`, 선택 ABC 악보 입력을 지원한다. 가사와 Style은 분리하고 vLLM 개선 기능·기존 결과 재생·다운로드를 유지한다. 길이는 상한이며 실제 곡은 먼저 종료될 수 있다.
 
 Music vLLM structured output: Style is `{language, genre, vocals, tempo_bpm, instruments, mood, production}`; Lyrics is `{sections: [{kind, lines}]}`. Extra keys, wrong types, tags/newlines in raw fields and unselected languages are rejected in server validation. The server orders Style fields, adds BPM, generates enum section tags and joins lyric lines/sections. The public response remains `{contents}` for editable UI proposals. Invalid provider output is attached to the existing error audit; no free-form fallback is used.
+
+생성 중이 아닐 때 왼쪽 결과 패널 상단에도 실행 버튼을 표시한다. 하단과 같은 generationButton snippet을 사용하며 form 속성으로 설정 폼을 제출하므로 입력 제약·비활성화·로딩 상태가 동일하다.

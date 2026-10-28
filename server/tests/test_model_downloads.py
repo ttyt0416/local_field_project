@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import uuid
 import unittest
 from dataclasses import replace
@@ -161,6 +162,9 @@ class ModelDownloadsTest(unittest.TestCase):
             ("LORA", "MOSS Image", "checkpoint", "lora", "MOSS"),
             ("Checkpoint", "MOSS Image SFT", "checkpoint", "diffusion_model", "MOSS"),
             ("Checkpoint", "MOSS", "checkpoint", "diffusion_model", "MOSS"),
+            ("VAE", "Other", "checkpoint", "vae", ""),
+            ("TextEncoder", "Other", "checkpoint", "text_encoder", ""),
+            ("TextualInversion", "Other", "checkpoint", "embedding", ""),
         )
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -213,7 +217,7 @@ class ModelDownloadsTest(unittest.TestCase):
                     version = CivitaiVersion(3316573, None, "Miao MOSS", version_type, "v1", "MOSS Image", (CivitaiFile("miao.safetensors", "Model", "https://civitai.com/file", 1, None, True),))
                     with patch("app.model_downloads._fetch_version", return_value=version):
                         with self.assertRaises(HTTPException) as missing:
-                            download_civitai_model(ModelDownloadRequest(source="3316573", model_type="checkpoint"), user)
+                            download_civitai_model(ModelDownloadRequest(source="3316573", model_type=cast(ModelType, expected_type)), user)
                         self.assertEqual(missing.exception.status_code, 422)
                         create_job.assert_not_called()
                         for selected, expected_folder in (("", "MOSS"), ("MOSS/custom", "MOSS/custom")):
@@ -227,11 +231,61 @@ class ModelDownloadsTest(unittest.TestCase):
                                     "total_bytes": 1, "error_message": None,
                                     "created_at": datetime.now(timezone.utc), "completed_at": None,
                                 }
-                                response = download_civitai_model(ModelDownloadRequest(source="3316573", model_type="checkpoint", subfolder=selected), user)
+                                response = download_civitai_model(ModelDownloadRequest(source="3316573", model_type=cast(ModelType, expected_type), subfolder=selected), user)
                                 self.assertEqual(create_job.call_args.kwargs["model_type"], expected_type)
                                 self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
                                 self.assertEqual(response.subfolder, expected_folder)
                                 create_job.reset_mock()
+
+    def test_manual_destination_survives_enqueue_and_worker(self) -> None:
+        user = UserResponse(id=uuid.uuid4(), username="tester")
+        contents = b"synthetic model bytes"
+
+        class DownloadResponse(io.BytesIO):
+            status = 200
+            headers = {"Content-Length": str(len(contents))}
+
+        for source_type in ("Checkpoint", "LORA"):
+            version = CivitaiVersion(1, None, "Example", source_type, "v1", "Anima", (
+                CivitaiFile("primary.safetensors", "Model", "https://civitai.com/primary", 1, None, True),
+                CivitaiFile("chosen.safetensors", "Model", "https://civitai.com/chosen", len(contents), None, False),
+            ))
+            for model_type, directory in (("checkpoint", "checkpoints"), ("diffusion_model", "diffusion_models"), ("lora", "loras"), ("text_encoder", "text_encoders"), ("vae", "vae"), ("embedding", "embeddings")):
+                with self.subTest(source_type=source_type, destination=model_type), TemporaryDirectory() as temporary:
+                    target = Path(temporary) / directory / "chosen.safetensors"
+                    target.parent.mkdir()
+                    row = {
+                        "id": uuid.uuid4(), "version_id": 1, "model_type": model_type,
+                        "file_index": 1, "target_path": str(target), "filename": target.name,
+                        "status": "queued", "downloaded_bytes": 0, "total_bytes": None,
+                        "error_message": None, "created_at": datetime.now(timezone.utc), "completed_at": None,
+                    }
+                    with (
+                        patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary)),
+                        patch("app.model_downloads._fetch_version", return_value=version),
+                        patch("app.model_downloads.create_model_download", return_value=row) as create_job,
+                        patch("app.model_downloads._open_download", return_value=DownloadResponse(contents)) as open_download,
+                        patch("app.model_downloads.is_model_download_active", return_value=True),
+                        patch("app.model_downloads.update_model_download_progress", return_value=True),
+                        patch("app.model_downloads.complete_model_download", return_value=True),
+                    ):
+                        response = download_civitai_model(ModelDownloadRequest(source="1", model_type=cast(ModelType, model_type), file_index=1), user)
+                        self.assertEqual(response.model_type, model_type)
+                        self.assertEqual(create_job.call_args.kwargs["model_type"], model_type)
+                        self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
+                        self.assertEqual(create_job.call_args.kwargs["file_index"], 1)
+                        _process_model_download(row)
+                        self.assertEqual(open_download.call_args.args[0], "https://civitai.com/chosen")
+                        self.assertEqual(target.read_bytes(), contents)
+
+    def test_manual_destination_still_rejects_invalid_files(self) -> None:
+        version = CivitaiVersion(1, None, "Example", "Checkpoint", "v1", "Anima", (
+            CivitaiFile("archive.zip", "Model", "https://civitai.com/file", 1, None, True),
+        ))
+        with patch("app.model_downloads._fetch_version", return_value=version):
+            for index in (0, 1):
+                with self.subTest(index=index), self.assertRaises(CivitaiError):
+                    _resolve_civitai_source("1", "diffusion_model", index, auto_detect=False)
 
     def test_model_storage_categories_are_distinct(self) -> None:
         with TemporaryDirectory() as temporary_directory:

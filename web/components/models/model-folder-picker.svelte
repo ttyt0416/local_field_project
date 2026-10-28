@@ -7,7 +7,7 @@
 	import Toast from '../feedback/toast.svelte';
 	import { apiJson } from '$lib/utils/api';
 	import { parentModelFolder } from '$lib/utils/model-folders';
-	import { modelTypeInfo, type ModelType, type ModelFolder } from '$lib/types/model-storage';
+	import { modelTypes, modelTypeInfo, type ModelType, type ModelFolder } from '$lib/types/model-storage';
 
 	type Props = {
 		open?: boolean;
@@ -17,9 +17,10 @@
 		confirmLabel?: string;
 		loading?: boolean;
 		onconfirm: (folder: string) => void;
+		onmodeltypechange?: (type: ModelType) => void;
 		onclose?: () => void;
 	};
-	let { open = $bindable(false), modelType, initialFolder = '', title = '폴더 선택', confirmLabel = '선택', loading = false, onconfirm, onclose }: Props = $props();
+	let { open = $bindable(false), modelType, initialFolder = '', title = '폴더 선택', confirmLabel = '선택', loading = false, onconfirm, onmodeltypechange, onclose }: Props = $props();
 	let folders = $state<ModelFolder[]>([]);
 	let currentFolder = $state('');
 	let foldersLoading = $state(false);
@@ -91,6 +92,13 @@
 </script>
 
 <Modal bind:open={() => open, (value) => { if (!value) close(); }} {title} description={`${modelTypeInfo(modelType).label}에서 사용할 폴더를 선택하세요.`} closeOnBackdrop={!busy}>
+	{#if onmodeltypechange}
+		<div class="mb-4 flex flex-wrap gap-2" role="group" aria-label="저장할 모델 종류">
+			{#each modelTypes as type}
+				<OutlinedButton disabled={busy || foldersLoading} active={modelType === type.value} class="px-3 text-xs" onclick={() => { if (modelType !== type.value) onmodeltypechange?.(type.value); }}>{type.label}</OutlinedButton>
+			{/each}
+		</div>
+	{/if}
 	{#if foldersLoading}
 		<div class="flex min-h-40 items-center justify-center"><LoadingSpinner size="lg" label="폴더를 불러오는 중" /></div>
 	{:else if loadFailed}

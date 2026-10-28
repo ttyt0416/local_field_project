@@ -306,6 +306,10 @@
 	}
 </script>
 
+{#snippet generationButton()}
+	<PrimaryButton type="submit" form="music-generation-form" loading={generating} deactive={!serviceAvailable} disabled={!description.trim() || isPromptEnhancing} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '음악 생성 중' : serviceAvailable ? '음악 생성' : 'YuE2 연결 대기 중'}</span></PrimaryButton>
+{/snippet}
+
 <svelte:head>
 	<title>음악 생성 · Local Field</title>
 	<meta name="description" content="음악 생성" />
@@ -320,7 +324,7 @@
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="music-result-title">
-					<div class="flex items-center justify-between gap-4"><div id="music-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div><AudioLines size={22} class="text-primary" strokeWidth={1.8} /></div>
+					<div class="flex flex-wrap items-center justify-between gap-4"><div id="music-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>{#if !generating}<div class="shrink-0">{@render generationButton()}</div>{:else}<AudioLines size={22} class="text-primary" strokeWidth={1.8} />{/if}</div>
 					<div class="mt-6 flex min-h-[24rem] min-w-0 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-muted/30 px-6 text-center sm:min-h-[34rem]">
 						{#if audioUrl}
 							<div class="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Music size={26} strokeWidth={1.7} /></div>
@@ -340,7 +344,7 @@
 
 				<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="music-settings-title">
 					<div id="music-settings-title"><Typography as="h2" variant="h2">음악 생성 설정</Typography></div>
-					<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form id="music-generation-form" class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="rounded-xl border border-border bg-muted/30 px-3 py-3"><span class="block text-xs font-medium text-muted-foreground">MODEL</span><span class="mt-1 block text-sm font-semibold text-foreground">{model ?? 'YuE2'}</span></div>
 						<div class="flex justify-end">
 							<label for="music-prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
@@ -390,7 +394,7 @@
 							<label class="block space-y-2" for="music-duration"><span class="text-sm font-medium">최대 길이</span><input id="music-duration" class={inputClass} type="number" min="10" max={maxDurationSeconds} step="1" bind:value={durationSeconds} oninput={resetImprovedPrompts} disabled={generating || isPromptEnhancing} /><span class="block text-xs text-muted-foreground">초</span></label>
 							<label class="block space-y-2" for="music-seed"><span class="text-sm font-medium">Seed</span><input id="music-seed" class={inputClass} type="number" min="0" max="9007199254740991" step="1" bind:value={seed} disabled={generating} placeholder="랜덤" /></label>
 						</div>
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} deactive={!serviceAvailable} disabled={!description.trim() || isPromptEnhancing} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '음악 생성 중' : serviceAvailable ? '음악 생성' : 'YuE2 연결 대기 중'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">{@render generationButton()}</div>
 					</form>
 				</section>
 			</div>

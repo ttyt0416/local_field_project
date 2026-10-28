@@ -698,6 +698,13 @@
 	}
 </script>
 
+{#snippet generationButton()}
+	<PrimaryButton type="submit" form="image-generation-form" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="w-full">
+		<Sparkles size={17} strokeWidth={1.9} />
+		<span>{generating ? '생성 중' : '이미지 생성'}</span>
+	</PrimaryButton>
+{/snippet}
+
 <svelte:head>
 	<title>{pageTitle} · Local Field</title>
 	<meta name="description" content={`${familyLabel} 프롬프트를 사용한 텍스트 이미지 생성`} />
@@ -717,7 +724,7 @@
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="result-title">
-					<div class="flex items-center justify-between gap-4">
+					<div class="flex flex-wrap items-center justify-between gap-4">
 						<div>
 							<div id="result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
 							{#if generationStatus}
@@ -729,7 +736,7 @@
 								</Typography>
 							{/if}
 						</div>
-						<ImagePlus size={22} class="text-primary" strokeWidth={1.8} />
+						{#if !generating}<div class="shrink-0">{@render generationButton()}</div>{:else}<ImagePlus size={22} class="text-primary" strokeWidth={1.8} />{/if}
 					</div>
 
 					<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
@@ -780,7 +787,7 @@
 						</div>
 					</div>
 
-					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form id="image-generation-form" class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						{#if modelFamily === 'moss'}<MossControls bind:value={moss} {width} {height} disabled={generating} />{/if}
 						<div class="space-y-3">
 							<label class="block space-y-2" for="positive-prompt-prefix">
@@ -914,10 +921,7 @@
 							</div>
 
 							<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
-							<PrimaryButton type="submit" loading={generating} disabled={optionsLoading || enhancingPrompt || !checkpoint} class="w-full">
-								<Sparkles size={17} strokeWidth={1.9} />
-								<span>{generating ? '생성 중' : '이미지 생성'}</span>
-							</PrimaryButton>
+							{@render generationButton()}
 						</div>
 					</form>
 				</section>

@@ -858,6 +858,13 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	}
 </script>
 
+{#snippet generationButton()}
+	<PrimaryButton type="submit" form="image-transform-form" loading={generating} disabled={enhancingPrompt || optionsLoading || Boolean(optionsError) || (sourceFile ? sourceMetadataLoading || !sourceDimensions : !sourceFileId) || !checkpoint || !samplerName || !scheduler} class="w-full">
+		<Sparkles size={17} strokeWidth={1.9} />
+		<span>{uploading ? '소스 이미지 업로드 중' : generating ? '이미지 변환 중' : '이미지 변환'}</span>
+	</PrimaryButton>
+{/snippet}
+
 <svelte:head>
 	<title>{routeTitle} · Local Field</title>
 	<meta name="description" content={`${familyLabel} 모델과 한 장의 로컬 소스 이미지를 사용한 이미지 변환`} />
@@ -877,7 +884,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="i2i-result-title">
-					<div class="flex items-center justify-between gap-4">
+					<div class="flex flex-wrap items-center justify-between gap-4">
 						<div>
 							<div id="i2i-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
 							{#if generationStatus}
@@ -889,7 +896,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 								</Typography>
 							{/if}
 						</div>
-						<ImagePlus size={22} class="text-primary" strokeWidth={1.8} />
+						{#if !generating}<div class="shrink-0">{@render generationButton()}</div>{:else}<ImagePlus size={22} class="text-primary" strokeWidth={1.8} />{/if}
 					</div>
 
 					<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
@@ -930,7 +937,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 						</div>
 					</div>
 
-					<form class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form id="image-transform-form" class="mt-6 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-3">
 							<span class="text-sm font-medium">소스 이미지</span>
 							<OutlinedButton type="button" class="w-full" disabled={generating} onclick={() => openSourceSelection()}><HardDrive size={16} />소스 이미지 선택</OutlinedButton>
@@ -1110,10 +1117,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 						</div>
 
 						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
-							<PrimaryButton type="submit" loading={generating} disabled={enhancingPrompt || optionsLoading || Boolean(optionsError) || (sourceFile ? sourceMetadataLoading || !sourceDimensions : !sourceFileId) || !checkpoint || !samplerName || !scheduler} class="w-full">
-								<Sparkles size={17} strokeWidth={1.9} />
-								<span>{uploading ? '소스 이미지 업로드 중' : generating ? '이미지 변환 중' : '이미지 변환'}</span>
-							</PrimaryButton>
+							{@render generationButton()}
 						</div>
 					</form>
 				</section>

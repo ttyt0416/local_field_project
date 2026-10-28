@@ -115,12 +115,16 @@
 	}
 </script>
 
+{#snippet generationButton()}
+	<PrimaryButton type="submit" form="rigging-generation-form" loading={busy} deactive={!available} disabled={!file && !storedSource} class="w-full"><Bone size={17} /><span>{busy ? '리깅 처리 중' : available ? '자동 리깅' : 'SkinTokens 연결 대기 중'}</span></PrimaryButton>
+{/snippet}
+
 {#if !ready}
 	<div class="flex min-h-80 items-center justify-center"><LoadingSpinner size="lg" label="리깅 설정을 불러오는 중" /></div>
 {:else}
 	<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 		<section class="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="rigging-result-title">
-			<div class="flex items-center justify-between gap-4"><div><div id="rigging-result-title"><Typography as="h2" variant="h2">리깅 결과</Typography></div>{#if job}<p class="mt-1 text-sm text-muted-foreground">{stage} · {formatElapsedSeconds(generationJobStore.elapsedSeconds(job, generationJobStore.now))}</p>{/if}</div><Bone size={22} class="text-primary" /></div>
+			<div class="flex flex-wrap items-center justify-between gap-4"><div><div id="rigging-result-title"><Typography as="h2" variant="h2">리깅 결과</Typography></div>{#if job}<p class="mt-1 text-sm text-muted-foreground">{stage} · {formatElapsedSeconds(generationJobStore.elapsedSeconds(job, generationJobStore.now))}</p>{/if}</div>{#if !busy}<div class="shrink-0">{@render generationButton()}</div>{:else}<Bone size={22} class="text-primary" />{/if}</div>
 			<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
 				{#if job?.modelUrl}
 					<ModelViewer source={job.modelUrl} sourceType="server" alt="리깅된 3D 모델" inspectRigging class="min-h-[24rem] sm:min-h-[34rem]" />
@@ -137,7 +141,7 @@
 			<div id="rigging-settings-title"><Typography as="h2" variant="h2">자동 리깅 설정</Typography></div>
 			<p class="mt-2 text-xs leading-5 text-muted-foreground"><a href="https://github.com/VAST-AI-Research/SkinTokens" target="_blank" rel="noreferrer" class="font-semibold text-primary hover:underline">SkinTokens</a> · 캐릭터 메시에서 뼈대와 스킨 가중치를 자동으로 생성합니다. 입력 메시의 형태에 따라 결과 품질이 달라집니다.</p>
 			{#if detail}<p class="mt-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">{detail}</p>{/if}
-			<form class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+			<form id="rigging-generation-form" class="mt-5 space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 				<div class="space-y-3">
 					<span class="text-sm font-medium">소스 GLB</span>
 					<OutlinedButton class="w-full" disabled={busy} onclick={() => (sourceSelectionOpen = true)}><HardDrive size={16} />소스 GLB 선택</OutlinedButton>
@@ -150,7 +154,7 @@
 					{/if}
 				</div>
 				<details class="rounded-xl border border-border p-3"><summary class="cursor-pointer text-sm font-medium">고급 설정</summary><div class="mt-4 grid grid-cols-2 gap-3"><label for="rigging-temperature" class="space-y-2 text-sm"><span>Temperature</span><input id="rigging-temperature" type="number" min="0.1" max="2" step="0.1" bind:value={temperature} disabled={busy} required class={inputClass} /></label><label for="rigging-beams" class="space-y-2 text-sm"><span>Beam 수</span><input id="rigging-beams" type="number" min="1" max="10" step="1" bind:value={beams} disabled={busy} required class={inputClass} /></label></div><p class="mt-2 text-xs leading-5 text-muted-foreground">Beam 수가 높을수록 더 많은 뼈대 후보를 탐색하며 처리 시간이 늘어납니다.</p></details>
-				<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={busy} deactive={!available} disabled={!file && !storedSource} class="w-full"><Bone size={17} /><span>{busy ? '리깅 처리 중' : available ? '자동 리깅' : 'SkinTokens 연결 대기 중'}</span></PrimaryButton></div>
+				<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">{@render generationButton()}</div>
 			</form>
 		</section>
 	</div>

@@ -58,6 +58,7 @@
 	let jobsRevision = 0;
 	let source = $state('');
 	let modelType = $state<ModelType>('checkpoint');
+	let modelTypeOverridden = $state(false);
 	let subfolder = $state('');
 	let lookup = $state<Lookup | null>(null);
 	let versionOptions = $state<VersionOption[]>([]);
@@ -168,15 +169,19 @@
 		}
 	}
 
-	function applyLookup(result: Lookup) {
+	function applyLookup(result: Lookup, preserveOverride = false) {
+		if (!preserveOverride || !modelTypeOverridden) {
+			modelType = result.target_model_type;
+			modelTypeOverridden = false;
+		}
 		lookup = result;
 		versionOptions = result.versions;
 		selectedFileIndex = result.selected_file_index;
-		modelType = result.target_model_type;
-		subfolder = result.suggested_subfolder;
+		subfolder = modelType === result.target_model_type ? result.suggested_subfolder : '';
 	}
 
 	function clearLookupSelection() {
+		modelTypeOverridden = false;
 		lookupRequest += 1;
 		lookupLoading = false;
 		versionLoadingId = null;
@@ -203,7 +208,7 @@
 				`models/civitai/lookup?source=${versionId}&model_type=${requestedType}`
 			);
 			if (!active || request !== lookupRequest || provider !== 'civitai' || modelType !== requestedType) return;
-			applyLookup(result);
+			applyLookup(result, true);
 			versionModalOpen = false;
 		} catch (reason) {
 			if (!active || request !== lookupRequest) return;
@@ -264,8 +269,10 @@
 	}
 
 	function chooseType(value: ModelType) {
+		if (downloadLoading || lookupLoading || versionLoadingId !== null || value === modelType) return;
 		modelType = value;
-		clearLookupSelection();
+		modelTypeOverridden = true;
+		subfolder = lookup?.target_model_type === value ? lookup.suggested_subfolder : '';
 	}
 
 	function chooseProvider(value: DownloadProvider) {
@@ -337,7 +344,7 @@
 			<section class="space-y-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
 				<div class="flex flex-wrap gap-2" role="tablist" aria-label="모델 종류">
 					{#each modelTypes as item}
-						<button type="button" role="tab" aria-selected={modelType === item.value} onclick={() => chooseType(item.value)} class={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${modelType === item.value ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>
+						<button type="button" role="tab" disabled={downloadLoading || lookupLoading || versionLoadingId !== null} aria-selected={modelType === item.value} onclick={() => chooseType(item.value)} class={`rounded-lg border px-3 py-2 text-sm font-semibold transition disabled:opacity-50 ${modelType === item.value ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>
 					{/each}
 				</div>
 				<form class="flex flex-col gap-3 md:flex-row" onsubmit={(event) => { event.preventDefault(); void lookupModel(); }}>
@@ -350,7 +357,7 @@
 			{#if lookup}
 				<section class="space-y-4 rounded-2xl border border-primary/30 bg-primary/5 p-5">
 					<div class="flex flex-wrap items-start justify-between gap-3">
-						<div><p class="text-lg font-semibold">{lookup.model_name}</p><p class="mt-1 text-sm text-muted-foreground">{lookup.version_name}{#if lookup.base_model} · {lookup.base_model}{/if}</p><p class="mt-1 text-xs text-primary">자동 선택: {typeLabel(modelType)} / {subfolder || '전체'}</p></div>
+						<div><p class="text-lg font-semibold">{lookup.model_name}</p><p class="mt-1 text-sm text-muted-foreground">{lookup.version_name}{#if lookup.base_model} · {lookup.base_model}{/if}</p><p class="mt-1 text-xs text-primary">저장 종류: {typeLabel(modelType)} / {subfolder || '전체'}</p><p class="mt-1 text-xs text-muted-foreground">자동 선택된 모델 종류는 위에서 변경할 수 있습니다.</p></div>
 						{#if versionOptions.length > 1}<OutlinedButton disabled={versionLoadingId !== null} onclick={() => (versionModalOpen = true)}>버전 선택</OutlinedButton>{/if}
 					</div>
 					<div class="space-y-2">
@@ -419,6 +426,7 @@
 <ModelFolderPicker
 	bind:open={folderModalOpen}
 	{modelType}
+	onmodeltypechange={chooseType}
 	initialFolder={subfolder}
 	title="저장 폴더 선택"
 	confirmLabel="선택한 폴더에 다운로드"

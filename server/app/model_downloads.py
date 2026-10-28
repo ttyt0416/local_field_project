@@ -593,7 +593,7 @@ def download_civitai_model(
         if not token:
             raise CivitaiError("다운로드 관리에서 Civitai API 토큰을 저장해 주세요.", 503)
         with _civitai_token_scope(token):
-            version, target_model_type, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index)
+            version, target_model_type, selected_index, _ = _resolve_civitai_source(payload.source, payload.model_type, payload.file_index, auto_detect=False)
         selected_file = version.files[selected_index]
         filename = _safe_filename(selected_file.name)
     except CivitaiError as exc:
@@ -811,6 +811,12 @@ def _detected_model_type(version: CivitaiVersion) -> ModelType | None:
     version_type = _normalized_label(version.model_type)
     if version_type in {"lora", "locon", "dora"}:
         return "lora"
+    if version_type == "vae":
+        return "vae"
+    if version_type == "textencoder":
+        return "text_encoder"
+    if version_type == "textualinversion":
+        return "embedding"
     if version_type != "checkpoint":
         return None
     base_model = _normalized_label(version.base_model or "")
@@ -845,6 +851,8 @@ def _resolve_civitai_source(
     source: str,
     model_type: ModelType,
     file_index: int | None,
+    *,
+    auto_detect: bool = True,
 ) -> tuple[CivitaiVersion, ModelType, int, tuple[CivitaiVersion, ...]]:
     model_id, version_id = _parse_civitai_source(source)
     if model_id is not None:
@@ -863,8 +871,8 @@ def _resolve_civitai_source(
             raise CivitaiError("Civitai 모델 버전 ID 또는 링크를 입력해 주세요.", status.HTTP_422_UNPROCESSABLE_CONTENT)
         version = _fetch_version(version_id)
         versions = (version,)
-    target_model_type = _detected_model_type(version) or model_type
-    return version, target_model_type, _select_file_index(version, target_model_type, file_index), versions
+    target_model_type = (_detected_model_type(version) or model_type) if auto_detect else model_type
+    return version, target_model_type, _select_file_index(version, target_model_type if auto_detect else None, file_index), versions
 
 
 def _parse_civitai_source(source: str) -> tuple[int | None, int | None]:
@@ -993,7 +1001,7 @@ def _parse_version(payload: dict[str, Any], version_id: int) -> CivitaiVersion:
     )
 
 
-def _select_file_index(version: CivitaiVersion, model_type: ModelType, file_index: int | None) -> int:
+def _select_file_index(version: CivitaiVersion, model_type: ModelType | None, file_index: int | None) -> int:
     if file_index is not None:
         if file_index >= len(version.files):
             raise CivitaiError("선택한 Civitai 파일을 찾을 수 없습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
@@ -1004,13 +1012,15 @@ def _select_file_index(version: CivitaiVersion, model_type: ModelType, file_inde
     for index in indexes:
         if _file_matches(version, version.files[index], model_type):
             return index
-    label = _MODEL_TARGETS[model_type][0]
+    label = _MODEL_TARGETS[model_type][0] if model_type else "모델"
     raise CivitaiError(f"선택한 Civitai 버전에서 {label} 파일을 찾지 못했습니다.", status.HTTP_422_UNPROCESSABLE_CONTENT)
 
 
-def _file_matches(version: CivitaiVersion, file: CivitaiFile, model_type: ModelType) -> bool:
+def _file_matches(version: CivitaiVersion, file: CivitaiFile, model_type: ModelType | None) -> bool:
     if Path(file.name).suffix.casefold() not in _MODEL_EXTENSIONS:
         return False
+    if model_type is None:
+        return True
     version_type = _normalized_label(version.model_type)
     file_type = _normalized_label(file.file_type)
     if model_type in {"checkpoint", "diffusion_model"}:
@@ -1116,8 +1126,7 @@ def _process_model_download(job: dict[str, Any]) -> None:
         raise CivitaiError("Civitai 토큰이 설정되지 않았습니다.")
     with _civitai_token_scope(token):
         version = _fetch_version(int(job["version_id"]))
-    model_type = cast(ModelType, job["model_type"])
-    selected_index = _select_file_index(version, model_type, int(job["file_index"]))
+    selected_index = _select_file_index(version, None, int(job["file_index"]))
     selected_file = version.files[selected_index]
     _transfer_model_download(job, selected_file.size_bytes, selected_file.sha256, lambda resume: _open_download(selected_file.download_url, token, resume))
 

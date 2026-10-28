@@ -1059,6 +1059,10 @@
 
 </script>
 
+{#snippet generationButton()}
+	<PrimaryButton type="submit" form="video-generation-form" loading={generating} disabled={!prompt.trim() || hasEmptyScene(segmentScenes.slice(0, segmentCount)) || isPromptEnhancing || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton>
+{/snippet}
+
 <svelte:head>
 	<title>동영상 생성 · Local Field</title>
 	<meta name="description" content="I2V, FL2V, R2V 동영상 생성" />
@@ -1075,12 +1079,12 @@
 
 			<div class="grid min-w-0 max-w-full gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
 				<section class="min-w-0 max-w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-labelledby="video-result-title">
-					<div class="flex items-center justify-between gap-4">
+					<div class="flex flex-wrap items-center justify-between gap-4">
 						<div class="min-w-0">
 							<div id="video-result-title"><Typography as="h2" variant="h2">생성 결과</Typography></div>
 							{#if status}<Typography as="p" variant="muted" class="mt-1">상태: {statusLabel(status)}{#if sequenceSegmentCount > 1} · 구간 {sequenceSegmentIndex + 1}/{sequenceSegmentCount}{/if}{#if status === 'queued' || status === 'processing'} · {Math.round(progress)}% · 경과 {formatElapsedSeconds(elapsedSeconds)}{:else} · 소요 {formatElapsedSeconds(elapsedSeconds)}{/if}{#if status === 'queued' && queuePosition !== null} · 대기 {queuePosition}번째{/if}</Typography>{/if}
 						</div>
-						<Video size={22} class="text-primary" strokeWidth={1.8} />
+						{#if !generating}<div class="shrink-0">{@render generationButton()}</div>{:else}<Video size={22} class="text-primary" strokeWidth={1.8} />{/if}
 					</div>
 					<div class="mt-6 overflow-hidden rounded-xl border border-border bg-muted/40">
 						{#if videoUrl}
@@ -1147,7 +1151,7 @@
 							<span class="min-w-0 truncate text-xs text-muted-foreground">{usePdd ? 'PDD: euler / PDD schedule' : `${samplerName} / ${scheduler}`}</span>
 						</button>
 
-					<form class="mt-5 min-w-0 max-w-full space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
+					<form id="video-generation-form" class="mt-5 min-w-0 max-w-full space-y-5 pb-24 sm:pb-0" onsubmit={(event) => { event.preventDefault(); void generate(); }}>
 						<div class="space-y-4">
 							<div class="flex flex-wrap items-center justify-between gap-3">
 								<span class="text-sm font-medium">스타일·전체 배경</span>
@@ -1382,7 +1386,7 @@
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 
-						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"><PrimaryButton type="submit" loading={generating} disabled={!prompt.trim() || hasEmptyScene(segmentScenes.slice(0, segmentCount)) || isPromptEnhancing || videoOptionsLoading || !videoOptions.checkpoints.includes(checkpoint)} class="w-full"><Sparkles size={17} strokeWidth={1.9} /><span>{generating ? '생성 중' : '동영상 생성'}</span></PrimaryButton></div>
+						<div class="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-lg sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">{@render generationButton()}</div>
 					</form>
 				</section>
 			</div>

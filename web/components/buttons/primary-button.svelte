@@ -4,6 +4,7 @@
 	type Props = {
 		children: Snippet;
 		type?: 'button' | 'submit' | 'reset';
+		form?: string;
 		disabled?: boolean;
 		loading?: boolean;
 		active?: boolean;
@@ -16,6 +17,7 @@
 	let {
 		children,
 		type = 'button',
+		form,
 		disabled = false,
 		loading = false,
 		active = true,
@@ -28,6 +30,7 @@
 
 <button
 	{type}
+	{form}
 	class={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${
 		deactive
 			? 'bg-muted text-muted-foreground'

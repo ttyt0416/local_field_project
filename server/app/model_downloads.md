@@ -6,7 +6,7 @@ Hugging Face 전송은 공용 worker의 크기 검사·Range·진행률·SHA 검
 
 `/models/civitai/lookup`는 숫자 version ID, Civitai version/download 링크, `civitai.com` 또는 `civitai.red`의 `/models/{model_id}` 링크를 받는다. Model page 링크 자체는 fetch하지 않고 model ID를 추출해 official `civitai.com/api/v1/models/{id}`만 호출한다. `modelVersionId` query가 있으면 해당 version을 우선하고, 없으면 선택한 Local Field 모델 타입과 ComfyUI 확장자에 맞는 version을 `publishedAt` 최신순으로 정렬해 첫 version을 기본 선택한다. 응답의 `versions`는 변경 가능한 호환 version 목록이며 선택된 version의 파일과 `selected_file_index`를 함께 반환한다. 숫자 ID는 기존 계약대로 version ID다.
 
-`POST /models/civitai/download`는 선택한 Civitai 파일의 타입과 ComfyUI 지원 확장자를 검증한 뒤 `model_downloads`에 `queued` 작업을 만든다. `subfolder`는 선택한 모델 타입 폴더 아래에 이미 존재하는 안전한 상대 경로여야 하며, 비워 두면 해당 폴더 바로 아래에 저장한다. 같은 사용자·version·모델 타입·파일의 active job은 중복 생성하지 않는다. `POST /models/downloads/{id}/cancel`은 `queued` 또는 `downloading` 작업을 `cancelled`로 바꾸고 `.part` 임시 파일을 삭제한다. 실패하거나 중단된 작업은 `POST /models/downloads/{id}/retry`로 다시 큐에 넣을 수 있다. 개인 계정에 저장한 Civitai token은 backend 요청에서만 사용하며 DB job, API response, frontend로 전달하지 않는다. 기존 파일은 덮어쓰지 않는다.
+`POST /models/civitai/download`는 선택한 Civitai 파일의 존재와 ComfyUI 지원 확장자를 검증한 뒤 `model_downloads`에 `queued` 작업을 만든다. `subfolder`는 선택한 모델 타입 폴더 아래에 이미 존재하는 안전한 상대 경로여야 하며, 비워 두면 해당 폴더 바로 아래에 저장한다. 같은 사용자·version·모델 타입·파일의 active job은 중복 생성하지 않는다. `POST /models/downloads/{id}/cancel`은 `queued` 또는 `downloading` 작업을 `cancelled`로 바꾸고 `.part` 임시 파일을 삭제한다. 실패하거나 중단된 작업은 `POST /models/downloads/{id}/retry`로 다시 큐에 넣을 수 있다. 개인 계정에 저장한 Civitai token은 backend 요청에서만 사용하며 DB job, API response, frontend로 전달하지 않는다. 기존 파일은 덮어쓰지 않는다.
 
 서버 startup worker는 queued 작업을 claim하고 Civitai 파일을 `COMFYUI_MODELS_PATH` 아래의 model type 폴더에 `.part` 파일로 받는다. 현재 폴더 매핑은 `checkpoint=checkpoints`, `diffusion_model=diffusion_models`, `lora=loras`, `text_encoder=text_encoders`, `vae=vae`, `embedding=embeddings`다. Anima·MiniMax 계열 checkpoint는 split UNET이므로 `diffusion_model`을 선택하고 Illustrious full SDXL checkpoint는 `checkpoint`를 선택한다. 사용자가 입력한 `subfolder`는 이 폴더 아래의 안전한 상대 경로로만 처리한다. 하위폴더는 `..`, 절대 경로, backslash, 제어문자, symbolic link를 거부하며 모델 root 밖으로 resolve되는 경로를 허용하지 않는다. 서버 재시작이나 전송 오류 뒤에는 같은 `.part` 파일을 HTTP Range로 이어받고, 사용자가 중단한 경우에는 worker가 해당 `.part` 파일을 삭제한다. Civitai SHA256이 있으면 검증한 뒤 `os.replace`로 최종 파일을 만든다. worker는 브라우저 연결과 무관하게 동작하며 상태와 진행 바이트는 `model_downloads`에 저장한다.
 
@@ -30,3 +30,5 @@ MOSS·MOSS Image·MOSS Image SFT·MOSS-Image-SFT-8-steps-dmd 등의 base model �
 ## API 레이턴시 기록
 
 Civitai 메타데이터·다운로드 호출을 공통 HTTP 유틸로 측정한다. 다운로드 워커의 사용자 context를 외부 요청까지 전달한다.
+
+Civitai 자동 감지는 lookup에서만 기본 저장 종류를 제안한다. enqueue와 worker는 자동 감지값으로 덮어쓰지 않고 사용자가 최종 선택한 model_type·file_index를 유지한다. 지원하는 모델 파일은 메타데이터의 종류와 다른 저장 종류로도 받을 수 있다. 경로·확장자·중복·크기·SHA 검증은 유지한다. VAE·TextEncoder·TextualInversion도 lookup에서 기본 종류를 자동 감지한다.

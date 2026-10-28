@@ -21,3 +21,5 @@ Anima·Illustrious I2I는 T2I와 같은 enhanceImagePrompt 유틸과 vLLM 개선
 
 프롬프트 개선은 T2I와 같이 기본 꺼짐이며 켠 뒤 개선 버튼으로 결과를 받아 편집한다. 개선 중에는 중복 요청과 생성을 막고 실패는 toast로 표시한다. 생성 payload에 활성 상태와 improved_prompt를 함께 전달한다. 프리셋과 보관함 재생성도 두 값을 저장·복원한다. 원문·저장 문장·Embedding을 변경하면 이전 결과를 비워 재개선을 요구한다.
 수정 지시/긍정·부정 프롬프트 아래 PromptLibrary로 이미지용 문장을 저장하거나 현재 입력 뒤에 추가한다. Reference edit의 부정 입력은 기존과 같이 숨긴다.
+
+생성 중이 아닐 때 왼쪽 결과 패널 상단에도 실행 버튼을 표시한다. 하단과 같은 generationButton snippet을 사용하며 form 속성으로 설정 폼을 제출하므로 입력 제약·비활성화·로딩 상태가 동일하다.
