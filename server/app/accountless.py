@@ -87,6 +87,7 @@ def migrate_shared_data(connection: Connection) -> None:
             connection.execute(sql.SQL("DELETE FROM {} WHERE path ~ '^/?auth(/|$)'").format(sql.Identifier(table)))
         if "user_id" in columns:
             connection.execute(sql.SQL("ALTER TABLE {} DROP COLUMN user_id").format(sql.Identifier(table)))
+    migrate_web_logs(connection)
     if _columns(connection, "auth_history"):
         connection.execute("DROP TABLE auth_history")
     if legacy_accounts:

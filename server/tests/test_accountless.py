@@ -117,8 +117,9 @@ class SharedDataMigrationTest(unittest.TestCase):
         with patch.object(database, "get_connection", self.borrowed):
             database.create_media_asset(storage_file_id="legacy-file", filename="old.png", content_type="image/png", media_kind="image", size=4)
         conn.execute("UPDATE media_assets SET user_id = %s", (owners[0],))
-        for table in ("api_audit_logs", "api_error_logs", "web_event_logs"):
+        for table in ("api_audit_logs", "api_error_logs"):
             conn.execute(sql.SQL("ALTER TABLE {} ADD COLUMN user_id UUID").format(sql.Identifier(table)))
+        conn.execute("ALTER TABLE web_event_logs ADD COLUMN user_id UUID REFERENCES users(id)")
         conn.execute("INSERT INTO api_audit_logs (method, path, status_code, user_id) VALUES ('POST', '/auth/signup', 201, %s)", (owners[0],))
         conn.execute("INSERT INTO web_event_logs (event_type, page_path, target_type, user_id) VALUES ('click', '/login', 'button', %s)", (owners[0],))
         self.initialize()
