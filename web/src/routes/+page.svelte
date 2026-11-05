@@ -3,15 +3,14 @@
 	import { goto } from '$app/navigation';
 	import LoadingSpinner from '../../components/loadings/loading-spinner.svelte';
 	import { APP_NAME } from '$lib/configs/constants';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 
 	onMount(() => {
 		void redirectFromHome();
 	});
 
 	async function redirectFromHome() {
-		await authStore.initialize();
-		await goto(authStore.isAuthenticated ? '/vault' : '/login', { replaceState: true });
+		await goto('/vault', { replaceState: true });
 	}
 </script>
 

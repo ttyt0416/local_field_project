@@ -12,6 +12,7 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from .latency import timed_urlopen
+from .database import get_storage_owner
 from .configs.constants import settings
 
 _STORAGE_TIMEOUT_SECONDS = 30
@@ -30,7 +31,7 @@ def enabled() -> bool:
     return bool(settings.storage_url and settings.storage_api_token)
 
 
-def upload_file(*, content: bytes, media_type: str, owner_id: str) -> str:
+def upload_file(*, content: bytes, media_type: str) -> str:
     if not enabled():
         raise StorageError("스토리지 설정이 없습니다.")
     response = _request_json(
@@ -40,7 +41,7 @@ def upload_file(*, content: bytes, media_type: str, owner_id: str) -> str:
         headers={
             "Authorization": f"Bearer {settings.storage_api_token}",
             "Content-Type": media_type or "application/octet-stream",
-            "X-Owner-ID": owner_id,
+            "X-Owner-ID": "local-field",
         },
     )
     file_id = response.get("id")
@@ -49,9 +50,10 @@ def upload_file(*, content: bytes, media_type: str, owner_id: str) -> str:
     return file_id
 
 
-def read_url(*, file_id: str, owner_id: str, expires_in: int = 900) -> str:
+def read_url(*, file_id: str, expires_in: int = 900) -> str:
     if not enabled():
         raise StorageError("스토리지 설정이 없습니다.")
+    owner_id = get_storage_owner(file_id)
     cache_key = (file_id, owner_id, expires_in)
     now = monotonic()
     cached = _read_url_cache.get(cache_key)
@@ -78,8 +80,8 @@ def read_url(*, file_id: str, owner_id: str, expires_in: int = 900) -> str:
     return url
 
 
-def download_file(*, file_id: str, owner_id: str) -> tuple[bytes, str]:
-    public_url = read_url(file_id=file_id, owner_id=owner_id, expires_in=300)
+def download_file(*, file_id: str) -> tuple[bytes, str]:
+    public_url = read_url(file_id=file_id, expires_in=300)
     signed = urlsplit(public_url)
     internal = urlsplit(settings.storage_url)
     url = urlunsplit((internal.scheme, internal.netloc, signed.path, signed.query, ""))
@@ -92,8 +94,8 @@ def download_file(*, file_id: str, owner_id: str) -> tuple[bytes, str]:
         raise StorageError("스토리지 파일을 읽을 수 없습니다.") from exc
 
 
-def file_size(*, file_id: str, owner_id: str) -> int | None:
-    public_url = read_url(file_id=file_id, owner_id=owner_id, expires_in=300)
+def file_size(*, file_id: str) -> int | None:
+    public_url = read_url(file_id=file_id, expires_in=300)
     signed = urlsplit(public_url)
     internal = urlsplit(settings.storage_url)
     url = urlunsplit((internal.scheme, internal.netloc, signed.path, signed.query, ""))
@@ -124,13 +126,13 @@ def file_size(*, file_id: str, owner_id: str) -> int | None:
 
 
 
-def _invalidate_read_url_cache(file_id: str, owner_id: str) -> None:
+def _invalidate_read_url_cache(file_id: str) -> None:
     for cache_key in tuple(_read_url_cache):
-        if cache_key[:2] == (file_id, owner_id):
+        if cache_key[0] == file_id:
             _read_url_cache.pop(cache_key, None)
 
 
-def delete_file(*, file_id: str, owner_id: str) -> None:
+def delete_file(*, file_id: str) -> None:
     if not enabled():
         raise StorageError("스토리지 설정이 없습니다.")
     try:
@@ -139,16 +141,16 @@ def delete_file(*, file_id: str, owner_id: str) -> None:
             f"/files/{quote(file_id, safe='')}",
             headers={
                 "Authorization": f"Bearer {settings.storage_api_token}",
-                "X-Owner-ID": owner_id,
+                "X-Owner-ID": get_storage_owner(file_id),
             },
             allow_empty=True,
         )
     except StorageError as exc:
         if exc.status_code == 404:
-            _invalidate_read_url_cache(file_id, owner_id)
+            _invalidate_read_url_cache(file_id)
             return
         raise
-    _invalidate_read_url_cache(file_id, owner_id)
+    _invalidate_read_url_cache(file_id)
 
 
 def _request_json(

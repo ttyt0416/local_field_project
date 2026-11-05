@@ -121,10 +121,15 @@ def _persist_exception(payload: dict[str, Any], streams: list[Any]) -> None:
     _write_api_error(**payload)
 
 
-def record_exception(error: BaseException, *, operation: str | None = None, user_id: Any = None,
-                     status_code: int = 500, context: dict[str, Any] | None = None,
-                     provider_response: dict[str, Any] | None = None,
-                     request_metadata: dict[str, Any] | None = None) -> None:
+def record_exception(
+    error: BaseException,
+    *,
+    operation: str | None = None,
+    status_code: int = 500,
+    context: dict[str, Any] | None = None,
+    provider_response: dict[str, Any] | None = None,
+    request_metadata: dict[str, Any] | None = None,
+) -> None:
     try:
         current: BaseException | None = error
         chain: list[BaseException] = []
@@ -148,7 +153,6 @@ def record_exception(error: BaseException, *, operation: str | None = None, user
             "error_message": exception_message(error),
             "client_ip": existing.get("client_ip"),
             "user_agent": existing.get("user_agent"),
-            "user_id": user_id if user_id is not None else existing.get("user_id"),
             "provider_response": redact(provider_response or getattr(error, "provider_response", None)),
             "error_details": {**details, "operation": operation, "context": redact(context or {}), "occurred_at": datetime.now(timezone.utc).isoformat()},
         }
@@ -157,7 +161,7 @@ def record_exception(error: BaseException, *, operation: str | None = None, user
         logger.exception("Exception audit could not be prepared")
 
 
-def record_remote_error(payload: dict[str, Any], *, operation: str, user_id: Any = None) -> None:
+def record_remote_error(payload: dict[str, Any], *, operation: str) -> None:
     try:
         from .database import record_api_error
 
@@ -169,8 +173,7 @@ def record_remote_error(payload: dict[str, Any], *, operation: str, user_id: Any
         record_api_error(method=existing.get("method", "WORKER"), path=existing.get("path", operation), status_code=500,
                          error_type=str(source.get("exception_type") or "RemoteExecutionError"),
                          error_message=str(source.get("exception_message") or source.get("message") or json.dumps(payload, ensure_ascii=False, default=str)),
-                         client_ip=existing.get("client_ip"), user_agent=existing.get("user_agent"), user_id=user_id if user_id is not None else existing.get("user_id"),
-                         error_details={"remote_error": redact(payload), "operation": operation})
+                         client_ip=existing.get("client_ip"), user_agent=existing.get("user_agent"), error_details={"remote_error": redact(payload), "operation": operation})
     except Exception:
         logger.exception("Remote error audit could not be prepared")
 
@@ -207,7 +210,7 @@ def audit_error_response(response: Any, **metadata: Any) -> None:
     response.body_iterator = capture()
 
 
-def audit_stream(iterator: Any, *, operation: str, user_id: Any = None, context: dict[str, Any] | None = None):
+def audit_stream(iterator: Any, *, operation: str, context: dict[str, Any] | None=None):
     metadata = dict(request_context.get() or {})
 
     async def stream():
@@ -215,7 +218,7 @@ def audit_stream(iterator: Any, *, operation: str, user_id: Any = None, context:
             async for chunk in iterator:
                 yield chunk
         except Exception as exc:
-            record_exception(exc, operation=operation, user_id=user_id, context=context, request_metadata=metadata)
+            record_exception(exc, operation=operation, context=context, request_metadata=metadata)
             raise
 
     return stream()

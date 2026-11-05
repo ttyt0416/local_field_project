@@ -21,13 +21,12 @@ from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from starlette.responses import StreamingResponse
 
 from .latency import timed_urlopen
 from .audit import audit_stream, record_exception, record_remote_error
-from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
     _VLLMError,
@@ -435,8 +434,7 @@ class _ResolvedAsset:
 
 @router.get("/options", response_model=VideoGenerationOptions)
 def video_options(
-    mode: Literal["i2v", "fl2v", "r2v"] = Query(default="i2v"),
-    _: UserResponse = Depends(current_user),
+    mode: Literal['i2v', 'fl2v', 'r2v'] = Query(default='i2v'),
 ) -> VideoGenerationOptions:
     return _video_options(mode)
 
@@ -445,7 +443,6 @@ def video_options(
 def enhance_video_prompt(
     payload: VideoPromptEnhancementRequest,
     request: Request,
-    _: UserResponse = Depends(current_user),
 ) -> VideoPromptEnhancementResponse:
     try:
         return _enhance_video_prompt(payload)
@@ -456,10 +453,11 @@ def enhance_video_prompt(
 
 @router.post("/{mode}", response_model=VideoGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_video(
-    mode: Literal["i2v", "fl2v", "r2v"],
-    payload: str = Form(...),
-    files: list[UploadFile] = File(default_factory=list),
-    user: UserResponse = Depends(current_user),
+    mode: Literal['i2v',
+    'fl2v',
+    'r2v'],
+    payload: str=Form(...),
+    files: list[UploadFile]=File(default_factory=list),
 ) -> VideoGenerationAccepted:
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
@@ -476,7 +474,7 @@ async def create_video(
         input_segment_prompts = _input_segment_prompts(request, len(segment_durations))
         improved_segment_prompts = _submitted_improved_segment_prompts(request, len(segment_durations))
         effective_prompts = _effective_video_prompts(mode, request)
-        resolved = await _resolve_assets(mode, request, files, user)
+        resolved = await _resolve_assets(mode, request, files)
         initial_request = request.model_copy(update={"duration": segment_durations[0]})
         prompt, seed = _build_prompt(mode, initial_request, resolved, effective_prompt=effective_prompts[0])
         client_id = str(uuid.uuid4())
@@ -492,7 +490,6 @@ async def create_video(
         raise HTTPException(status_code=502, detail="ComfyUI가 영상 생성 작업 ID를 반환하지 않았습니다.")
     input_file_ids = list(dict.fromkeys(asset.file_id for asset in resolved.values()))
     generation_id, created_at = create_video_generation(
-        user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
         active_prompt_id=prompt_id,
@@ -545,57 +542,59 @@ async def create_video(
 
 @router.get("/{mode}/{prompt_id}", response_model=VideoGenerationStatus)
 def video_status(
-    mode: Literal["i2v", "fl2v", "r2v"],
+    mode: Literal['i2v',
+    'fl2v',
+    'r2v'],
     prompt_id: str,
-    user: UserResponse = Depends(current_user),
 ) -> VideoGenerationStatus:
-    generation = get_video_generation(prompt_id, user.id)
+    generation = get_video_generation(prompt_id)
     if generation is None or generation["mode"] != mode:
         raise HTTPException(status_code=404, detail="영상 생성 결과를 찾을 수 없습니다.")
     try:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/{mode}/{prompt_id}/cancel", response_model=VideoGenerationStatus)
 def cancel_video_generation(
-    mode: Literal["i2v", "fl2v", "r2v"],
+    mode: Literal['i2v',
+    'fl2v',
+    'r2v'],
     prompt_id: str,
-    user: UserResponse = Depends(current_user),
 ) -> VideoGenerationStatus:
-    generation = get_video_generation(prompt_id, user.id)
+    generation = get_video_generation(prompt_id)
     if generation is None or generation["mode"] != mode:
         raise HTTPException(status_code=404, detail="영상 생성 결과를 찾을 수 없습니다.")
     if generation["status"] == "cancelled":
-        return _cancelled_status(generation, user.id)
+        return _cancelled_status(generation)
     if generation["status"] not in {"queued", "processing"}:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     active_prompt_id = generation.get("active_prompt_id", prompt_id)
     try:
         if isinstance(active_prompt_id, str) and active_prompt_id:
             dispatched = cancel_comfy_generation(active_prompt_id)
             if not dispatched:
-                current = _history_status(generation, user.id)
+                current = _history_status(generation)
                 if current.status in {"completed", "failed", "cancelled"}:
                     return current
                 raise HTTPException(status_code=409, detail="이미 처리 중인 작업이라 취소할 수 없습니다.")
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    update_video_generation_status(prompt_id=prompt_id, user_id=user.id, status="cancelled")
-    _delete_internal_sequence_files(generation.get("segment_file_ids", []), user.id)
-    cancelled = get_video_generation(prompt_id, user.id) or generation
-    _, progress = _video_sequence_progress(cancelled, user.id)
+    update_video_generation_status(prompt_id=prompt_id, status="cancelled")
+    _delete_internal_sequence_files(generation.get("segment_file_ids", []))
+    cancelled = get_video_generation(prompt_id) or generation
+    _, progress = _video_sequence_progress(cancelled)
     data = {
         "prompt_id": prompt_id,
         "mode": mode,
         "status": "cancelled",
         "progress": progress,
         "queue_position": None,
-        **_video_timing(cancelled, user.id),
+        **_video_timing(cancelled),
     }
     generation_event_broker.publish(
-        key=generation_key("video", user.id, prompt_id),
+        key=generation_key("video", prompt_id),
         event="cancelled",
         data=data,
     )
@@ -604,16 +603,15 @@ def cancel_video_generation(
 
 @router.get("/{mode}/{prompt_id}/events")
 async def video_generation_events(
-    mode: Literal["i2v", "fl2v", "r2v"],
+    mode: Literal['i2v', 'fl2v', 'r2v'],
     prompt_id: str,
     client_id: str = Query(min_length=1, max_length=128),
-    user: UserResponse = Depends(current_user),
 ) -> StreamingResponse:
-    generation = get_video_generation(prompt_id, user.id)
+    generation = get_video_generation(prompt_id)
     if generation is None or generation["mode"] != mode or generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="영상 생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        audit_stream(_stream_video_events(prompt_id, mode, user.id), operation="video.events", user_id=user.id, context={"prompt_id": prompt_id}),
+        audit_stream(_stream_video_events(prompt_id, mode), operation="video.events", context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -623,10 +621,10 @@ async def video_generation_events(
     )
 
 
-async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
-    key = generation_key("video", user_id, prompt_id)
+async def _stream_video_events(prompt_id: str, mode: str):
+    key = generation_key("video", prompt_id)
     async with generation_event_broker.subscribe(key) as events:
-        generation = await asyncio.to_thread(get_video_generation, prompt_id, user_id)
+        generation = await asyncio.to_thread(get_video_generation, prompt_id)
         if generation is None or generation["mode"] != mode:
             yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed", "message": "영상 생성 결과를 찾을 수 없습니다."})
             return
@@ -634,9 +632,9 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
         current_status = str(generation["status"])
         if current_status == "completed":
             try:
-                video = await asyncio.to_thread(_video_output, generation, user_id)
+                video = await asyncio.to_thread(_video_output, generation)
             except StorageError as exc:
-                record_exception(exc, operation="video.events", user_id=user_id, context={"prompt_id": prompt_id})
+                record_exception(exc, operation="video.events", context={"prompt_id": prompt_id})
                 yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
                 return
             yield _sse_message(
@@ -646,7 +644,7 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                     mode=mode,
                     status="completed",
                     video=video,
-                    **_video_timing(generation, user_id),
+                    **_video_timing(generation),
                 ).model_dump(mode="json"),
             )
             return
@@ -659,14 +657,14 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                     "status": "failed",
                     "progress": 0,
                     "queue_position": None,
-                    **_video_timing(generation, user_id),
+                    **_video_timing(generation),
                 },
             )
             return
         if current_status == "cancelled":
-            yield _sse_message("cancelled", _cancelled_status(generation, user_id).model_dump(mode="json"))
+            yield _sse_message("cancelled", _cancelled_status(generation).model_dump(mode="json"))
             return
-        progress_state, progress = _video_sequence_progress(generation, user_id)
+        progress_state, progress = _video_sequence_progress(generation)
         active_prompt_id = generation.get("active_prompt_id", prompt_id)
         yield _sse_message(
             "status",
@@ -678,7 +676,7 @@ async def _stream_video_events(prompt_id: str, mode: str, user_id: uuid.UUID):
                 "queue_position": progress_state["queue_position"] or _queue_position(active_prompt_id)
                 if isinstance(active_prompt_id, str)
                 else None,
-                **_video_timing(generation, user_id),
+                **_video_timing(generation),
             },
         )
 
@@ -1001,7 +999,6 @@ async def _resolve_assets(
     mode: str,
     request: VideoGenerationRequest,
     files: list[UploadFile],
-    user: UserResponse,
 ) -> dict[str, _ResolvedAsset]:
     resolved: dict[str, _ResolvedAsset] = {}
     for asset in _request_assets(mode, request):
@@ -1009,10 +1006,10 @@ async def _resolve_assets(
         if cache_key in resolved:
             continue
         if asset.file_id:
-            record = get_reusable_media(asset.file_id, user.id)
+            record = get_reusable_media(asset.file_id)
             if record is None or record["media_kind"] != asset.kind:
                 raise HTTPException(status_code=404, detail="선택한 콘텐츠를 찾을 수 없습니다.")
-            content, stored_type = storage_download_file(file_id=asset.file_id, owner_id=str(user.id))
+            content, stored_type = storage_download_file(file_id=asset.file_id)
             resolved[cache_key] = _ResolvedAsset(
                 file_id=asset.file_id,
                 filename=record["filename"],
@@ -1021,7 +1018,6 @@ async def _resolve_assets(
                 kind=asset.kind,
             )
             create_media_asset(
-                user_id=user.id,
                 storage_file_id=asset.file_id,
                 filename=record["filename"],
                 content_type=record["content_type"] or stored_type,
@@ -1037,9 +1033,8 @@ async def _resolve_assets(
             raise HTTPException(status_code=422, detail="빈 파일은 사용할 수 없습니다.")
         filename = _safe_filename(upload.filename, asset.kind, upload.content_type)
         media_type = upload.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        file_id = storage_upload_file(content=content, media_type=media_type, owner_id=str(user.id))
+        file_id = storage_upload_file(content=content, media_type=media_type)
         create_media_asset(
-            user_id=user.id,
             storage_file_id=file_id,
             filename=filename,
             content_type=media_type,
@@ -1580,8 +1575,8 @@ def _video_sequence_fields(generation: dict[str, Any]) -> dict[str, int]:
     return {"segment_index": min(max(index, 0), count - 1), "segment_count": count}
 
 
-def _video_sequence_progress(generation: dict[str, Any], user_id: uuid.UUID) -> tuple[dict[str, Any], float]:
-    progress_state = generation_progress(generation["prompt_id"], user_id)
+def _video_sequence_progress(generation: dict[str, Any]) -> tuple[dict[str, Any], float]:
+    progress_state = generation_progress(generation["prompt_id"])
     fields = _video_sequence_fields(generation)
     if generation.get("status") == "completed":
         return progress_state, 100.0
@@ -1589,8 +1584,8 @@ def _video_sequence_progress(generation: dict[str, Any], user_id: uuid.UUID) -> 
     return progress_state, round(max(0.0, min(100.0, progress)), 3)
 
 
-def _video_timing(generation: dict[str, Any], user_id: uuid.UUID) -> dict[str, Any]:
-    current = get_video_generation(generation["prompt_id"], user_id) or generation
+def _video_timing(generation: dict[str, Any]) -> dict[str, Any]:
+    current = get_video_generation(generation["prompt_id"]) or generation
     created_at = current.get("created_at")
     return {
         "fps": float(current.get("fps") or 24),
@@ -1600,30 +1595,30 @@ def _video_timing(generation: dict[str, Any], user_id: uuid.UUID) -> dict[str, A
     }
 
 
-def _delete_internal_sequence_files(file_ids: Sequence[object], user_id: uuid.UUID) -> None:
+def _delete_internal_sequence_files(file_ids: Sequence[object]) -> None:
     for file_id in dict.fromkeys(file_ids):
         if not isinstance(file_id, str) or not file_id:
             continue
         try:
-            storage_delete_file(file_id=file_id, owner_id=str(user_id))
+            storage_delete_file(file_id=file_id)
         except StorageError as exc:
-            record_exception(exc, operation="video.sequence.cleanup", user_id=user_id, context={"file_id": file_id})
+            record_exception(exc, operation="video.sequence.cleanup", context={"file_id": file_id})
             continue
 
 
-def _cancelled_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGenerationStatus:
-    _, progress = _video_sequence_progress(generation, user_id)
+def _cancelled_status(generation: dict[str, Any]) -> VideoGenerationStatus:
+    _, progress = _video_sequence_progress(generation)
     return VideoGenerationStatus(
         prompt_id=generation["prompt_id"],
         mode=generation["mode"],
         status="cancelled",
         progress=progress,
         queue_position=None,
-        **_video_timing(generation, user_id),
+        **_video_timing(generation),
     )
 
 
-def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGenerationStatus:
+def _history_status(generation: dict[str, Any]) -> VideoGenerationStatus:
     prompt_id = generation["prompt_id"]
     if generation.get("status") == "completed":
         return VideoGenerationStatus(
@@ -1632,23 +1627,23 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             status="completed",
             progress=100,
             queue_position=None,
-            video=_video_output(generation, user_id),
-            **_video_timing(generation, user_id),
+            video=_video_output(generation),
+            **_video_timing(generation),
         )
     if generation.get("status") == "failed":
-        _, progress = _video_sequence_progress(generation, user_id)
+        _, progress = _video_sequence_progress(generation)
         return VideoGenerationStatus(
             prompt_id=prompt_id,
             mode=generation["mode"],
             status="failed",
             progress=progress,
             queue_position=None,
-            **_video_timing(generation, user_id),
+            **_video_timing(generation),
         )
     if generation.get("status") == "cancelled":
-        return _cancelled_status(generation, user_id)
+        return _cancelled_status(generation)
     active_prompt_id = generation.get("active_prompt_id", prompt_id)
-    progress_state, progress = _video_sequence_progress(generation, user_id)
+    progress_state, progress = _video_sequence_progress(generation)
     if not isinstance(active_prompt_id, str) or not active_prompt_id:
         return VideoGenerationStatus(
             prompt_id=prompt_id,
@@ -1656,54 +1651,54 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             status="processing",
             progress=progress,
             queue_position=None,
-            **_video_timing(generation, user_id),
+            **_video_timing(generation),
         )
     history = _request_json("GET", f"/history/{active_prompt_id}")
     entry = history.get(active_prompt_id)
     if not isinstance(entry, dict):
         current_status = progress_state["status"] or "queued"
         if current_status == "processing":
-            update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
+            update_video_generation_status(prompt_id=prompt_id, status="processing")
         elif current_status == "failed":
-            update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-            _delete_internal_sequence_files(generation.get("segment_file_ids", []), user_id)
+            update_video_generation_status(prompt_id=prompt_id, status="failed")
+            _delete_internal_sequence_files(generation.get("segment_file_ids", []))
         return VideoGenerationStatus(
             prompt_id=prompt_id,
             mode=generation["mode"],
             status=current_status,
             progress=progress,
             queue_position=progress_state["queue_position"] or _queue_position(active_prompt_id),
-            **_video_timing(generation, user_id),
+            **_video_timing(generation),
         )
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
-        record_remote_error(comfy_status, operation=f"comfyui.video.history/{active_prompt_id}", user_id=user_id)
-        update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-        _delete_internal_sequence_files(generation.get("segment_file_ids", []), user_id)
+        record_remote_error(comfy_status, operation=f"comfyui.video.history/{active_prompt_id}")
+        update_video_generation_status(prompt_id=prompt_id, status="failed")
+        _delete_internal_sequence_files(generation.get("segment_file_ids", []))
         return VideoGenerationStatus(
             prompt_id=prompt_id,
             mode=generation["mode"],
             status="failed",
             progress=progress,
-            **_video_timing(generation, user_id),
+            **_video_timing(generation),
         )
     if comfy_status.get("completed") is True:
-        _sync_video_output(generation, user_id, active_prompt_id, entry.get("outputs"))
-        refreshed = get_video_generation(prompt_id, user_id) or generation
+        _sync_video_output(generation, active_prompt_id, entry.get("outputs"))
+        refreshed = get_video_generation(prompt_id) or generation
         if refreshed.get("status") == "completed":
             return VideoGenerationStatus(
                 prompt_id=prompt_id,
                 mode=generation["mode"],
                 status="completed",
                 progress=100,
-                video=_video_output(refreshed, user_id),
-                **_video_timing(refreshed, user_id),
+                video=_video_output(refreshed),
+                **_video_timing(refreshed),
             )
         if refreshed.get("status") == "cancelled":
-            return _cancelled_status(refreshed, user_id)
-        refreshed_progress_state, refreshed_progress = _video_sequence_progress(refreshed, user_id)
+            return _cancelled_status(refreshed)
+        refreshed_progress_state, refreshed_progress = _video_sequence_progress(refreshed)
         next_prompt_id = refreshed.get("active_prompt_id")
         return VideoGenerationStatus(
             prompt_id=prompt_id,
@@ -1711,21 +1706,21 @@ def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> VideoGene
             status=str(refreshed.get("status") or "processing"),
             progress=refreshed_progress,
             queue_position=refreshed_progress_state["queue_position"] or _queue_position(next_prompt_id) if isinstance(next_prompt_id, str) else None,
-            **_video_timing(refreshed, user_id),
+            **_video_timing(refreshed),
         )
-    update_video_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
+    update_video_generation_status(prompt_id=prompt_id, status="processing")
     return VideoGenerationStatus(
         prompt_id=prompt_id,
         mode=generation["mode"],
         status="processing",
         progress=progress,
-        **_video_timing(generation, user_id),
+        **_video_timing(generation),
     )
 
 
 def _queue_video_continuation(
-    generation: dict[str, Any],
-    user_id: uuid.UUID,
+    generation: dict[str,
+    Any],
     frame_file_id: str,
     frame_content: bytes,
 ) -> str:
@@ -1755,7 +1750,7 @@ def _queue_video_continuation(
             if isinstance(file_id, str) and _FILE_ID_PATTERN.fullmatch(file_id)
         ]
         for index, asset in enumerate(original_images, start=2):
-            content, media_type = storage_download_file(file_id=asset.file_id or "", owner_id=str(user_id))
+            content, media_type = storage_download_file(file_id=asset.file_id or "")
             resolved[_asset_cache_key(asset)] = _ResolvedAsset(
                 file_id=asset.file_id or "",
                 filename=f"{generation['prompt_id']}-reference-image-{index:03d}.png",
@@ -1813,23 +1808,26 @@ def _queue_video_continuation(
 
 
 def _sync_video_output(
-    generation: dict[str, Any], user_id: uuid.UUID, active_prompt_id: str, outputs: Any
+    generation: dict[str,
+    Any],
+    active_prompt_id: str,
+    outputs: Any,
 ) -> None:
     claimed = claim_video_generation_segment(
-        prompt_id=generation["prompt_id"], user_id=user_id, active_prompt_id=active_prompt_id
+        prompt_id=generation["prompt_id"], active_prompt_id=active_prompt_id
     )
     if claimed is None:
         return
     videos = _raw_video_outputs(outputs)
     video = videos[0] if videos else None
     if video is None:
-        fail_claimed_video_generation_segment(prompt_id=claimed["prompt_id"], user_id=user_id)
+        fail_claimed_video_generation_segment(prompt_id=claimed["prompt_id"])
         raise _ComfyUIError("ComfyUI 영상 결과를 찾을 수 없습니다.")
     filename = video.get("filename")
     subfolder = video.get("subfolder", "")
     video_type = video.get("type", "output")
     if not isinstance(filename, str) or not filename or not isinstance(subfolder, str) or not isinstance(video_type, str):
-        fail_claimed_video_generation_segment(prompt_id=claimed["prompt_id"], user_id=user_id)
+        fail_claimed_video_generation_segment(prompt_id=claimed["prompt_id"])
         raise _ComfyUIError("ComfyUI 영상 파일 정보가 올바르지 않습니다.")
     query = urlencode({"filename": filename, "subfolder": subfolder, "type": video_type})
     segment_file_id: str | None = None
@@ -1842,7 +1840,7 @@ def _sync_video_output(
         if fields["segment_index"] + 1 >= fields["segment_count"]:
             segments: list[tuple[bytes, str]] = []
             for index, file_id in enumerate(claimed.get("segment_file_ids", [])):
-                prior_content, _ = storage_download_file(file_id=file_id, owner_id=str(user_id))
+                prior_content, _ = storage_download_file(file_id=file_id)
                 segments.append((prior_content, f"segment-{index:03d}.mp4"))
             final_content = content
             final_filename = filename
@@ -1855,55 +1853,55 @@ def _sync_video_output(
                 subfolder = ""
                 video_type = "output"
             final_file_id = storage_upload_file(
-                content=final_content, media_type=final_media_type, owner_id=str(user_id)
+                content=final_content, media_type=final_media_type
             )
             completed = complete_video_generation_sequence(
-                prompt_id=claimed["prompt_id"], user_id=user_id, segment_index=fields["segment_index"],
+                prompt_id=claimed["prompt_id"], segment_index=fields["segment_index"],
                 storage_file_id=final_file_id, filename=final_filename, subfolder=subfolder,
                 video_type=video_type, size_bytes=len(final_content),
             )
             if not completed:
-                _delete_internal_sequence_files([final_file_id], user_id)
+                _delete_internal_sequence_files([final_file_id])
                 return
-            _delete_internal_sequence_files(claimed.get("segment_file_ids", []), user_id)
+            _delete_internal_sequence_files(claimed.get("segment_file_ids", []))
             return
 
         segment_file_id = storage_upload_file(
-            content=content, media_type=media_type or "video/mp4", owner_id=str(user_id)
+            content=content, media_type=media_type or "video/mp4"
         )
         frame_content = extract_last_video_frame(content=content, filename=filename)
-        frame_file_id = storage_upload_file(content=frame_content, media_type="image/png", owner_id=str(user_id))
-        next_prompt_id = _queue_video_continuation(claimed, user_id, frame_file_id, frame_content)
+        frame_file_id = storage_upload_file(content=frame_content, media_type="image/png")
+        next_prompt_id = _queue_video_continuation(claimed, frame_file_id, frame_content)
         advanced = advance_video_generation_segment(
-            prompt_id=claimed["prompt_id"], user_id=user_id, segment_index=fields["segment_index"],
+            prompt_id=claimed["prompt_id"], segment_index=fields["segment_index"],
             next_prompt_id=next_prompt_id, segment_file_id=segment_file_id,
         )
         if not advanced:
             cancel_comfy_generation(next_prompt_id)
             return
-        reset_generation_progress(claimed["prompt_id"], user_id)
+        reset_generation_progress(claimed["prompt_id"])
     except (StorageError, MediaEditError, _ComfyUIError):
-        fail_claimed_video_generation_segment(prompt_id=claimed["prompt_id"], user_id=user_id)
+        fail_claimed_video_generation_segment(prompt_id=claimed["prompt_id"])
         if next_prompt_id:
             try:
                 cancel_comfy_generation(next_prompt_id)
             except _ComfyUIError as exc:
-                record_exception(exc, operation="video.sequence.cancel", user_id=user_id, context={"prompt_id": next_prompt_id})
+                record_exception(exc, operation="video.sequence.cancel", context={"prompt_id": next_prompt_id})
         raise
     finally:
         if frame_file_id:
-            _delete_internal_sequence_files([frame_file_id], user_id)
+            _delete_internal_sequence_files([frame_file_id])
         if segment_file_id and not advanced:
-            _delete_internal_sequence_files([segment_file_id], user_id)
+            _delete_internal_sequence_files([segment_file_id])
 
 
-def _video_output(generation: dict[str, Any], user_id: uuid.UUID) -> VideoOutput | None:
+def _video_output(generation: dict[str, Any]) -> VideoOutput | None:
     file_id = generation.get("storage_file_id")
     filename = generation.get("filename")
     if not isinstance(file_id, str) or not file_id or not isinstance(filename, str):
         return None
     return VideoOutput(
-        url=storage_read_url(file_id=file_id, owner_id=str(user_id)),
+        url=storage_read_url(file_id=file_id),
         filename=filename,
         subfolder=generation.get("subfolder", ""),
         type=generation.get("video_type", "output"),

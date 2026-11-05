@@ -40,6 +40,12 @@ class _DownloadResponse:
 
 
 class StorageClientTest(unittest.TestCase):
+    def setUp(self):
+        owner = patch("app.storage.get_storage_owner", return_value="legacy-storage-owner")
+        owner.start()
+        self.addCleanup(owner.stop)
+        storage._read_url_cache.clear()
+
     def test_upload_file_sends_owner_and_authentication(self) -> None:
         with (
             patch(
@@ -48,7 +54,7 @@ class StorageClientTest(unittest.TestCase):
             ),
             patch("app.storage.urlopen", return_value=_Response({"id": "file-id"})) as open_url,
         ):
-            file_id = storage.upload_file(content=b"image", media_type="image/png", owner_id="user-id")
+            file_id = storage.upload_file(content=b"image", media_type="image/png")
 
         self.assertEqual(file_id, "file-id")
         request = open_url.call_args.args[0]
@@ -56,7 +62,7 @@ class StorageClientTest(unittest.TestCase):
         self.assertEqual(request.full_url, "https://storage.example/files")
         self.assertEqual(request.get_header("Authorization"), "Bearer service-token")
         self.assertEqual(request.get_header("Content-type"), "image/png")
-        self.assertEqual(request.get_header("X-owner-id"), "user-id")
+        self.assertEqual(request.get_header("X-owner-id"), "local-field")
         self.assertEqual(request.data, b"image")
 
     def test_read_url_uses_file_id_and_expiry(self) -> None:
@@ -67,8 +73,8 @@ class StorageClientTest(unittest.TestCase):
             ),
             patch("app.storage.urlopen", return_value=_Response({"url": "https://cdn.example/file"})) as open_url,
         ):
-            url = storage.read_url(file_id="file/id", owner_id="user-id", expires_in=60)
-            cached_url = storage.read_url(file_id="file/id", owner_id="user-id", expires_in=60)
+            url = storage.read_url(file_id="file/id", expires_in=60)
+            cached_url = storage.read_url(file_id="file/id", expires_in=60)
 
         self.assertEqual(url, "https://cdn.example/file")
         self.assertEqual(cached_url, url)
@@ -76,7 +82,7 @@ class StorageClientTest(unittest.TestCase):
         request = open_url.call_args.args[0]
         self.assertEqual(request.full_url, "https://storage.example/files/file%2Fid/url?expires_in=60")
         self.assertEqual(request.get_header("Authorization"), "Bearer service-token")
-        self.assertEqual(request.get_header("X-owner-id"), "user-id")
+        self.assertEqual(request.get_header("X-owner-id"), "legacy-storage-owner")
 
     def test_download_file_reads_signed_path_through_internal_storage_url(self) -> None:
         with (
@@ -87,7 +93,7 @@ class StorageClientTest(unittest.TestCase):
             patch.object(storage, "read_url", return_value="https://storage.magi00.fun/files/file-id?expires=123&signature=signed"),
             patch("app.storage.urlopen", return_value=_DownloadResponse()) as open_url,
         ):
-            content, media_type = storage.download_file(file_id="file-id", owner_id="user-id")
+            content, media_type = storage.download_file(file_id="file-id")
 
         self.assertEqual(content, b"image")
         self.assertEqual(media_type, "image/png")
@@ -102,12 +108,12 @@ class StorageClientTest(unittest.TestCase):
             ),
             patch("app.storage.urlopen", return_value=_Response()) as open_url,
         ):
-            storage.delete_file(file_id="file/id", owner_id="user-id")
+            storage.delete_file(file_id="file/id")
 
         request = open_url.call_args.args[0]
         self.assertEqual(request.full_url, "https://storage.example/files/file%2Fid")
         self.assertEqual(request.get_header("Authorization"), "Bearer service-token")
-        self.assertEqual(request.get_header("X-owner-id"), "user-id")
+        self.assertEqual(request.get_header("X-owner-id"), "legacy-storage-owner")
 
 
 if __name__ == "__main__":

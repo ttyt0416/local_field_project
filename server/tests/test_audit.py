@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import asyncio
 from io import BytesIO
 import json
@@ -26,7 +27,7 @@ class AuditTest(unittest.TestCase):
                 raise error from None
         except RuntimeError as error:
             with patch.object(audit, 'fire_and_forget') as enqueue:
-                audit.record_exception(error, operation='download', user_id='owner')
+                audit.record_exception(error, operation='download')
                 audit.record_exception(error)
         self.assertEqual(enqueue.call_count, 1)
         payload = enqueue.call_args.args[1]
@@ -92,10 +93,10 @@ class AuditTest(unittest.TestCase):
     def test_web_event_is_queued_with_complete_identity(self):
         owner, visitor, session, event = (uuid4() for _ in range(4))
         with patch.object(database, 'fire_and_forget') as enqueue:
-            database.record_web_event(event_type='click', page_path='/models?x=' + 'y' * 6000, from_path='/files', target_type='button', target_id='button:nth-of-type(1)', target_label='다운로드', target_href=None, client_ip='127.0.0.1', user_agent='test', user_id=owner, visitor_id=visitor, session_id=session, event_id=event, target_path='body > button', target_context={'dialog_label': '폴더 선택'})
+            database.record_web_event(event_type='click', page_path='/models?x=' + 'y' * 6000, from_path='/files', target_type='button', target_id='button:nth-of-type(1)', target_label='다운로드', target_href=None, client_ip='127.0.0.1', user_agent='test', visitor_id=visitor, session_id=session, event_id=event, target_path='body > button', target_context={'dialog_label': '폴더 선택'})
         parameters = enqueue.call_args.args[1]
-        self.assertEqual(parameters[9:11], (owner, event))
-        self.assertEqual(parameters[12:15], (visitor, session, 'body > button'))
+        self.assertEqual(parameters[9], event)
+        self.assertEqual(parameters[11:14], (visitor, session, 'body > button'))
         self.assertGreater(len(parameters[1]), 6000)
         self.assertEqual(enqueue.call_args.kwargs['channel'], 'web')
 
@@ -125,11 +126,11 @@ class AuditTest(unittest.TestCase):
             yield 'first'
             raise OSError('stream original failure')
         async def run():
-            return [chunk async for chunk in audit.audit_stream(original(), operation='music.events', user_id='owner')]
+            return [chunk async for chunk in audit.audit_stream(original(), operation='music.events')]
         with patch.object(audit, 'record_exception') as record, self.assertRaisesRegex(OSError, 'stream original failure'):
             asyncio.run(run())
         self.assertEqual(str(record.call_args.args[0]), 'stream original failure')
-        self.assertEqual(record.call_args.kwargs['user_id'], 'owner')
+        self.assertNotIn('user_id', record.call_args.kwargs)
 
     def test_music_and_3d_options_log_recovered_errors(self):
         for module, function in [(music, music.music_options), (three_d, three_d.three_d_options)]:
@@ -147,7 +148,7 @@ class AuditTest(unittest.TestCase):
 
     def test_download_worker_persists_original_failure(self):
         stop = asyncio.Event()
-        job = {'id': uuid4(), 'user_id': uuid4(), 'filename': 'model.safetensors', 'provider': 'civitai'}
+        job = {'id': uuid4(), 'filename': 'model.safetensors', 'provider': 'civitai'}
         error = TimeoutError('The read operation timed out')
         def process(_):
             stop.set()
@@ -159,27 +160,18 @@ class AuditTest(unittest.TestCase):
         self.assertIsInstance(record.call_args.args[0], TimeoutError)
         self.assertEqual(str(record.call_args.args[0]), str(error))
 
-    def test_telemetry_auth_verifies_user_without_database_dependency(self):
-        from app.auth import _create_access_token
-        from starlette.requests import Request
-        user_id = uuid4()
-        token = _create_access_token(user_id, 'audit-test')
-        request = Request({'type': 'http', 'headers': [(b'authorization', f'Bearer {token}'.encode())]})
-        with patch.object(database, 'get_connection', side_effect=AssertionError('must not connect')):
-            self.assertEqual(main.telemetry_user(request), user_id)
+
 
     def test_upload_cleanup_failure_is_audited_without_raising(self):
-        from app.auth import UserResponse
-        user = UserResponse(id=uuid4(), username='audit-test')
+
         with patch.object(uploads, 'storage_delete_file', side_effect=uploads.StorageError('raw cleanup')), patch.object(uploads, 'record_exception') as record:
-            uploads._remove_storage_file('file-id', user)
+            uploads._remove_storage_file('file-id')
         self.assertEqual(str(record.call_args.args[0]), 'raw cleanup')
-        self.assertEqual(record.call_args.kwargs['user_id'], user.id)
+        self.assertNotIn('user_id', record.call_args.kwargs)
 
     def test_vault_size_lookup_failure_is_audited_without_hiding_item(self):
-        user_id = uuid4()
         with patch.object(vault, 'storage_enabled', return_value=True), patch.object(vault, 'storage_file_size', side_effect=vault.StorageError('raw metadata failure')), patch.object(vault, 'record_exception') as record:
-            self.assertIsNone(vault._generation_file_size({'storage_file_id': 'file-id'}, user_id, True))
+            self.assertIsNone(vault._generation_file_size({'storage_file_id': 'file-id'}, True))
         self.assertEqual(str(record.call_args.args[0]), 'raw metadata failure')
 
     def test_fastapi_boundary_preserves_original_errors_and_validation_details(self):

@@ -1,3 +1,3 @@
 # Navbar
 
-The authenticated navbar polls Local Field `GET /hardware/metrics` immediately after authentication and every 5 seconds. CPU, GPU, RAM, and DISK are always rendered in a dedicated two-column grid container when metrics are available. The outer navbar uses `justify-between`: existing account, health, theme, and menu controls remain in the left group while the metrics container is its right-side sibling. Browser code never calls the independent hardware-monitor directly, so the monitor remains outside public browser/CORS access; Local Field server authenticates the user and proxies the internal request. Failed polls clear stale values without displaying a hardware-monitor failure Toast; the next scheduled poll retries automatically.
+계정 메뉴·로그인·로그아웃·회원탈퇴 UI를 제공하지 않는다. 테마·메뉴·서버 상태와 하드웨어 지표를 표시한다. 하드웨어 지표는 마운트 직후와 5초마다 Local Field API에서 조회한다. 조회 실패는 이전과 같이 조용히 처리하고 다음 주기에 재시도한다.

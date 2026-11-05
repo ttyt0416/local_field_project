@@ -17,3 +17,7 @@ The five loader inputs are resolved from `diffusion_models/TripoSplat/`, `clip_v
 ## 동작·오류 기록
 
 준비 상태 복구 응답, 3D SSE 예외, ComfyUI history 실행 실패를 공통 유틸로 기록한다. 리깅 오류는 rigging 유틸 경로를 사용한다.
+
+## 공용 사용
+
+Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.

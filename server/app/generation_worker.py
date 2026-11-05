@@ -5,7 +5,6 @@ from datetime import datetime
 import logging
 from typing import Any
 
-from .latency import api_user
 from .audit import record_exception
 from .comfyui import _history_generation_status, generation_progress, record_comfy_progress, stream_comfy_progress
 from .database import (
@@ -33,44 +32,40 @@ def reconcile_active_generations() -> None:
     for generation in list_active_image_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            with api_user(generation["user_id"]):
-                result = _history_generation_status(generation["prompt_id"], generation["user_id"])
+            result = _history_generation_status(generation["prompt_id"])
             _publish_if_changed("image", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
-            record_exception(exc, operation="generation.reconcile.image", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
+            record_exception(exc, operation="generation.reconcile.image", context={"prompt_id": generation["prompt_id"]})
             logger.exception("이미지 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("image", generation, previous_status)
 
     for generation in list_active_video_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            with api_user(generation["user_id"]):
-                result = _history_status(generation, generation["user_id"])
+            result = _history_status(generation)
             _publish_if_changed("video", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
-            record_exception(exc, operation="generation.reconcile.video", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
+            record_exception(exc, operation="generation.reconcile.video", context={"prompt_id": generation["prompt_id"]})
             logger.exception("동영상 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("video", generation, previous_status)
 
     for generation in list_active_three_d_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            with api_user(generation["user_id"]):
-                result = _three_d_history_status(generation, generation["user_id"])
+            result = _three_d_history_status(generation)
             _publish_if_changed("3d", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
-            record_exception(exc, operation="generation.reconcile.3d", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
+            record_exception(exc, operation="generation.reconcile.3d", context={"prompt_id": generation["prompt_id"]})
             logger.exception("3D 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("3d", generation, previous_status)
 
     for generation in list_active_music_generations():
         previous_status = str(generation.get("status", "queued"))
         try:
-            with api_user(generation["user_id"]):
-                result = _music_history_status(generation, generation["user_id"])
+            result = _music_history_status(generation)
             _publish_if_changed("music", generation, previous_status, result.status, result.model_dump(mode="json"))
         except Exception as exc:
-            record_exception(exc, operation="generation.reconcile.music", user_id=generation["user_id"], context={"prompt_id": generation["prompt_id"]})
+            record_exception(exc, operation="generation.reconcile.music", context={"prompt_id": generation["prompt_id"]})
             logger.exception("음악 생성 작업을 동기화하지 못했습니다: %s", generation["prompt_id"])
             _publish_terminal_if_changed("music", generation, previous_status)
 
@@ -82,7 +77,7 @@ def _publish_if_changed(
     current_status: str,
     data: dict[str, Any],
 ) -> None:
-    key = generation_key(kind, generation["user_id"], generation["prompt_id"])
+    key = generation_key(kind, generation["prompt_id"])
     data = {"prompt_id": generation["prompt_id"], "status": current_status, "progress": 0.0, "queue_position": None, **data}
     created_at = generation.get("created_at")
     if created_at is not None:
@@ -107,17 +102,17 @@ def _publish_if_changed(
 
 def _publish_terminal_if_changed(kind: str, generation: dict[str, Any], previous_status: str) -> None:
     if kind == "image":
-        current = get_image_generation(generation["prompt_id"], generation["user_id"])
+        current = get_image_generation(generation["prompt_id"])
     elif kind == "video":
-        current = get_video_generation(generation["prompt_id"], generation["user_id"])
+        current = get_video_generation(generation["prompt_id"])
     elif kind == "3d":
-        current = get_three_d_generation(generation["prompt_id"], generation["user_id"])
+        current = get_three_d_generation(generation["prompt_id"])
     else:
-        current = get_music_generation(generation["prompt_id"], generation["user_id"])
+        current = get_music_generation(generation["prompt_id"])
     if current is None or current["status"] == previous_status or current["status"] not in {"completed", "failed", "cancelled"}:
         return
-    key = generation_key(kind, generation["user_id"], generation["prompt_id"])
-    progress = 100.0 if current["status"] == "completed" else generation_progress(generation["prompt_id"], generation["user_id"])["progress"]
+    key = generation_key(kind, generation["prompt_id"])
+    progress = 100.0 if current["status"] == "completed" else generation_progress(generation["prompt_id"])["progress"]
     created_at = current.get("created_at")
     data = {
         "prompt_id": generation["prompt_id"],
@@ -149,24 +144,22 @@ def _active_generations() -> list[tuple[str, dict[str, Any]]]:
 
 async def _watch_progress(kind: str, generation: dict[str, Any], stop_event: asyncio.Event) -> None:
     prompt_id = generation["prompt_id"]
-    user_id = generation["user_id"]
     while not stop_event.is_set():
         try:
-            with api_user(user_id):
-                async for event_name, data in stream_comfy_progress(generation["client_id"], stop_event):
-                    active_prompt_id = None
-                    if kind == "video":
-                        current = get_video_generation(prompt_id, user_id)
-                        active = current.get("active_prompt_id") if current is not None else None
-                        if not isinstance(active, str) or not active:
-                            continue
-                        active_prompt_id = active
-                    if record_comfy_progress(
-                        prompt_id, user_id, event_name, data, accepted_prompt_id=active_prompt_id
-                    ):
+            async for event_name, data in stream_comfy_progress(generation["client_id"], stop_event):
+                active_prompt_id = None
+                if kind == "video":
+                    current = get_video_generation(prompt_id)
+                    active = current.get("active_prompt_id") if current is not None else None
+                    if not isinstance(active, str) or not active:
                         continue
+                    active_prompt_id = active
+                if record_comfy_progress(
+                    prompt_id, event_name, data, accepted_prompt_id=active_prompt_id
+                ):
+                    continue
         except Exception as exc:
-            record_exception(exc, operation="generation.progress", user_id=user_id, context={"kind": kind, "prompt_id": prompt_id})
+            record_exception(exc, operation="generation.progress", context={"kind": kind, "prompt_id": prompt_id})
             logger.debug("%s 생성 progress WebSocket 연결을 재시도합니다: %s", kind, prompt_id, exc_info=True)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=2)
@@ -185,7 +178,7 @@ async def run_generation_reconciler(stop_event: asyncio.Event) -> None:
                 for kind, generation in active:
                     if kind == '3d' and generation.get('generation_mode') == 'rigging':
                         continue
-                    key = generation_key(kind, generation["user_id"], generation["prompt_id"])
+                    key = generation_key(kind, generation["prompt_id"])
                     active_keys.add(key)
                     task = listeners.get(key)
                     if task is None or task.done():

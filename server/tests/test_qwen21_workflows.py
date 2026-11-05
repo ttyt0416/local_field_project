@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import asyncio
 import unittest
 from unittest.mock import patch
@@ -9,7 +10,6 @@ from pydantic import ValidationError
 from model_fixtures import model_object_info
 
 from app import comfyui
-from app.auth import UserResponse
 from app.presets import PresetCreateRequest
 
 
@@ -73,10 +73,10 @@ class Qwen21WorkflowTest(unittest.TestCase):
             with self.subTest(values=values), self.assertRaises(HTTPException):
                 comfyui._validate_model_choice(self.request(**values), self.options())
         request = self.request(steps=4)
-        user = UserResponse(id=uuid4(), username="tester", created_at="2026-10-18T00:00:00Z")
+
         with patch.object(comfyui, "_image_options", return_value=self.options()), patch.object(comfyui, "_resolve_image_source") as resolve:
             with self.assertRaises(HTTPException):
-                asyncio.run(comfyui.create_image_to_image_generation(request.model_dump_json(), [], user))
+                asyncio.run(comfyui.create_image_to_image_generation(request.model_dump_json(), []))
             resolve.assert_not_called()
 
     def test_vllm_improved_prose_reaches_encoder_without_local_llm_nodes(self):
@@ -100,7 +100,7 @@ class Qwen21WorkflowTest(unittest.TestCase):
         request = self.request(prompt_enhancement_enabled=True)
         with patch.object(comfyui, "_image_options", return_value=self.options()), patch.object(comfyui, "_resolve_image_source") as resolve:
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(comfyui.create_image_to_image_generation(request.model_dump_json(), [], UserResponse(id=uuid4(), username="tester")))
+                asyncio.run(comfyui.create_image_to_image_generation(request.model_dump_json(), []))
         self.assertEqual(caught.exception.status_code, 422)
         resolve.assert_not_called()
 

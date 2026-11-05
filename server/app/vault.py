@@ -7,11 +7,10 @@ from typing import Any, Literal
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from .audit import record_exception
-from .auth import UserResponse, current_user
 from .comfyui import _request_bytes, cancel_image_generation
 from .database import (
     create_image_edit,
@@ -277,21 +276,20 @@ class VaultVideoUpscaleRequest(BaseModel):
 
 @router.get("/3d", response_model=VaultThreeDPage)
 def vault_three_d(
-    search: str = Query(default="", max_length=500),
-    sort: Literal["latest", "oldest", "most_viewed"] = "latest",
+    search: str = Query(default='', max_length=500),
+    sort: Literal['latest', 'oldest', 'most_viewed'] = 'latest',
     favorites_only: bool = False,
     page: int = Query(default=1, ge=1),
-    user: UserResponse = Depends(current_user),
 ) -> VaultThreeDPage:
     rows, total_count, completed_count = list_three_d_generations(
-        user.id,
+
         search=search,
         sort=sort,
         favorites_only=favorites_only,
         page=page,
     )
     return VaultThreeDPage(
-        items=[_three_d_summary(row, user.id) for row in rows],
+        items=[_three_d_summary(row) for row in rows],
         page=page,
         page_size=VAULT_PAGE_SIZE,
         total_count=total_count,
@@ -302,21 +300,20 @@ def vault_three_d(
 
 @router.get("/videos", response_model=VaultVideoPage)
 def vault_videos(
-    search: str = Query(default="", max_length=500),
-    sort: Literal["latest", "oldest", "most_viewed"] = "latest",
+    search: str = Query(default='', max_length=500),
+    sort: Literal['latest', 'oldest', 'most_viewed'] = 'latest',
     favorites_only: bool = False,
     page: int = Query(default=1, ge=1),
-    user: UserResponse = Depends(current_user),
 ) -> VaultVideoPage:
     rows, total_count, completed_count = list_video_generations(
-        user.id,
+
         search=search,
         sort=sort,
         favorites_only=favorites_only,
         page=page,
     )
     return VaultVideoPage(
-        items=[_video_summary(row, user.id) for row in rows],
+        items=[_video_summary(row) for row in rows],
         page=page,
         page_size=VAULT_PAGE_SIZE,
         total_count=total_count,
@@ -327,18 +324,17 @@ def vault_videos(
 
 @router.get("/images", response_model=VaultImagePage)
 def vault_images(
-    search: str = Query(default="", max_length=500),
-    sort: Literal["latest", "oldest", "most_viewed"] = "latest",
+    search: str = Query(default='', max_length=500),
+    sort: Literal['latest', 'oldest', 'most_viewed'] = 'latest',
     favorites_only: bool = False,
     page: int = Query(default=1, ge=1),
-    user: UserResponse = Depends(current_user),
     generation_mode: ImageGenerationMode | None = None,
     model_family: ImageModelFamily | None = None,
 ) -> VaultImagePage:
     if (generation_mode is None) != (model_family is None):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="이미지 분류를 모두 선택해 주세요.")
     rows, total_count, completed_count = list_image_generations(
-        user.id,
+
         search=search,
         sort=sort,
         favorites_only=favorites_only,
@@ -347,7 +343,7 @@ def vault_images(
         page=page,
     )
     return VaultImagePage(
-        items=[_summary(row, user.id) for row in rows],
+        items=[_summary(row) for row in rows],
         page=page,
         page_size=VAULT_PAGE_SIZE,
         total_count=total_count,
@@ -358,54 +354,51 @@ def vault_images(
 
 @router.delete("/3d/filtered", response_model=BulkDeleteResponse)
 def delete_filtered_vault_three_d(
-    search: str = Query(default="", max_length=500),
+    search: str = Query(default='', max_length=500),
     favorites_only: bool = False,
     expected_count: int = Query(ge=0),
     confirmed: bool = False,
-    user: UserResponse = Depends(current_user),
 ) -> BulkDeleteResponse:
     generations = list_filtered_three_d_generations(
-        user.id, search=search, favorites_only=favorites_only
+         search=search, favorites_only=favorites_only
     )
     _validate_filtered_delete(len(generations), expected_count, confirmed)
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(
         deleted_count=_delete_generation_rows(
-            generations, generation_ids, delete_three_d_generations, user, "3d"
+            generations, generation_ids, delete_three_d_generations, "3d"
         )
     )
 
 
 @router.delete("/videos/filtered", response_model=BulkDeleteResponse)
 def delete_filtered_vault_videos(
-    search: str = Query(default="", max_length=500),
+    search: str = Query(default='', max_length=500),
     favorites_only: bool = False,
     expected_count: int = Query(ge=0),
     confirmed: bool = False,
-    user: UserResponse = Depends(current_user),
 ) -> BulkDeleteResponse:
-    generations = list_filtered_video_generations(user.id, search=search, favorites_only=favorites_only)
+    generations = list_filtered_video_generations( search=search, favorites_only=favorites_only)
     _validate_filtered_delete(len(generations), expected_count, confirmed)
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(
-        deleted_count=_delete_generation_rows(generations, generation_ids, delete_video_generations, user, "video")
+        deleted_count=_delete_generation_rows(generations, generation_ids, delete_video_generations, "video")
     )
 
 
 @router.delete("/images/filtered", response_model=BulkDeleteResponse)
 def delete_filtered_vault_images(
-    search: str = Query(default="", max_length=500),
+    search: str = Query(default='', max_length=500),
     favorites_only: bool = False,
     expected_count: int = Query(ge=0),
     confirmed: bool = False,
-    user: UserResponse = Depends(current_user),
     generation_mode: ImageGenerationMode | None = None,
     model_family: ImageModelFamily | None = None,
 ) -> BulkDeleteResponse:
     if (generation_mode is None) != (model_family is None):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="이미지 분류를 모두 선택해 주세요.")
     generations = list_filtered_image_generations(
-        user.id,
+
         search=search,
         favorites_only=favorites_only,
         model_family=model_family,
@@ -414,7 +407,7 @@ def delete_filtered_vault_images(
     _validate_filtered_delete(len(generations), expected_count, confirmed)
     generation_ids = [generation["id"] for generation in generations]
     return BulkDeleteResponse(
-        deleted_count=_delete_generation_rows(generations, generation_ids, delete_image_generations, user, "image")
+        deleted_count=_delete_generation_rows(generations, generation_ids, delete_image_generations, "image")
     )
 
 
@@ -422,9 +415,8 @@ def delete_filtered_vault_images(
 def edit_vault_video(
     generation_id: UUID,
     payload: VideoEditRequest,
-    user: UserResponse = Depends(current_user),
 ) -> VideoEditResponse:
-    generation = get_video_generation_by_id(generation_id, user.id)
+    generation = get_video_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
     if generation["status"] != "completed":
@@ -433,7 +425,7 @@ def edit_vault_video(
     if not storage_enabled() or not isinstance(storage_file_id, str) or not storage_file_id:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="영상 Storage 파일을 사용할 수 없습니다.")
     try:
-        content, _ = storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+        content, _ = storage_download_file(file_id=storage_file_id)
         started_at = monotonic()
         edited = edit_video(
             content=content,
@@ -456,13 +448,11 @@ def edit_vault_video(
         edited_file_id = storage_upload_file(
             content=edited.content,
             media_type="video/mp4",
-            owner_id=str(user.id),
         )
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     try:
         edited_id = create_video_edit(
-            user_id=user.id,
             source_generation_id=generation_id,
             storage_file_id=edited_file_id,
             filename=edited.filename,
@@ -474,15 +464,15 @@ def edit_vault_video(
         )
     except Exception as exc:
         try:
-            storage_delete_file(file_id=edited_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=edited_file_id)
         except StorageError as cleanup_error:
-            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": edited_file_id})
+            record_exception(cleanup_error, operation="vault.edit.cleanup", context={"file_id": edited_file_id})
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="편집한 영상을 저장하지 못했습니다.") from exc
     if edited_id is None:
         try:
-            storage_delete_file(file_id=edited_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=edited_file_id)
         except StorageError as cleanup_error:
-            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": edited_file_id})
+            record_exception(cleanup_error, operation="vault.edit.cleanup", context={"file_id": edited_file_id})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
     return VideoEditResponse(generation_id=edited_id)
 
@@ -491,9 +481,8 @@ def edit_vault_video(
 async def upscale_vault_video(
     generation_id: UUID,
     payload: VaultVideoUpscaleRequest,
-    user: UserResponse = Depends(current_user),
 ) -> VideoGenerationAccepted:
-    generation = get_video_generation_by_id(generation_id, user.id)
+    generation = get_video_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
     if generation["status"] != "completed":
@@ -535,19 +524,18 @@ async def upscale_vault_video(
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target 메가픽셀은 현재 영상보다 커야 합니다.") from exc
-    return await create_video("r2v", request.model_dump_json(), [], user)
+    return await create_video("r2v", request.model_dump_json(), [])
 
 
 @router.get("/3d/{generation_id}", response_model=VaultThreeDDetail)
 def vault_three_d_detail(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> VaultThreeDDetail:
-    generation = increment_three_d_generation_view_count(generation_id, user.id)
+    generation = increment_three_d_generation_view_count(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
     return VaultThreeDDetail(
-        **_three_d_summary(generation, user.id, include_file_size=True).model_dump(),
+        **_three_d_summary(generation, include_file_size=True).model_dump(),
         remove_background=generation["remove_background"],
         padding=generation["padding"],
         source_filename=generation["source_filename"],
@@ -558,9 +546,8 @@ def vault_three_d_detail(
 def vault_three_d_model(
     generation_id: UUID,
     source: bool = False,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_three_d_generation_by_id(generation_id, user.id)
+    generation = get_three_d_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
     if source and generation.get("generation_mode") != "rigging":
@@ -571,7 +558,7 @@ def vault_three_d_model(
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     try:
-        content, _ = storage_download_file(file_id=file_id, owner_id=str(user.id))
+        content, _ = storage_download_file(file_id=file_id)
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return Response(content=content, media_type="model/gltf-binary", headers={"Cache-Control": "private, no-store"})
@@ -581,9 +568,8 @@ def vault_three_d_model(
 def update_vault_three_d_favorite(
     generation_id: UUID,
     payload: FavoriteRequest,
-    user: UserResponse = Depends(current_user),
 ) -> FavoriteResponse:
-    is_favorite = update_three_d_favorite(generation_id, user.id, payload.is_favorite)
+    is_favorite = update_three_d_favorite(generation_id, payload.is_favorite)
     if is_favorite is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
     return FavoriteResponse(is_favorite=is_favorite)
@@ -592,27 +578,26 @@ def update_vault_three_d_favorite(
 @router.delete("/3d/{generation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vault_three_d(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_three_d_generation_by_id(generation_id, user.id)
+    generation = get_three_d_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
-    _cancel_active_generation(generation, "3d", user)
+    _cancel_active_generation(generation, "3d")
     if generation.get('generation_mode') == 'rigging':
-        generation = get_three_d_generation_by_id(generation_id, user.id) or generation
+        generation = get_three_d_generation_by_id(generation_id) or generation
     candidates = [generation.get('storage_file_id')]
     if generation.get('generation_mode') == 'rigging':
         candidates.append(generation.get('source_file_id'))
     for storage_file_id in dict.fromkeys(candidates):
-        if not storage_file_id or has_media_asset(storage_file_id, user.id) or has_generation_storage_reference_outside(storage_file_id, user.id, [generation_id]):
+        if not storage_file_id or has_media_asset(storage_file_id) or has_generation_storage_reference_outside(storage_file_id, [generation_id]):
             continue
         if not storage_enabled():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
         try:
-            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=storage_file_id)
         except StorageError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    if not delete_three_d_generation(generation_id, user.id):
+    if not delete_three_d_generation(generation_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="3D 콘텐츠를 찾을 수 없습니다.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -620,13 +605,12 @@ def delete_vault_three_d(
 @router.get("/videos/{generation_id}", response_model=VaultVideoDetail)
 def vault_video_detail(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> VaultVideoDetail:
-    generation = increment_video_generation_view_count(generation_id, user.id)
+    generation = increment_video_generation_view_count(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
     return VaultVideoDetail(
-        **_video_summary(generation, user.id, include_file_size=True).model_dump(),
+        **_video_summary(generation, include_file_size=True).model_dump(),
         aspect_ratio=generation.get("aspect_ratio"),
         megapixels=generation.get("megapixels"),
         width=generation["width"],
@@ -656,9 +640,8 @@ def vault_video_detail(
 @router.get("/videos/{generation_id}/download")
 def download_vault_video(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_video_generation_by_id(generation_id, user.id)
+    generation = get_video_generation_by_id(generation_id)
     if generation is None or generation["status"] != "completed":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 결과를 찾을 수 없습니다.")
     storage_file_id = generation.get("storage_file_id")
@@ -667,7 +650,7 @@ def download_vault_video(
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     try:
-        content, media_type = storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+        content, media_type = storage_download_file(file_id=storage_file_id)
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return _download_response(content, media_type, generation.get("filename") or f"local-field-video-{generation_id}.mp4")
@@ -677,9 +660,8 @@ def download_vault_video(
 def update_vault_video_favorite(
     generation_id: UUID,
     payload: FavoriteRequest,
-    user: UserResponse = Depends(current_user),
 ) -> FavoriteResponse:
-    is_favorite = update_video_favorite(generation_id, user.id, payload.is_favorite)
+    is_favorite = update_video_favorite(generation_id, payload.is_favorite)
     if is_favorite is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
     return FavoriteResponse(is_favorite=is_favorite)
@@ -688,21 +670,20 @@ def update_vault_video_favorite(
 @router.delete("/videos/{generation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vault_video(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_video_generation_by_id(generation_id, user.id)
+    generation = get_video_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
-    _cancel_active_generation(generation, "video", user)
+    _cancel_active_generation(generation, "video")
     storage_file_id = generation.get("storage_file_id")
-    if storage_file_id and not has_media_asset(storage_file_id, user.id):
+    if storage_file_id and not has_media_asset(storage_file_id):
         if not storage_enabled():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
         try:
-            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=storage_file_id)
         except StorageError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    if not delete_video_generation(generation_id, user.id):
+    if not delete_video_generation(generation_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="영상 콘텐츠를 찾을 수 없습니다.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -710,12 +691,11 @@ def delete_vault_video(
 @router.delete("/images/bulk", response_model=BulkDeleteResponse)
 def delete_vault_images(
     payload: BulkDeleteRequest,
-    user: UserResponse = Depends(current_user),
 ) -> BulkDeleteResponse:
-    generations = get_image_generations_by_ids(payload.generation_ids, user.id)
+    generations = get_image_generations_by_ids(payload.generation_ids)
     if len(generations) != len(payload.generation_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
-    deleted_count = _delete_generation_rows(generations, payload.generation_ids, delete_image_generations, user, "image")
+    deleted_count = _delete_generation_rows(generations, payload.generation_ids, delete_image_generations, "image")
     if deleted_count != len(payload.generation_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="삭제할 콘텐츠를 찾을 수 없습니다.")
     return BulkDeleteResponse(deleted_count=deleted_count)
@@ -724,17 +704,20 @@ def delete_vault_images(
 def _delete_generation_rows(
     generations: list[dict],
     generation_ids: list[UUID],
-    delete_records: Callable[[list[UUID], UUID], int],
-    user: UserResponse,
-    media_type: Literal["image", "video", "3d"],
+    delete_records: Callable[[list[UUID],
+    UUID],
+    int],
+    media_type: Literal['image',
+    'video',
+    '3d'],
 ) -> int:
     if not generation_ids:
         return 0
     for generation in generations:
-        _cancel_active_generation(generation, media_type, user)
+        _cancel_active_generation(generation, media_type)
     if media_type == '3d':
         generations = [
-            (get_three_d_generation_by_id(generation['id'], user.id) or generation)
+            (get_three_d_generation_by_id(generation['id']) or generation)
             if generation.get('generation_mode') == 'rigging' else generation
             for generation in generations
         ]
@@ -747,9 +730,9 @@ def _delete_generation_rows(
                             else [generation.get('storage_file_id')])
             if isinstance(file_id, str)
             and file_id
-            and not has_media_asset(file_id, user.id)
+            and not has_media_asset(file_id)
             and not has_generation_storage_reference_outside(
-                file_id, user.id, generation_ids
+                file_id, generation_ids
             )
         )
     )
@@ -759,19 +742,22 @@ def _delete_generation_rows(
         if storage_file_ids:
             with ThreadPoolExecutor(max_workers=min(len(storage_file_ids), 8)) as executor:
                 storage_futures = [
-                    executor.submit(storage_delete_file, file_id=file_id, owner_id=str(user.id))
+                    executor.submit(storage_delete_file, file_id=file_id)
                     for file_id in storage_file_ids
                 ]
                 for future in storage_futures:
                     future.result()
-        deleted_count = delete_records(generation_ids, user.id)
+        deleted_count = delete_records(generation_ids)
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return deleted_count
 
 
 def _cancel_active_generation(
-    generation: dict, media_type: Literal["image", "video", "3d"], user: UserResponse
+    generation: dict,
+    media_type: Literal['image',
+    'video',
+    '3d'],
 ) -> None:
     if generation.get("status") not in {"queued", "processing"}:
         return
@@ -779,14 +765,14 @@ def _cancel_active_generation(
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="진행 중인 콘텐츠를 취소할 수 없습니다.")
     if media_type == "image":
-        cancel_image_generation(prompt_id, user)
+        cancel_image_generation(prompt_id)
     elif media_type == "video":
         mode = generation.get("mode")
         if mode not in {"i2v", "fl2v", "r2v"}:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="진행 중인 콘텐츠를 취소할 수 없습니다.")
-        cancel_video_generation(mode, prompt_id, user)
+        cancel_video_generation(mode, prompt_id)
     else:
-        cancel_three_d(prompt_id, user)
+        cancel_three_d(prompt_id)
 
 
 def _validate_filtered_delete(actual_count: int, expected_count: int, confirmed: bool) -> None:
@@ -802,32 +788,30 @@ def _validate_filtered_delete(actual_count: int, expected_count: int, confirmed:
 @router.get("/images/{generation_id}/source")
 def vault_image_source(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_image_generation_by_id(generation_id, user.id)
+    generation = get_image_generation_by_id(generation_id)
     if generation is None or generation["status"] != "completed":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
-    content, media_type = _image_content(generation, user)
+    content, media_type = _image_content(generation)
     return Response(content=content, media_type=media_type or "image/png")
 
 
 @router.get("/images/{generation_id}/download")
 def download_vault_image(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_image_generation_by_id(generation_id, user.id)
+    generation = get_image_generation_by_id(generation_id)
     if generation is None or generation["status"] != "completed":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
-    content, media_type = _image_content(generation, user)
+    content, media_type = _image_content(generation)
     return _download_response(content, media_type, generation.get("filename") or f"local-field-image-{generation_id}.png")
 
 
-def _image_content(generation: dict, user: UserResponse) -> tuple[bytes, str | None]:
+def _image_content(generation: dict) -> tuple[bytes, str | None]:
     storage_file_id = generation.get("storage_file_id")
     try:
         if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
-            return storage_download_file(file_id=storage_file_id, owner_id=str(user.id))
+            return storage_download_file(file_id=storage_file_id)
         else:
             filename = generation.get("filename")
             if not isinstance(filename, str) or not filename:
@@ -864,9 +848,8 @@ def edit_vault_image(
     file: UploadFile = File(...),
     width: int = Form(..., ge=1, le=8192),
     height: int = Form(..., ge=1, le=8192),
-    user: UserResponse = Depends(current_user),
 ) -> ImageEditResponse:
-    generation = get_image_generation_by_id(generation_id, user.id)
+    generation = get_image_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
     if generation["status"] != "completed":
@@ -883,12 +866,11 @@ def edit_vault_image(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="빈 이미지 파일은 저장할 수 없습니다.")
     filename = Path(file.filename or "edited.png").name or "edited.png"
     try:
-        storage_file_id = storage_upload_file(content=content, media_type=content_type, owner_id=str(user.id))
+        storage_file_id = storage_upload_file(content=content, media_type=content_type)
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     try:
         edited_id = create_image_edit(
-            user_id=user.id,
             source_generation_id=generation_id,
             storage_file_id=storage_file_id,
             filename=filename[:255],
@@ -899,15 +881,15 @@ def edit_vault_image(
         )
     except Exception as exc:
         try:
-            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=storage_file_id)
         except StorageError as cleanup_error:
-            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": storage_file_id})
+            record_exception(cleanup_error, operation="vault.edit.cleanup", context={"file_id": storage_file_id})
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="편집한 이미지를 저장하지 못했습니다.") from exc
     if edited_id is None:
         try:
-            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=storage_file_id)
         except StorageError as cleanup_error:
-            record_exception(cleanup_error, operation="vault.edit.cleanup", user_id=user.id, context={"file_id": storage_file_id})
+            record_exception(cleanup_error, operation="vault.edit.cleanup", context={"file_id": storage_file_id})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="이미지 결과를 찾을 수 없습니다.")
     return ImageEditResponse(generation_id=edited_id)
 
@@ -915,21 +897,19 @@ def edit_vault_image(
 @router.get("/images/{generation_id}", response_model=VaultImageDetail)
 def vault_image_detail(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> VaultImageDetail:
-    generation = increment_image_generation_view_count(generation_id, user.id)
+    generation = increment_image_generation_view_count(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
-    return _detail(generation, user.id)
+    return _detail(generation)
 
 
 @router.patch("/images/{generation_id}/favorite", response_model=FavoriteResponse)
 def update_vault_image_favorite(
     generation_id: UUID,
     payload: FavoriteRequest,
-    user: UserResponse = Depends(current_user),
 ) -> FavoriteResponse:
-    is_favorite = update_image_favorite(generation_id, user.id, payload.is_favorite)
+    is_favorite = update_image_favorite(generation_id, payload.is_favorite)
     if is_favorite is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
     return FavoriteResponse(is_favorite=is_favorite)
@@ -938,29 +918,30 @@ def update_vault_image_favorite(
 @router.delete("/images/{generation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vault_image(
     generation_id: UUID,
-    user: UserResponse = Depends(current_user),
 ) -> Response:
-    generation = get_image_generation_by_id(generation_id, user.id)
+    generation = get_image_generation_by_id(generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
-    _cancel_active_generation(generation, "image", user)
+    _cancel_active_generation(generation, "image")
 
     storage_file_id = generation.get("storage_file_id")
-    if storage_file_id and not has_media_asset(storage_file_id, user.id):
+    if storage_file_id and not has_media_asset(storage_file_id):
         if not storage_enabled():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
         try:
-            storage_delete_file(file_id=storage_file_id, owner_id=str(user.id))
+            storage_delete_file(file_id=storage_file_id)
         except StorageError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
-    if not delete_image_generation(generation_id, user.id):
+    if not delete_image_generation(generation_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="생성 결과를 찾을 수 없습니다.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _three_d_summary(
-    generation: dict, user_id: UUID, *, include_file_size: bool = False
+    generation: dict,
+    *,
+    include_file_size: bool = False,
 ) -> VaultThreeDSummary:
     is_rigging = generation.get('generation_mode') == 'rigging'
     model_path = f"vault/3d/{generation['id']}/model"
@@ -971,7 +952,7 @@ def _three_d_summary(
             else None
         )
         source_image_url = (
-            storage_read_url(file_id=generation["source_file_id"], owner_id=str(user_id))
+            storage_read_url(file_id=generation["source_file_id"])
             if not is_rigging and storage_enabled() and generation.get("source_file_id")
             else None
         )
@@ -996,16 +977,16 @@ def _three_d_summary(
         created_at=generation["created_at"],
         completed_at=generation["completed_at"],
         elapsed_seconds=generation["elapsed_seconds"],
-        file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
+        file_size_bytes=_generation_file_size(generation, include_file_size),
     )
 
 
-def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultVideoSummary:
+def _video_summary(generation: dict, *, include_file_size: bool=False) -> VaultVideoSummary:
     video_url = None
     storage_file_id = generation.get("storage_file_id")
     if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
         try:
-            video_url = storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+            video_url = storage_read_url(file_id=storage_file_id)
         except StorageError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultVideoSummary(
@@ -1025,7 +1006,7 @@ def _video_summary(generation: dict, user_id: UUID, *, include_file_size: bool =
         elapsed_seconds=generation["elapsed_seconds"],
         is_edited=generation["is_edited"],
         duration_seconds=(float(generation["length"]) / float(generation["fps"])) if generation.get("fps") else None,
-        file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
+        file_size_bytes=_generation_file_size(generation, include_file_size),
     )
 
 
@@ -1040,12 +1021,12 @@ def _vault_video_output_megapixels(generation: dict) -> float:
     return max(0.1, _rounded_megapixels(int(generation["width"]) * int(generation["height"]) / 1_000_000))
 
 
-def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False) -> VaultImageSummary:
+def _summary(generation: dict, *, include_file_size: bool=False) -> VaultImageSummary:
     source_image_url = None
     source_file_id = generation.get("source_file_id")
     if storage_enabled() and isinstance(source_file_id, str) and source_file_id:
         try:
-            source_image_url = storage_read_url(file_id=source_file_id, owner_id=str(user_id))
+            source_image_url = storage_read_url(file_id=source_file_id)
         except StorageError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultImageSummary(
@@ -1058,7 +1039,7 @@ def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False
         checkpoint=generation["checkpoint"],
         model_family=generation["model_family"],
         generation_mode=generation["generation_mode"],
-        image_url=_image_url(generation, user_id),
+        image_url=_image_url(generation),
         source_image_url=source_image_url,
         view_count=generation["view_count"],
         is_favorite=generation["is_favorite"],
@@ -1066,20 +1047,20 @@ def _summary(generation: dict, user_id: UUID, *, include_file_size: bool = False
         completed_at=generation["completed_at"],
         elapsed_seconds=generation["elapsed_seconds"],
         is_edited=generation["is_edited"],
-        file_size_bytes=_generation_file_size(generation, user_id, include_file_size),
+        file_size_bytes=_generation_file_size(generation, include_file_size),
     )
 
 
-def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
+def _detail(generation: dict) -> VaultImageDetail:
     references = []
     try:
         for item in generation.get("reference_images", []):
-            url = storage_read_url(file_id=item["file_id"], owner_id=str(user_id)) if storage_enabled() else None
+            url = storage_read_url(file_id=item["file_id"]) if storage_enabled() else None
             references.append(VaultImageReference(file_id=item["file_id"], filename=item["filename"], url=url))
     except StorageError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return VaultImageDetail(
-        **_summary(generation, user_id, include_file_size=True).model_dump(),
+        **_summary(generation, include_file_size=True).model_dump(),
         improved_prompt=generation.get("improved_prompt"),
         prompt_enhancement_enabled=bool(generation.get("prompt_enhancement_enabled") or generation.get("improved_prompt")),
         negative_prompt=generation["negative_prompt"],
@@ -1105,7 +1086,7 @@ def _detail(generation: dict, user_id: UUID) -> VaultImageDetail:
     )
 
 
-def _generation_file_size(generation: dict, user_id: UUID, include_storage_lookup: bool) -> int | None:
+def _generation_file_size(generation: dict, include_storage_lookup: bool) -> int | None:
     stored_size = int(generation.get("size_bytes") or 0)
     if stored_size > 0 or not include_storage_lookup:
         return stored_size or None
@@ -1113,9 +1094,9 @@ def _generation_file_size(generation: dict, user_id: UUID, include_storage_looku
     if not storage_enabled() or not isinstance(storage_file_id, str) or not storage_file_id:
         return None
     try:
-        return storage_file_size(file_id=storage_file_id, owner_id=str(user_id))
+        return storage_file_size(file_id=storage_file_id)
     except StorageError as exc:
-        record_exception(exc, operation="vault.file_size", user_id=user_id, context={"file_id": storage_file_id})
+        record_exception(exc, operation="vault.file_size", context={"file_id": storage_file_id})
         return None
 
 
@@ -1126,11 +1107,11 @@ def _loras(generation: dict) -> list[VaultLora]:
     return []
 
 
-def _image_url(generation: dict, user_id: UUID) -> str | None:
+def _image_url(generation: dict) -> str | None:
     storage_file_id = generation.get("storage_file_id")
     if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
         try:
-            return storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+            return storage_read_url(file_id=storage_file_id)
         except StorageError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     if not generation["filename"]:

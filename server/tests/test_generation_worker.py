@@ -20,10 +20,10 @@ class GenerationWorkerTest(unittest.TestCase):
         video_user = uuid4()
         three_d_user = uuid4()
         music_user = uuid4()
-        image = {"prompt_id": "image-prompt", "user_id": image_user, "status": "queued"}
-        video_generation = {"prompt_id": "video-prompt", "user_id": video_user, "status": "queued", "mode": "i2v"}
-        three_d_generation = {"prompt_id": "3d-prompt", "user_id": three_d_user, "status": "queued", "stage": "queued"}
-        music_generation = {"prompt_id": "music-prompt", "user_id": music_user, "status": "queued"}
+        image = {"prompt_id": "image-prompt", "status": "queued"}
+        video_generation = {"prompt_id": "video-prompt", "status": "queued", "mode": "i2v"}
+        three_d_generation = {"prompt_id": "3d-prompt", "status": "queued", "stage": "queued"}
+        music_generation = {"prompt_id": "music-prompt", "status": "queued"}
         image_result = comfyui.ImageGenerationStatus(prompt_id="image-prompt", status="processing", progress=37)
         video_result = video.VideoGenerationStatus(prompt_id="video-prompt", mode="i2v", status="processing", progress=42)
         three_d_result = three_d.ThreeDGenerationStatus(
@@ -49,18 +49,17 @@ class GenerationWorkerTest(unittest.TestCase):
         ):
             generation_worker.reconcile_active_generations()
 
-        image_sync.assert_called_once_with("image-prompt", image_user)
-        video_sync.assert_called_once_with(video_generation, video_user)
-        three_d_sync.assert_called_once_with(three_d_generation, three_d_user)
-        music_sync.assert_called_once_with(music_generation, music_user)
+        image_sync.assert_called_once_with("image-prompt")
+        video_sync.assert_called_once_with(video_generation)
+        three_d_sync.assert_called_once_with(three_d_generation)
+        music_sync.assert_called_once_with(music_generation)
         self.assertEqual(publish.call_count, 4)
         self.assertEqual([call.kwargs["event"] for call in publish.call_args_list], ["status", "status", "status", "status"])
         self.assertEqual([call.kwargs["data"]["progress"] for call in publish.call_args_list], [37, 42, 50, 60])
         self.assertEqual(publish.call_args_list[2].kwargs["data"]["stage"], "shape")
 
     def test_publishes_when_progress_changes_without_status_change(self) -> None:
-        user_id = uuid4()
-        generation = {"prompt_id": "progress-prompt", "user_id": user_id, "status": "processing"}
+        generation = {"prompt_id": "progress-prompt", "status": "processing"}
         with patch.object(generation_worker.generation_event_broker, "publish") as publish:
             generation_worker._publish_if_changed(
                 "video", generation, "processing", "processing", {"progress": 10}
@@ -77,24 +76,23 @@ class GenerationWorkerTest(unittest.TestCase):
         self.assertEqual(publish.call_args_list[1].kwargs["data"]["progress"], 20)
 
     def test_records_comfy_progress_for_shared_image_and_video_status_contract(self) -> None:
-        user_id = uuid4()
         self.assertTrue(
             comfyui.record_comfy_progress(
-                "progress-prompt", user_id, "execution_start", {"prompt_id": "progress-prompt"}
+                "progress-prompt", "execution_start", {"prompt_id": "progress-prompt"}
             )
         )
         self.assertTrue(
             comfyui.record_comfy_progress(
-                "progress-prompt", user_id, "progress", {"prompt_id": "progress-prompt", "value": 25, "max": 100}
+                "progress-prompt", "progress", {"prompt_id": "progress-prompt", "value": 25, "max": 100}
             )
         )
         self.assertFalse(
             comfyui.record_comfy_progress(
-                "progress-prompt", user_id, "progress", {"prompt_id": "progress-prompt", "value": 25, "max": 100}
+                "progress-prompt", "progress", {"prompt_id": "progress-prompt", "value": 25, "max": 100}
             )
         )
         self.assertEqual(
-            comfyui.generation_progress("progress-prompt", user_id),
+            comfyui.generation_progress("progress-prompt"),
             {"status": "processing", "progress": 25.0, "queue_position": None},
         )
 
@@ -116,7 +114,6 @@ class GenerationWorkerTest(unittest.TestCase):
         self.assertEqual(message["data"], {"status": "processing"})
 
     def test_video_sse_emits_completed_from_server_state(self) -> None:
-        user_id = uuid4()
         generation = {
             "prompt_id": "video-prompt",
             "mode": "i2v",
@@ -129,7 +126,7 @@ class GenerationWorkerTest(unittest.TestCase):
         output = video.VideoOutput(url="https://storage.example/result.mp4", filename="result.mp4", subfolder="", type="output")
 
         async def first_event() -> str:
-            events = video._stream_video_events("video-prompt", "i2v", user_id)
+            events = video._stream_video_events("video-prompt", "i2v")
             return await anext(events)
 
         with (
@@ -144,16 +141,15 @@ class GenerationWorkerTest(unittest.TestCase):
         self.assertEqual(payload["video"]["url"], output.url)
 
     def test_image_sse_receives_worker_push_without_polling(self) -> None:
-        user_id = uuid4()
         generation = {"prompt_id": "image-prompt", "client_id": "image-client", "status": "queued"}
 
         async def receive_push() -> tuple[str, str]:
-            events = comfyui._stream_generation_events("image-prompt", "image-client", user_id)
+            events = comfyui._stream_generation_events("image-prompt", "image-client")
             first = await anext(events)
             next_event = asyncio.create_task(anext(events))
             await asyncio.sleep(0)
             generation_event_broker.publish(
-                key=generation_key("image", user_id, "image-prompt"),
+                key=generation_key("image", "image-prompt"),
                 event="completed",
                 data={"prompt_id": "image-prompt", "status": "completed", "images": []},
             )
@@ -165,7 +161,7 @@ class GenerationWorkerTest(unittest.TestCase):
 
         self.assertIn("status", first)
         self.assertIn("event: completed", second)
-        get_generation.assert_called_once_with("image-prompt", user_id)
+        get_generation.assert_called_once_with("image-prompt")
 
 
 if __name__ == "__main__":

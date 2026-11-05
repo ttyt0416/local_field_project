@@ -39,7 +39,7 @@
 			const result = await apiJson<Status[]>(`models/tokens/${selected}`, { method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : { json: { token: token.trim() } }) });
 			if (!active) return;
 			statuses = result;
-			if (selected === provider) { token = ''; message = remove ? '개인 토큰을 삭제했습니다.' : 'API 토큰을 저장했습니다.'; }
+			if (selected === provider) { token = ''; message = remove ? '공용 토큰을 삭제했습니다.' : 'API 토큰을 저장했습니다.'; }
 		} catch (reason) { if (active) report(reason); }
 		finally { if (active) { saving = false; deleting = false; } }
 	}
@@ -47,12 +47,12 @@
 </script>
 
 <section class="space-y-3 rounded-2xl border border-border bg-card p-5" aria-label={`${label} API 토큰`}>
-	<div class="flex flex-wrap items-center justify-between gap-2"><h2 class="flex items-center gap-2 text-sm font-semibold"><KeyRound size={16} />{label} API 토큰</h2><span class="text-xs text-muted-foreground" role="status">{loading ? '확인 중' : failed ? '조회 실패' : current?.saved ? '개인 토큰 등록됨' : '등록된 토큰 없음'}</span></div>
+	<div class="flex flex-wrap items-center justify-between gap-2"><h2 class="flex items-center gap-2 text-sm font-semibold"><KeyRound size={16} />{label} API 토큰</h2><span class="text-xs text-muted-foreground" role="status">{loading ? '확인 중' : failed ? '조회 실패' : current?.saved ? '공용 토큰 등록됨' : '등록된 토큰 없음'}</span></div>
 	{#if failed}<OutlinedButton loading={loading} onclick={() => void load()}>다시 조회</OutlinedButton>{:else}
 	<form class="flex flex-wrap gap-2" onsubmit={(event) => { event.preventDefault(); void save(); }}>
 		<label class="sr-only" for="download-api-token">{label} API 토큰 입력</label><input id="download-api-token" type="password" autocomplete="new-password" bind:value={token} maxlength="4096" disabled={loading || saving || deleting} placeholder={current?.saved ? '변경할 API 토큰 입력' : 'API 토큰 입력'} class="min-w-40 flex-1 rounded-lg border border-input bg-background px-3 py-2 text-sm" />
 		<PrimaryButton type="submit" loading={saving} disabled={loading || deleting || !token.trim()}>토큰 저장</PrimaryButton>
-		{#if current?.saved}<OutlinedButton loading={deleting} disabled={loading || saving} onclick={() => void save(true)}>개인 토큰 삭제</OutlinedButton>{/if}
+		{#if current?.saved}<OutlinedButton loading={deleting} disabled={loading || saving} onclick={() => void save(true)}>공용 토큰 삭제</OutlinedButton>{/if}
 	</form>{/if}
 	{#if message}<p role="status" class="text-xs text-primary">{message}</p>{/if}
 	{#if error}<p role="alert" class="text-xs text-destructive">{error}</p><div class="fixed right-4 top-4 z-[80]"><Toast state="negative" title="API 토큰 처리 실패" message={error} onclose={() => (error = '')} /></div>{/if}

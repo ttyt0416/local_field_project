@@ -9,39 +9,10 @@ import psycopg
 
 from .configs.constants import DEFAULT_EMBEDDING_DIMENSIONS, settings
 from .audit import fire_and_forget, redact
+from .accountless import migrate_shared_data, migrate_web_logs
 
 
 _MIGRATION_STATEMENTS: tuple[str, ...] = (
-    """
-    DO $$
-    BEGIN
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'email'
-        ) AND NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'username'
-        ) THEN
-            ALTER TABLE users RENAME COLUMN email TO username;
-        END IF;
-    END
-    $$
-    """,
-    """
-    DO $$
-    BEGIN
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'auth_history' AND column_name = 'email'
-        ) AND NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'auth_history' AND column_name = 'username'
-        ) THEN
-            ALTER TABLE auth_history RENAME COLUMN email TO username;
-        END IF;
-    END
-    $$
-    """,
     """
     DO $$
     BEGIN
@@ -429,33 +400,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     ON danbooru_tags USING hnsw (embedding vector_cosine_ops)
     """,
     """
-    CREATE TABLE IF NOT EXISTS users (
-        id UUID PRIMARY KEY,
-        username VARCHAR(32) UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS auth_history (
-        id BIGSERIAL PRIMARY KEY,
-        event_type VARCHAR(32) NOT NULL,
-        username VARCHAR(32),
-        success BOOLEAN NOT NULL,
-        failure_reason VARCHAR(128),
-        occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        client_ip TEXT,
-        user_agent TEXT,
-        user_id UUID REFERENCES users(id) ON DELETE SET NULL
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS auth_history_user_id_idx ON auth_history(user_id)
-    """,
-    """
     CREATE TABLE IF NOT EXISTS presets (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         type VARCHAR(32) NOT NULL,
         name VARCHAR(100) NOT NULL,
         values JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -477,12 +423,11 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     END
     $$
     """,
-    "CREATE INDEX IF NOT EXISTS presets_user_type_idx ON presets(user_id, type, updated_at DESC)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS presets_one_default_per_user_type_idx ON presets(user_id, type) WHERE is_default",
+    "CREATE INDEX IF NOT EXISTS presets_type_idx ON presets(type, updated_at DESC)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS presets_one_default_per_type_idx ON presets(type) WHERE is_default",
     """
     CREATE TABLE IF NOT EXISTS image_generations (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         prompt_id VARCHAR(128) UNIQUE NOT NULL,
         client_id VARCHAR(128) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
@@ -532,16 +477,12 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS negative_prompt_prefix TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS improved_prompt TEXT",
     """
-    CREATE INDEX IF NOT EXISTS image_generations_user_id_idx ON image_generations(user_id)
-    """,
-    """
     CREATE INDEX IF NOT EXISTS image_generations_prompt_trgm_idx
     ON image_generations USING gin (prompt gin_trgm_ops)
     """,
     """
     CREATE TABLE IF NOT EXISTS media_assets (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         storage_file_id TEXT UNIQUE NOT NULL,
         filename VARCHAR(255) NOT NULL,
         content_type VARCHAR(128) NOT NULL,
@@ -551,11 +492,10 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
-    "CREATE INDEX IF NOT EXISTS media_assets_user_created_idx ON media_assets(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS media_assets_created_idx ON media_assets(created_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS video_generations (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         prompt_id VARCHAR(128) UNIQUE NOT NULL,
         client_id VARCHAR(128) NOT NULL,
         active_prompt_id VARCHAR(128),
@@ -608,7 +548,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         size_bytes BIGINT NOT NULL DEFAULT 0
     )
     """,
-    "CREATE INDEX IF NOT EXISTS video_generations_user_created_idx ON video_generations(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS video_generations_created_idx ON video_generations(created_at DESC)",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS upscale BOOLEAN NOT NULL DEFAULT TRUE",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS aspect_ratio VARCHAR(8)",
     "ALTER TABLE video_generations ADD COLUMN IF NOT EXISTS megapixels DOUBLE PRECISION",
@@ -626,7 +566,6 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS music_generations (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         prompt_id VARCHAR(128) UNIQUE NOT NULL,
         client_id VARCHAR(128) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
@@ -646,11 +585,10 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "ALTER TABLE music_generations ADD COLUMN IF NOT EXISTS max_duration_seconds DOUBLE PRECISION NOT NULL DEFAULT 60",
-    "CREATE INDEX IF NOT EXISTS music_generations_user_created_idx ON music_generations(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS music_generations_created_idx ON music_generations(created_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS three_d_generations (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         prompt_id VARCHAR(128) UNIQUE NOT NULL,
         client_id VARCHAR(128) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'queued',
@@ -676,11 +614,10 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE three_d_generations ADD COLUMN IF NOT EXISTS generation_mode VARCHAR(16) NOT NULL DEFAULT 'mesh'",
     "ALTER TABLE three_d_generations ADD COLUMN IF NOT EXISTS rigging_options JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE three_d_generations ADD COLUMN IF NOT EXISTS error_message TEXT",
-    "CREATE INDEX IF NOT EXISTS three_d_generations_user_created_idx ON three_d_generations(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS three_d_generations_created_idx ON three_d_generations(created_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS model_downloads (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         version_id BIGINT NOT NULL,
         model_type VARCHAR(32) NOT NULL,
         file_index INTEGER NOT NULL DEFAULT 0,
@@ -699,27 +636,25 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE model_downloads ADD COLUMN IF NOT EXISTS source_revision TEXT",
     "ALTER TABLE model_downloads ADD COLUMN IF NOT EXISTS source_filename TEXT",
     "CREATE INDEX IF NOT EXISTS model_downloads_status_created_idx ON model_downloads(status, created_at)",
-    "CREATE INDEX IF NOT EXISTS model_downloads_user_created_idx ON model_downloads(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS model_downloads_created_idx ON model_downloads(created_at DESC)",
     """
     CREATE UNIQUE INDEX IF NOT EXISTS model_downloads_source_active_unique_idx
-    ON model_downloads(user_id, provider, version_id, model_type, file_index,
+    ON model_downloads(provider, version_id, model_type, file_index,
         COALESCE(source_repo, ''), COALESCE(source_revision, ''), COALESCE(source_filename, ''))
     WHERE status IN ('queued', 'downloading')
     """,
     "DROP INDEX IF EXISTS model_downloads_active_unique_idx",
     """
     CREATE TABLE IF NOT EXISTS download_tokens (
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         provider VARCHAR(16) NOT NULL CHECK (provider IN ('civitai', 'hugging_face')),
         encrypted_token TEXT NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, provider)
+        PRIMARY KEY (provider)
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS saved_prompts (
         id UUID PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         kind VARCHAR(8) NOT NULL CHECK (kind IN ('image', 'video')),
         name VARCHAR(100) NOT NULL,
         content TEXT NOT NULL,
@@ -727,7 +662,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
-    "CREATE INDEX IF NOT EXISTS saved_prompts_user_kind_idx ON saved_prompts(user_id, kind, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS saved_prompts_kind_idx ON saved_prompts(kind, updated_at DESC)",
     """
     CREATE TABLE IF NOT EXISTS api_audit_logs (
         id BIGSERIAL PRIMARY KEY,
@@ -736,8 +671,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         status_code SMALLINT NOT NULL,
         requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         client_ip TEXT,
-        user_agent TEXT,
-        user_id UUID REFERENCES users(id) ON DELETE SET NULL
+        user_agent TEXT
     )
     """,
     "ALTER TABLE api_audit_logs ADD COLUMN IF NOT EXISTS request_id UUID",
@@ -761,8 +695,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         provider_response JSONB,
         occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         client_ip TEXT,
-        user_agent TEXT,
-        user_id UUID REFERENCES users(id) ON DELETE SET NULL
+        user_agent TEXT
     )
     """,
     "ALTER TABLE api_error_logs ADD COLUMN IF NOT EXISTS provider_response JSONB",
@@ -783,15 +716,11 @@ _WEB_LOG_SCHEMA_STATEMENTS: tuple[str, ...] = (
         target_href TEXT,
         occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         client_ip TEXT,
-        user_agent TEXT,
-        user_id UUID
+        user_agent TEXT
     )
     """,
     """
     CREATE INDEX IF NOT EXISTS web_event_logs_page_path_prefix_idx ON web_event_logs (left(page_path, 512))
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS web_event_logs_user_id_idx ON web_event_logs(user_id)
     """,
     "DROP INDEX IF EXISTS web_event_logs_page_path_idx",
     "ALTER TABLE web_event_logs ADD COLUMN IF NOT EXISTS event_id UUID",
@@ -830,15 +759,17 @@ def initialize_database() -> None:
     with get_connection() as connection:
         for statement in _MIGRATION_STATEMENTS:
             connection.execute(statement)
+        migrate_shared_data(connection)
         for statement in _SCHEMA_STATEMENTS:
             connection.execute(statement)
     with get_web_log_connection() as connection:
+        migrate_web_logs(connection)
         for statement in _WEB_LOG_SCHEMA_STATEMENTS:
             connection.execute(statement)
 
 
 _IMAGE_GENERATION_FIELDS = (
-    "id, user_id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint, "
+    "id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint, "
     "loras, cfg, steps, sampler_name, scheduler, width, height, seed, file_path, storage_file_id, filename, "
     "subfolder, image_type, view_count, is_favorite, created_at, completed_at, elapsed_seconds, "
     "source_generation_id, is_edited, size_bytes, model_family, generation_mode, source_file_id, "
@@ -848,7 +779,6 @@ _IMAGE_GENERATION_FIELDS = (
 
 def create_image_generation(
     *,
-    user_id: uuid.UUID,
     prompt_id: str,
     client_id: str,
     prompt: str,
@@ -863,10 +793,10 @@ def create_image_generation(
     height: int,
     seed: int,
     improved_prompt: str | None = None,
-    sampler_name: str = "er_sde",
-    scheduler: str = "simple",
-    model_family: str = "anima",
-    generation_mode: str = "t2i",
+    sampler_name: str = 'er_sde',
+    scheduler: str = 'simple',
+    model_family: str = 'anima',
+    generation_mode: str = 't2i',
     source_file_id: str | None = None,
     source_filename: str | None = None,
     denoise: float = 1.0,
@@ -879,16 +809,14 @@ def create_image_generation(
         row = connection.execute(
             """
             INSERT INTO image_generations
-                (id, user_id, prompt_id, client_id, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
+                (id, prompt_id, client_id, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, model_family,
-                 generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s,
+                 generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
             RETURNING id, created_at
             """,
             (
                 generation_id,
-                user_id,
                 prompt_id,
                 client_id,
                 prompt,
@@ -922,7 +850,6 @@ def create_image_generation(
 
 def create_image_edit(
     *,
-    user_id: uuid.UUID,
     source_generation_id: uuid.UUID,
     storage_file_id: str,
     filename: str,
@@ -938,15 +865,15 @@ def create_image_edit(
         row = connection.execute(
             """
             INSERT INTO image_generations
-                (id, user_id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
+                (id, prompt_id, client_id, status, prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                  loras, cfg, steps, sampler_name, scheduler, width, height, seed, storage_file_id, filename, subfolder,
                  image_type, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes,
                  model_family, generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled)
-            SELECT %s, user_id, %s, %s, 'completed', prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
+            SELECT %s, %s, %s, 'completed', prompt, improved_prompt, negative_prompt, positive_prompt_prefix, negative_prompt_prefix, checkpoint,
                    loras, cfg, steps, sampler_name, scheduler, %s, %s, seed, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s, model_family, generation_mode, source_file_id, source_filename, denoise, reference_images, moss, prompt_enhancement_enabled
             FROM image_generations
-            WHERE id = %s AND user_id = %s AND status = 'completed'
+            WHERE id = %s AND status = 'completed'
             RETURNING id
             """,
             (
@@ -961,27 +888,23 @@ def create_image_edit(
                 source_generation_id,
                 size_bytes,
                 source_generation_id,
-                user_id,
             ),
         ).fetchone()
     return row[0] if row is not None else None
 
 
-def get_image_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_image_generation(prompt_id: str) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE prompt_id = %s AND user_id = %s",
-            (prompt_id, user_id),
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE prompt_id = %s ",
+            (prompt_id,),
         ).fetchone()
     return _image_generation_row(row)
 
 
-def list_active_image_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+def list_active_image_generations() -> list[dict[str, Any]]:
     filters = ["status IN ('queued', 'processing')"]
     parameters: list[Any] = []
-    if user_id is not None:
-        filters.append("user_id = %s")
-        parameters.append(user_id)
     with get_connection() as connection:
         rows = connection.execute(
             f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
@@ -990,61 +913,61 @@ def list_active_image_generations(user_id: uuid.UUID | None = None) -> list[dict
     return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
 
 
-def get_image_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_image_generation_by_id(generation_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE id = %s AND user_id = %s",
-            (generation_id, user_id),
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE id = %s ",
+            (generation_id,),
         ).fetchone()
     return _image_generation_row(row)
 
 
 def get_image_generations_by_ids(
-    generation_ids: list[uuid.UUID], user_id: uuid.UUID
+    generation_ids: list[uuid.UUID],
 ) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE id = ANY(%s) AND user_id = %s",
-            (generation_ids, user_id),
+            f"SELECT {_IMAGE_GENERATION_FIELDS} FROM image_generations WHERE id = ANY(%s) ",
+            (generation_ids,),
         ).fetchall()
     return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
 
 
-def increment_image_generation_view_count(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def increment_image_generation_view_count(generation_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             UPDATE image_generations
             SET view_count = view_count + 1
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s
             RETURNING {_IMAGE_GENERATION_FIELDS}
             """,
-            (generation_id, user_id),
+            (generation_id,),
         ).fetchone()
     return _image_generation_row(row)
 
 
 def update_image_favorite(
-    generation_id: uuid.UUID, user_id: uuid.UUID, is_favorite: bool
+    generation_id: uuid.UUID,
+    is_favorite: bool,
 ) -> bool | None:
     with get_connection() as connection:
         row = connection.execute(
             """
             UPDATE image_generations
             SET is_favorite = %s
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s
             RETURNING is_favorite
             """,
-            (is_favorite, generation_id, user_id),
+            (is_favorite, generation_id),
         ).fetchone()
     return bool(row[0]) if row is not None else None
 
 
 def list_image_generations(
-    user_id: uuid.UUID,
     *,
-    search: str = "",
-    sort: str = "latest",
+    search: str = '',
+    sort: str = 'latest',
     favorites_only: bool = False,
     model_family: str | None = None,
     generation_mode: str | None = None,
@@ -1055,8 +978,8 @@ def list_image_generations(
         "oldest": "created_at ASC, id ASC",
         "most_viewed": "view_count DESC, created_at DESC, id DESC",
     }.get(sort, "created_at DESC, id DESC")
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     normalized_search = search.strip()
     if normalized_search:
         filters.append("prompt ILIKE %s")
@@ -1089,15 +1012,14 @@ def list_image_generations(
 
 
 def list_filtered_image_generations(
-    user_id: uuid.UUID,
     *,
-    search: str = "",
+    search: str = '',
     favorites_only: bool = False,
     model_family: str | None = None,
     generation_mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     if search.strip():
         filters.append("prompt ILIKE %s")
         parameters.append(f"%{search.strip()}%")
@@ -1117,67 +1039,63 @@ def list_filtered_image_generations(
     return [generation for row in rows if (generation := _image_generation_row(row)) is not None]
 
 
-def delete_image_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+def delete_image_generation(generation_id: uuid.UUID) -> bool:
     with get_connection() as connection:
         row = connection.execute(
-            "DELETE FROM image_generations WHERE id = %s AND user_id = %s RETURNING id",
-            (generation_id, user_id),
+            "DELETE FROM image_generations WHERE id = %s RETURNING id",
+            (generation_id,),
         ).fetchone()
     return row is not None
 
 
-def delete_image_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID) -> int:
+def delete_image_generations(generation_ids: list[uuid.UUID]) -> int:
     with get_connection() as connection:
         rows = connection.execute(
-            "DELETE FROM image_generations WHERE id = ANY(%s) AND user_id = %s RETURNING id",
-            (generation_ids, user_id),
+            "DELETE FROM image_generations WHERE id = ANY(%s) RETURNING id",
+            (generation_ids,),
         ).fetchall()
     return len(rows)
 
 
-_MEDIA_FIELDS = "id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type, created_at"
+_MEDIA_FIELDS = "id, storage_file_id, filename, content_type, media_kind, size, source_type, created_at"
 _REUSABLE_MEDIA_FIELDS = "file_id, filename, content_type, media_kind, source_type, created_at, size"
-_MODEL_DOWNLOAD_FIELDS = "id, user_id, version_id, model_type, file_index, filename, target_path, status, downloaded_bytes, total_bytes, error_message, created_at, completed_at, provider, source_repo, source_revision, source_filename"
+_MODEL_DOWNLOAD_FIELDS = "id, version_id, model_type, file_index, filename, target_path, status, downloaded_bytes, total_bytes, error_message, created_at, completed_at, provider, source_repo, source_revision, source_filename"
 
 
 def create_media_asset(
     *,
-    user_id: uuid.UUID,
     storage_file_id: str,
     filename: str,
     content_type: str,
     media_kind: str,
     size: int,
-    source_type: str = "generation_input",
+    source_type: str = 'generation_input',
 ) -> dict[str, Any]:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             INSERT INTO media_assets
-                (id, user_id, storage_file_id, filename, content_type, media_kind, size, source_type)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (id, storage_file_id, filename, content_type, media_kind, size, source_type) VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (storage_file_id) DO UPDATE
             SET source_type = 'generation_input'
-            WHERE media_assets.user_id = EXCLUDED.user_id
             RETURNING {_MEDIA_FIELDS}
             """,
-            (uuid.uuid4(), user_id, storage_file_id, filename, content_type, media_kind, size, source_type),
+            (uuid.uuid4(), storage_file_id, filename, content_type, media_kind, size, source_type),
         ).fetchone()
     return dict(zip(_MEDIA_FIELDS.split(", "), row, strict=True))
 
 
-def has_media_asset(storage_file_id: str, user_id: uuid.UUID) -> bool:
+def has_media_asset(storage_file_id: str) -> bool:
     with get_connection() as connection:
         row = connection.execute(
-            "SELECT 1 FROM media_assets WHERE storage_file_id = %s AND user_id = %s",
-            (storage_file_id, user_id),
+            "SELECT 1 FROM media_assets WHERE storage_file_id = %s ",
+            (storage_file_id,),
         ).fetchone()
     return row is not None
 
 
 def has_generation_storage_reference_outside(
     storage_file_id: str,
-    user_id: uuid.UUID,
     excluded_generation_ids: list[uuid.UUID],
 ) -> bool:
     with get_connection() as connection:
@@ -1186,28 +1104,25 @@ def has_generation_storage_reference_outside(
             SELECT EXISTS (
                 SELECT 1 FROM image_generations
                 WHERE (storage_file_id = %s OR source_file_id = %s OR reference_images @> %s::jsonb)
-                  AND user_id = %s AND NOT (id = ANY(%s))
+                  AND NOT (id = ANY(%s))
                 UNION ALL
                 SELECT 1 FROM video_generations
-                WHERE storage_file_id = %s AND user_id = %s AND NOT (id = ANY(%s))
+                WHERE storage_file_id = %s AND NOT (id = ANY(%s))
                 UNION ALL
                 SELECT 1 FROM three_d_generations
                 WHERE (storage_file_id = %s OR source_file_id = %s)
-                  AND user_id = %s AND NOT (id = ANY(%s))
+                  AND NOT (id = ANY(%s))
             )
             """,
             (
                 storage_file_id,
                 storage_file_id,
                 json.dumps([{"file_id": storage_file_id}]),
-                user_id,
                 excluded_generation_ids,
                 storage_file_id,
-                user_id,
                 excluded_generation_ids,
                 storage_file_id,
                 storage_file_id,
-                user_id,
                 excluded_generation_ids,
             ),
         ).fetchone()
@@ -1215,10 +1130,9 @@ def has_generation_storage_reference_outside(
 
 
 def list_reusable_media(
-    user_id: uuid.UUID,
     *,
-    search: str = "",
-    sort: str = "latest",
+    search: str = '',
+    sort: str = 'latest',
     include_generated: bool = False,
     media_kind: str | None = None,
     source_type: str | None = None,
@@ -1234,8 +1148,7 @@ def list_reusable_media(
     sources = [
         """
         SELECT storage_file_id AS file_id, filename, content_type, media_kind,
-               source_type, created_at, size, user_id,
-               NULL::VARCHAR AS model_family, NULL::VARCHAR AS generation_mode
+               source_type, created_at, size, NULL::VARCHAR AS model_family, NULL::VARCHAR AS generation_mode
         FROM media_assets
         WHERE NOT EXISTS (
             SELECT 1 FROM image_generations
@@ -1252,22 +1165,20 @@ def list_reusable_media(
             (
                 """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
-                       'image/png', 'image', 'image_generation', created_at, size_bytes, user_id,
-                       model_family, generation_mode
+                       'image/png', 'image', 'image_generation', created_at, size_bytes, model_family, generation_mode
                 FROM image_generations
                 WHERE storage_file_id IS NOT NULL
                 """,
                 """
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
-                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, user_id,
-                       NULL::VARCHAR AS model_family, NULL::VARCHAR AS generation_mode
+                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, NULL::VARCHAR AS model_family, NULL::VARCHAR AS generation_mode
                 FROM video_generations
                 WHERE storage_file_id IS NOT NULL
                 """,
             )
         )
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     if search.strip():
         filters.append("filename ILIKE %s")
         parameters.append(f"%{search.strip()}%")
@@ -1298,13 +1209,12 @@ def list_reusable_media(
 
 def create_model_download(
     *,
-    user_id: uuid.UUID,
     version_id: int,
     model_type: str,
     file_index: int,
     filename: str,
     target_path: str,
-    provider: str = "civitai",
+    provider: str = 'civitai',
     source_repo: str | None = None,
     source_revision: str | None = None,
     source_filename: str | None = None,
@@ -1314,12 +1224,11 @@ def create_model_download(
         with get_connection() as connection:
             row = connection.execute(
                 f"""
-                INSERT INTO model_downloads (id, user_id, version_id, model_type, file_index, filename, target_path,
-                    provider, source_repo, source_revision, source_filename)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO model_downloads (id, version_id, model_type, file_index, filename, target_path,
+                    provider, source_repo, source_revision, source_filename) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING {_MODEL_DOWNLOAD_FIELDS}
                 """,
-                (download_id, user_id, version_id, model_type, file_index, filename, target_path,
+                (download_id, version_id, model_type, file_index, filename, target_path,
                  provider, source_repo, source_revision, source_filename),
             ).fetchone()
     except psycopg.Error as exc:
@@ -1329,17 +1238,16 @@ def create_model_download(
     return dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
-def get_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_model_download(download_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE id = %s AND user_id = %s",
-            (download_id, user_id),
+            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE id = %s ",
+            (download_id,),
         ).fetchone()
     return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
 def list_model_downloads(
-    user_id: uuid.UUID,
     limit: int = 20,
     *,
     active_only: bool = False,
@@ -1347,8 +1255,8 @@ def list_model_downloads(
     active_filter = " AND status IN ('queued', 'downloading')" if active_only else ""
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE user_id = %s{active_filter} ORDER BY created_at DESC LIMIT %s",
-            (user_id, limit),
+            f"SELECT {_MODEL_DOWNLOAD_FIELDS} FROM model_downloads WHERE TRUE{active_filter} ORDER BY created_at DESC LIMIT %s",
+            (limit,),
         ).fetchall()
     return [dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True)) for row in rows]
 
@@ -1433,78 +1341,78 @@ def fail_model_download(download_id: uuid.UUID, error_message: str) -> None:
         )
 
 
-def cancel_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def cancel_model_download(download_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             UPDATE model_downloads
             SET status = 'cancelled', error_message = '다운로드가 중단되었습니다.'
-            WHERE id = %s AND user_id = %s AND status IN ('queued', 'downloading')
+            WHERE id = %s AND status IN ('queued', 'downloading')
             RETURNING {_MODEL_DOWNLOAD_FIELDS}
             """,
-            (download_id, user_id),
+            (download_id,),
         ).fetchone()
     return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
-def retry_model_download(download_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def retry_model_download(download_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             UPDATE model_downloads
             SET status = 'queued', downloaded_bytes = 0, total_bytes = NULL,
                 error_message = NULL, completed_at = NULL
-            WHERE id = %s AND user_id = %s AND status IN ('failed', 'cancelled')
+            WHERE id = %s AND status IN ('failed', 'cancelled')
             RETURNING {_MODEL_DOWNLOAD_FIELDS}
             """,
-            (download_id, user_id),
+            (download_id,),
         ).fetchone()
     return None if row is None else dict(zip(_MODEL_DOWNLOAD_FIELDS.split(", "), row, strict=True))
 
 
-def get_media_asset(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_media_asset(file_id: str) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_MEDIA_FIELDS} FROM media_assets WHERE storage_file_id = %s AND user_id = %s",
-            (file_id, user_id),
+            f"SELECT {_MEDIA_FIELDS} FROM media_assets WHERE storage_file_id = %s ",
+            (file_id,),
         ).fetchone()
     if row is None:
         return None
     return dict(zip(_MEDIA_FIELDS.split(", "), row, strict=True))
 
 
-def delete_media_asset(file_id: str, user_id: uuid.UUID) -> bool:
+def delete_media_asset(file_id: str) -> bool:
     with get_connection() as connection:
         row = connection.execute(
-            "DELETE FROM media_assets WHERE storage_file_id = %s AND user_id = %s RETURNING storage_file_id",
-            (file_id, user_id),
+            "DELETE FROM media_assets WHERE storage_file_id = %s RETURNING storage_file_id",
+            (file_id,),
         ).fetchone()
     return row is not None
 
 
-def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_reusable_media(file_id: str) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             SELECT {_REUSABLE_MEDIA_FIELDS} FROM (
                 SELECT storage_file_id AS file_id, filename, content_type, media_kind,
-                       source_type, created_at, size, user_id
+                       source_type, created_at, size
                 FROM media_assets
                 UNION ALL
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-image.png'),
-                       'image/png', 'image', 'image_generation', created_at, size_bytes, user_id
+                       'image/png', 'image', 'image_generation', created_at, size_bytes
                 FROM image_generations
                 WHERE storage_file_id IS NOT NULL
                 UNION ALL
                 SELECT storage_file_id AS file_id, COALESCE(filename, 'generated-video.mp4'),
-                       'video/mp4', 'video', 'video_generation', created_at, size_bytes, user_id
+                       'video/mp4', 'video', 'video_generation', created_at, size_bytes
                 FROM video_generations
                 WHERE storage_file_id IS NOT NULL
             ) AS assets
-            WHERE file_id = %s AND user_id = %s
+            WHERE file_id = %s
             LIMIT 1
             """,
-            (file_id, user_id),
+            (file_id,),
         ).fetchone()
     if row is None:
         return None
@@ -1512,7 +1420,7 @@ def get_reusable_media(file_id: str, user_id: uuid.UUID) -> dict[str, Any] | Non
 
 
 _MUSIC_FIELDS = (
-    "id, user_id, prompt_id, client_id, status, description, lyrics, seed, max_duration_seconds, "
+    "id, prompt_id, client_id, status, description, lyrics, seed, max_duration_seconds, "
     "storage_file_id, filename, content_type, duration_seconds, size_bytes, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds"
 )
@@ -1520,7 +1428,6 @@ _MUSIC_FIELDS = (
 
 def create_music_generation(
     *,
-    user_id: uuid.UUID,
     prompt_id: str,
     client_id: str,
     description: str,
@@ -1533,13 +1440,11 @@ def create_music_generation(
         row = connection.execute(
             """
             INSERT INTO music_generations
-                (id, user_id, prompt_id, client_id, description, lyrics, seed, max_duration_seconds)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (id, prompt_id, client_id, description, lyrics, seed, max_duration_seconds) VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
             """,
             (
                 generation_id,
-                user_id,
                 prompt_id,
                 client_id,
                 description,
@@ -1553,30 +1458,27 @@ def create_music_generation(
     return row[0], row[1]
 
 
-def get_music_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_music_generation(prompt_id: str) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE prompt_id = %s AND user_id = %s",
-            (prompt_id, user_id),
+            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE prompt_id = %s ",
+            (prompt_id,),
         ).fetchone()
     return dict(zip(_MUSIC_FIELDS.split(", "), row, strict=True)) if row is not None else None
 
 
-def get_latest_music_generation(user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_latest_music_generation() -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE user_id = %s ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
+            f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE TRUE ORDER BY created_at DESC LIMIT 1",
+            (),
         ).fetchone()
     return dict(zip(_MUSIC_FIELDS.split(", "), row, strict=True)) if row is not None else None
 
 
-def list_active_music_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+def list_active_music_generations() -> list[dict[str, Any]]:
     filters = ["status IN ('queued', 'processing')"]
     parameters: list[Any] = []
-    if user_id is not None:
-        filters.append("user_id = %s")
-        parameters.append(user_id)
     with get_connection() as connection:
         rows = connection.execute(
             f"SELECT {_MUSIC_FIELDS} FROM music_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
@@ -1588,7 +1490,6 @@ def list_active_music_generations(user_id: uuid.UUID | None = None) -> list[dict
 def update_music_generation_status(
     *,
     prompt_id: str,
-    user_id: uuid.UUID,
     status: str,
     storage_file_id: str | None = None,
     filename: str | None = None,
@@ -1610,7 +1511,7 @@ def update_music_generation_status(
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                     CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                 )))
-            WHERE prompt_id = %s AND user_id = %s
+            WHERE prompt_id = %s
             """,
             (
                 status,
@@ -1622,20 +1523,18 @@ def update_music_generation_status(
                 status,
                 status,
                 prompt_id,
-                user_id,
             ),
         )
 
 
 _VIDEO_FIELDS = (
-    "id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, upscale_mode, base_megapixels, base_width, base_height, target_megapixels, target_width, target_height, upscale_scale, upscale_model, loras, steps, sampler_name, scheduler, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
+    "id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, upscale_mode, base_megapixels, base_width, base_height, target_megapixels, target_width, target_height, upscale_scale, upscale_model, loras, steps, sampler_name, scheduler, use_pdd, upscale, status, prompt, width, height, length, fps, seed, "
     "input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations, continuation_mode, reference_image_file_ids, segment_index, segment_file_ids, storage_file_id, filename, subfolder, video_type, view_count, is_favorite, "
     "created_at, completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes"
 )
 
 def create_video_generation(
     *,
-    user_id: uuid.UUID,
     prompt_id: str,
     client_id: str,
     mode: str,
@@ -1665,7 +1564,7 @@ def create_video_generation(
     input_segment_prompts: list[str] | None = None,
     improved_segment_prompts: list[str] | None = None,
     segment_durations: list[float] | None = None,
-    continuation_mode: str = "r2v",
+    continuation_mode: str = 'r2v',
     reference_image_file_ids: list[str] | None = None,
     loras: list[dict[str, Any]] | None = None,
     steps: int = 4,
@@ -1677,15 +1576,13 @@ def create_video_generation(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, upscale_mode, base_megapixels, base_width, base_height, target_megapixels, target_width, target_height, upscale_scale, upscale_model, loras, steps, sampler_name, scheduler, use_pdd, upscale, prompt, width, height, length, fps, seed,
+                (id, prompt_id, client_id, active_prompt_id, mode, checkpoint, aspect_ratio, megapixels, upscale_mode, base_megapixels, base_width, base_height, target_megapixels, target_width, target_height, upscale_scale, upscale_model, loras, steps, sampler_name, scheduler, use_pdd, upscale, prompt, width, height, length, fps, seed,
                  input_file_ids, segment_prompts, input_segment_prompts, improved_segment_prompts, segment_durations,
-                 continuation_mode, reference_image_file_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+                 continuation_mode, reference_image_file_ids) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
                 generation_id,
-                user_id,
                 prompt_id,
                 client_id,
                 active_prompt_id or prompt_id,
@@ -1729,18 +1626,20 @@ def create_video_generation(
 
 
 def claim_video_generation_segment(
-    *, prompt_id: str, user_id: uuid.UUID, active_prompt_id: str
+    *,
+    prompt_id: str,
+    active_prompt_id: str,
 ) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             UPDATE video_generations
             SET active_prompt_id = NULL
-            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id = %s
+            WHERE prompt_id = %s AND active_prompt_id = %s
               AND status IN ('queued', 'processing')
             RETURNING {_VIDEO_FIELDS}
             """,
-            (prompt_id, user_id, active_prompt_id),
+            (prompt_id, active_prompt_id),
         ).fetchone()
     return _video_generation_row(row)
 
@@ -1748,7 +1647,6 @@ def claim_video_generation_segment(
 def advance_video_generation_segment(
     *,
     prompt_id: str,
-    user_id: uuid.UUID,
     segment_index: int,
     next_prompt_id: str,
     segment_file_id: str,
@@ -1759,11 +1657,11 @@ def advance_video_generation_segment(
             UPDATE video_generations
             SET status = 'queued', active_prompt_id = %s, segment_index = segment_index + 1,
                 segment_file_ids = segment_file_ids || %s::jsonb
-            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id IS NULL
+            WHERE prompt_id = %s AND active_prompt_id IS NULL
               AND segment_index = %s AND status IN ('queued', 'processing')
             RETURNING id
             """,
-            (next_prompt_id, json.dumps([segment_file_id]), prompt_id, user_id, segment_index),
+            (next_prompt_id, json.dumps([segment_file_id]), prompt_id, segment_index),
         ).fetchone()
     return row is not None
 
@@ -1771,7 +1669,6 @@ def advance_video_generation_segment(
 def complete_video_generation_sequence(
     *,
     prompt_id: str,
-    user_id: uuid.UUID,
     segment_index: int,
     storage_file_id: str,
     filename: str,
@@ -1786,34 +1683,33 @@ def complete_video_generation_sequence(
             SET status = 'completed', storage_file_id = %s, filename = %s, subfolder = %s,
                 video_type = %s, size_bytes = %s, completed_at = CURRENT_TIMESTAMP,
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)))
-            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id IS NULL
+            WHERE prompt_id = %s AND active_prompt_id IS NULL
               AND segment_index = %s AND status IN ('queued', 'processing')
             RETURNING id
             """,
-            (storage_file_id, filename, subfolder, video_type, size_bytes, prompt_id, user_id, segment_index),
+            (storage_file_id, filename, subfolder, video_type, size_bytes, prompt_id, segment_index),
         ).fetchone()
     return row is not None
 
 
-def fail_claimed_video_generation_segment(*, prompt_id: str, user_id: uuid.UUID) -> bool:
+def fail_claimed_video_generation_segment(*, prompt_id: str) -> bool:
     with get_connection() as connection:
         row = connection.execute(
             """
             UPDATE video_generations
             SET status = 'failed', completed_at = CURRENT_TIMESTAMP,
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)))
-            WHERE prompt_id = %s AND user_id = %s AND active_prompt_id IS NULL
+            WHERE prompt_id = %s AND active_prompt_id IS NULL
               AND status IN ('queued', 'processing')
             RETURNING id
             """,
-            (prompt_id, user_id),
+            (prompt_id,),
         ).fetchone()
     return row is not None
 
 
 def create_video_edit(
     *,
-    user_id: uuid.UUID,
     source_generation_id: uuid.UUID,
     storage_file_id: str,
     filename: str,
@@ -1830,14 +1726,14 @@ def create_video_edit(
         row = connection.execute(
             """
             INSERT INTO video_generations
-                (id, user_id, prompt_id, client_id, mode, status, prompt, loras, steps, use_pdd, upscale, width, height, length,
+                (id, prompt_id, client_id, mode, status, prompt, loras, steps, use_pdd, upscale, width, height, length,
                  fps, seed, input_file_ids, storage_file_id, filename, subfolder, video_type,
                  completed_at, elapsed_seconds, source_generation_id, is_edited, size_bytes)
-            SELECT %s, user_id, %s, %s, mode, 'completed', prompt, loras, steps, use_pdd, upscale, %s, %s, %s,
+            SELECT %s, %s, %s, mode, 'completed', prompt, loras, steps, use_pdd, upscale, %s, %s, %s,
                    fps, seed, input_file_ids, %s, %s, '', 'output', CURRENT_TIMESTAMP,
                    %s, %s, TRUE, %s
             FROM video_generations
-            WHERE id = %s AND user_id = %s AND status = 'completed'
+            WHERE id = %s AND status = 'completed'
             RETURNING id
             """,
             (
@@ -1853,27 +1749,23 @@ def create_video_edit(
                 source_generation_id,
                 size_bytes,
                 source_generation_id,
-                user_id,
             ),
         ).fetchone()
     return row[0] if row is not None else None
 
 
-def get_video_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_video_generation(prompt_id: str) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE prompt_id = %s AND user_id = %s",
-            (prompt_id, user_id),
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE prompt_id = %s ",
+            (prompt_id,),
         ).fetchone()
     return _video_generation_row(row)
 
 
-def list_active_video_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+def list_active_video_generations() -> list[dict[str, Any]]:
     filters = ["status IN ('queued', 'processing')"]
     parameters: list[Any] = []
-    if user_id is not None:
-        filters.append("user_id = %s")
-        parameters.append(user_id)
     with get_connection() as connection:
         rows = connection.execute(
             f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
@@ -1882,48 +1774,47 @@ def list_active_video_generations(user_id: uuid.UUID | None = None) -> list[dict
     return [generation for row in rows if (generation := _video_generation_row(row)) is not None]
 
 
-def get_video_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_video_generation_by_id(generation_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE id = %s AND user_id = %s",
-            (generation_id, user_id),
+            f"SELECT {_VIDEO_FIELDS} FROM video_generations WHERE id = %s ",
+            (generation_id,),
         ).fetchone()
     return _video_generation_row(row)
 
 
-def increment_video_generation_view_count(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def increment_video_generation_view_count(generation_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             UPDATE video_generations
             SET view_count = view_count + 1
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s
             RETURNING {_VIDEO_FIELDS}
             """,
-            (generation_id, user_id),
+            (generation_id,),
         ).fetchone()
     return _video_generation_row(row)
 
 
-def update_video_favorite(generation_id: uuid.UUID, user_id: uuid.UUID, is_favorite: bool) -> bool | None:
+def update_video_favorite(generation_id: uuid.UUID, is_favorite: bool) -> bool | None:
     with get_connection() as connection:
         row = connection.execute(
             """
             UPDATE video_generations
             SET is_favorite = %s
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s
             RETURNING is_favorite
             """,
-            (is_favorite, generation_id, user_id),
+            (is_favorite, generation_id),
         ).fetchone()
     return bool(row[0]) if row is not None else None
 
 
 def list_video_generations(
-    user_id: uuid.UUID,
     *,
-    search: str = "",
-    sort: str = "latest",
+    search: str = '',
+    sort: str = 'latest',
     favorites_only: bool = False,
     page: int = 1,
 ) -> tuple[list[dict[str, Any]], int, int]:
@@ -1932,8 +1823,8 @@ def list_video_generations(
         "oldest": "created_at ASC, id ASC",
         "most_viewed": "view_count DESC, created_at DESC, id DESC",
     }.get(sort, "created_at DESC, id DESC")
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     if search.strip():
         filters.append("prompt ILIKE %s")
         parameters.append(f"%{search.strip()}%")
@@ -1959,13 +1850,12 @@ def list_video_generations(
 
 
 def list_filtered_video_generations(
-    user_id: uuid.UUID,
     *,
-    search: str = "",
+    search: str = '',
     favorites_only: bool = False,
 ) -> list[dict[str, Any]]:
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     if search.strip():
         filters.append("prompt ILIKE %s")
         parameters.append(f"%{search.strip()}%")
@@ -1979,20 +1869,20 @@ def list_filtered_video_generations(
     return [generation for row in rows if (generation := _video_generation_row(row)) is not None]
 
 
-def delete_video_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+def delete_video_generation(generation_id: uuid.UUID) -> bool:
     with get_connection() as connection:
         row = connection.execute(
-            "DELETE FROM video_generations WHERE id = %s AND user_id = %s RETURNING id",
-            (generation_id, user_id),
+            "DELETE FROM video_generations WHERE id = %s RETURNING id",
+            (generation_id,),
         ).fetchone()
     return row is not None
 
 
-def delete_video_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID) -> int:
+def delete_video_generations(generation_ids: list[uuid.UUID]) -> int:
     with get_connection() as connection:
         rows = connection.execute(
-            "DELETE FROM video_generations WHERE id = ANY(%s) AND user_id = %s RETURNING id",
-            (generation_ids, user_id),
+            "DELETE FROM video_generations WHERE id = ANY(%s) RETURNING id",
+            (generation_ids,),
         ).fetchall()
     return len(rows)
 
@@ -2000,12 +1890,11 @@ def delete_video_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID
 def update_video_generation_status(
     *,
     prompt_id: str,
-    user_id: uuid.UUID,
     status: str,
     storage_file_id: str | None = None,
     filename: str | None = None,
-    subfolder: str = "",
-    video_type: str = "output",
+    subfolder: str = '',
+    video_type: str = 'output',
     size_bytes: int | None = None,
 ) -> None:
     with get_connection() as connection:
@@ -2022,7 +1911,7 @@ def update_video_generation_status(
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                     CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                 )))
-            WHERE prompt_id = %s AND user_id = %s
+            WHERE prompt_id = %s
             """,
             (
                 status,
@@ -2034,7 +1923,6 @@ def update_video_generation_status(
                 status,
                 status,
                 prompt_id,
-                user_id,
             ),
         )
 
@@ -2046,7 +1934,7 @@ def _video_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
 
 
 _THREE_D_FIELDS = (
-    "id, user_id, prompt_id, client_id, status, stage, preset, seed, remove_background, padding, "
+    "id, prompt_id, client_id, status, stage, preset, seed, remove_background, padding, "
     "source_file_id, source_filename, storage_file_id, filename, subfolder, model_type, view_count, "
     "is_favorite, created_at, completed_at, elapsed_seconds, size_bytes, generation_mode, rigging_options, error_message"
 )
@@ -2054,7 +1942,6 @@ _THREE_D_FIELDS = (
 
 def create_three_d_generation(
     *,
-    user_id: uuid.UUID,
     prompt_id: str,
     client_id: str,
     preset: str,
@@ -2071,14 +1958,12 @@ def create_three_d_generation(
         row = connection.execute(
             """
             INSERT INTO three_d_generations
-                (id, user_id, prompt_id, client_id, preset, seed, remove_background, padding,
-                 source_file_id, source_filename, generation_mode, rigging_options)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                (id, prompt_id, client_id, preset, seed, remove_background, padding,
+                 source_file_id, source_filename, generation_mode, rigging_options) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             RETURNING id, created_at
             """,
             (
                 generation_id,
-                user_id,
                 prompt_id,
                 client_id,
                 preset,
@@ -2096,30 +1981,27 @@ def create_three_d_generation(
     return row[0], row[1]
 
 
-def get_three_d_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_three_d_generation(prompt_id: str) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE prompt_id = %s AND user_id = %s",
-            (prompt_id, user_id),
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE prompt_id = %s ",
+            (prompt_id,),
         ).fetchone()
     return _three_d_generation_row(row)
 
 
-def get_three_d_generation_by_id(generation_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any] | None:
+def get_three_d_generation_by_id(generation_id: uuid.UUID) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
-            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE id = %s AND user_id = %s",
-            (generation_id, user_id),
+            f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE id = %s ",
+            (generation_id,),
         ).fetchone()
     return _three_d_generation_row(row)
 
 
-def list_active_three_d_generations(user_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+def list_active_three_d_generations() -> list[dict[str, Any]]:
     filters = ["status IN ('queued', 'processing')"]
     parameters: list[Any] = []
-    if user_id is not None:
-        filters.append("user_id = %s")
-        parameters.append(user_id)
     with get_connection() as connection:
         rows = connection.execute(
             f"SELECT {_THREE_D_FIELDS} FROM three_d_generations WHERE {' AND '.join(filters)} ORDER BY created_at",
@@ -2129,38 +2011,37 @@ def list_active_three_d_generations(user_id: uuid.UUID | None = None) -> list[di
 
 
 def increment_three_d_generation_view_count(
-    generation_id: uuid.UUID, user_id: uuid.UUID
+    generation_id: uuid.UUID,
 ) -> dict[str, Any] | None:
     with get_connection() as connection:
         row = connection.execute(
             f"""
             UPDATE three_d_generations SET view_count = view_count + 1
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s
             RETURNING {_THREE_D_FIELDS}
             """,
-            (generation_id, user_id),
+            (generation_id,),
         ).fetchone()
     return _three_d_generation_row(row)
 
 
-def update_three_d_favorite(generation_id: uuid.UUID, user_id: uuid.UUID, is_favorite: bool) -> bool | None:
+def update_three_d_favorite(generation_id: uuid.UUID, is_favorite: bool) -> bool | None:
     with get_connection() as connection:
         row = connection.execute(
             """
             UPDATE three_d_generations SET is_favorite = %s
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s
             RETURNING is_favorite
             """,
-            (is_favorite, generation_id, user_id),
+            (is_favorite, generation_id),
         ).fetchone()
     return bool(row[0]) if row is not None else None
 
 
 def list_three_d_generations(
-    user_id: uuid.UUID,
     *,
-    search: str = "",
-    sort: str = "latest",
+    search: str = '',
+    sort: str = 'latest',
     favorites_only: bool = False,
     page: int = 1,
 ) -> tuple[list[dict[str, Any]], int, int]:
@@ -2169,8 +2050,8 @@ def list_three_d_generations(
         "oldest": "created_at ASC, id ASC",
         "most_viewed": "view_count DESC, created_at DESC, id DESC",
     }.get(sort, "created_at DESC, id DESC")
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     if search.strip():
         filters.append("(source_filename ILIKE %s OR preset ILIKE %s)")
         term = f"%{search.strip()}%"
@@ -2197,10 +2078,12 @@ def list_three_d_generations(
 
 
 def list_filtered_three_d_generations(
-    user_id: uuid.UUID, *, search: str = "", favorites_only: bool = False
+    *,
+    search: str = '',
+    favorites_only: bool = False,
 ) -> list[dict[str, Any]]:
-    filters = ["user_id = %s"]
-    parameters: list[Any] = [user_id]
+    filters = ["TRUE"]
+    parameters: list[Any] = []
     if search.strip():
         filters.append("(source_filename ILIKE %s OR preset ILIKE %s)")
         term = f"%{search.strip()}%"
@@ -2215,20 +2098,20 @@ def list_filtered_three_d_generations(
     return [generation for row in rows if (generation := _three_d_generation_row(row)) is not None]
 
 
-def delete_three_d_generation(generation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+def delete_three_d_generation(generation_id: uuid.UUID) -> bool:
     with get_connection() as connection:
         row = connection.execute(
-            "DELETE FROM three_d_generations WHERE id = %s AND user_id = %s RETURNING id",
-            (generation_id, user_id),
+            "DELETE FROM three_d_generations WHERE id = %s RETURNING id",
+            (generation_id,),
         ).fetchone()
     return row is not None
 
 
-def delete_three_d_generations(generation_ids: list[uuid.UUID], user_id: uuid.UUID) -> int:
+def delete_three_d_generations(generation_ids: list[uuid.UUID]) -> int:
     with get_connection() as connection:
         rows = connection.execute(
-            "DELETE FROM three_d_generations WHERE id = ANY(%s) AND user_id = %s RETURNING id",
-            (generation_ids, user_id),
+            "DELETE FROM three_d_generations WHERE id = ANY(%s) RETURNING id",
+            (generation_ids,),
         ).fetchall()
     return len(rows)
 
@@ -2236,13 +2119,12 @@ def delete_three_d_generations(generation_ids: list[uuid.UUID], user_id: uuid.UU
 def update_three_d_generation_status(
     *,
     prompt_id: str,
-    user_id: uuid.UUID,
     status: str,
     stage: str | None = None,
     storage_file_id: str | None = None,
     filename: str | None = None,
-    subfolder: str = "",
-    model_type: str = "output",
+    subfolder: str = '',
+    model_type: str = 'output',
     size_bytes: int | None = None,
     error_message: str | None = None,
 ) -> None:
@@ -2262,7 +2144,7 @@ def update_three_d_generation_status(
                 elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                     CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                 )))
-            WHERE prompt_id = %s AND user_id = %s
+            WHERE prompt_id = %s
             """,
             (
                 status,
@@ -2276,7 +2158,6 @@ def update_three_d_generation_status(
                 status,
                 status,
                 prompt_id,
-                user_id,
             ),
         )
 
@@ -2287,34 +2168,37 @@ def _three_d_generation_row(row: tuple[Any, ...] | None) -> dict[str, Any] | Non
     return dict(zip(_THREE_D_FIELDS.split(", "), row, strict=True))
 
 
-_PRESET_FIELDS = "id, user_id, type, name, values, is_default, created_at, updated_at"
+_PRESET_FIELDS = "id, type, name, values, is_default, created_at, updated_at"
 
 
 def create_preset(
-    *, user_id: uuid.UUID, preset_type: str, name: str, values: dict[str, Any], is_default: bool = False
+    *,
+    preset_type: str,
+    name: str,
+    values: dict[str, Any],
+    is_default: bool = False,
 ) -> dict[str, Any]:
     with get_connection() as connection:
         if is_default:
             connection.execute(
-                "UPDATE presets SET is_default = FALSE WHERE user_id = %s AND type = %s",
-                (user_id, preset_type),
+                "UPDATE presets SET is_default = FALSE WHERE type = %s",
+                (preset_type,),
             )
         row = connection.execute(
             f"""
-            INSERT INTO presets (id, user_id, type, name, values, is_default)
-            VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+            INSERT INTO presets (id, type, name, values, is_default) VALUES (%s, %s, %s, %s::jsonb, %s)
             RETURNING {_PRESET_FIELDS}
             """,
-            (uuid.uuid4(), user_id, preset_type, name, json.dumps(values, ensure_ascii=False), is_default),
+            (uuid.uuid4(), preset_type, name, json.dumps(values, ensure_ascii=False), is_default),
         ).fetchone()
     return _preset_row(row)
 
 
-def list_presets(*, user_id: uuid.UUID, preset_type: str) -> list[dict[str, Any]]:
+def list_presets(*, preset_type: str) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
-            f"SELECT {_PRESET_FIELDS} FROM presets WHERE user_id = %s AND type = %s ORDER BY updated_at DESC, name",
-            (user_id, preset_type),
+            f"SELECT {_PRESET_FIELDS} FROM presets WHERE type = %s ORDER BY updated_at DESC, name",
+            (preset_type,),
         ).fetchall()
     return [_preset_row(row) for row in rows]
 
@@ -2322,7 +2206,6 @@ def list_presets(*, user_id: uuid.UUID, preset_type: str) -> list[dict[str, Any]
 def update_preset(
     *,
     preset_id: uuid.UUID,
-    user_id: uuid.UUID,
     preset_type: str,
     name: str,
     values: dict[str, Any],
@@ -2330,15 +2213,15 @@ def update_preset(
 ) -> dict[str, Any] | None:
     with get_connection() as connection:
         target = connection.execute(
-            "SELECT id FROM presets WHERE id = %s AND user_id = %s AND type = %s FOR UPDATE",
-            (preset_id, user_id, preset_type),
+            "SELECT id FROM presets WHERE id = %s AND type = %s FOR UPDATE",
+            (preset_id, preset_type),
         ).fetchone()
         if target is None:
             return None
         if is_default is True:
             connection.execute(
-                "UPDATE presets SET is_default = FALSE WHERE user_id = %s AND type = %s AND id <> %s",
-                (user_id, preset_type, preset_id),
+                "UPDATE presets SET is_default = FALSE WHERE type = %s AND id <> %s",
+                (preset_type, preset_id),
             )
         row = connection.execute(
             f"""
@@ -2347,19 +2230,19 @@ def update_preset(
                 values = %s::jsonb,
                 is_default = COALESCE(%s, is_default),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s AND user_id = %s AND type = %s
+            WHERE id = %s AND type = %s
             RETURNING {_PRESET_FIELDS}
             """,
-            (name, json.dumps(values, ensure_ascii=False), is_default, preset_id, user_id, preset_type),
+            (name, json.dumps(values, ensure_ascii=False), is_default, preset_id, preset_type),
         ).fetchone()
     return _preset_row(row) if row is not None else None
 
 
-def delete_preset(*, preset_id: uuid.UUID, user_id: uuid.UUID, preset_type: str) -> bool:
+def delete_preset(*, preset_id: uuid.UUID, preset_type: str) -> bool:
     with get_connection() as connection:
         row = connection.execute(
-            "DELETE FROM presets WHERE id = %s AND user_id = %s AND type = %s RETURNING id",
-            (preset_id, user_id, preset_type),
+            "DELETE FROM presets WHERE id = %s AND type = %s RETURNING id",
+            (preset_id, preset_type),
         ).fetchone()
     return row is not None
 
@@ -2373,13 +2256,12 @@ def _preset_row(row: tuple[Any, ...] | None) -> dict[str, Any]:
 def update_image_generation_status(
     *,
     prompt_id: str,
-    user_id: uuid.UUID,
     status: str,
     file_path: str | None = None,
     storage_file_id: str | None = None,
     filename: str | None = None,
-    subfolder: str = "",
-    image_type: str = "output",
+    subfolder: str = '',
+    image_type: str = 'output',
     size_bytes: int | None = None,
 ) -> None:
     with get_connection() as connection:
@@ -2392,9 +2274,9 @@ def update_image_generation_status(
                     elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                         CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                     )))
-                WHERE prompt_id = %s AND user_id = %s
+                WHERE prompt_id = %s
                 """,
-                (status, status, status, prompt_id, user_id),
+                (status, status, status, prompt_id),
             )
         else:
             connection.execute(
@@ -2411,9 +2293,9 @@ def update_image_generation_status(
                     elapsed_seconds = GREATEST(0, EXTRACT(EPOCH FROM (
                         CASE WHEN %s IN ('completed', 'failed', 'cancelled') THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END - created_at
                     )))
-                WHERE prompt_id = %s AND user_id = %s
+                WHERE prompt_id = %s
                 """,
-                (status, file_path, storage_file_id, filename, subfolder, image_type, size_bytes, status, status, prompt_id, user_id),
+                (status, file_path, storage_file_id, filename, subfolder, image_type, size_bytes, status, status, prompt_id),
             )
 
 
@@ -2434,52 +2316,42 @@ def generation_elapsed_seconds(generation: dict[str, Any]) -> float:
     return round(elapsed, 3)
 
 
-def record_auth_event(
-    *,
-    event_type: str,
-    username: str | None,
-    success: bool,
-    failure_reason: str | None,
-    client_ip: str | None,
-    user_agent: str | None,
-    user_id: Any = None,
-) -> None:
-    _record(
-        """
-        INSERT INTO auth_history
-            (event_type, username, success, failure_reason, client_ip, user_agent, user_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """,
-        (event_type, username, success, failure_reason, client_ip, user_agent, user_id),
-    )
 
 
 def record_api_call(
-    *, method: str, path: str, status_code: int, client_ip: str | None,
-    user_agent: str | None, user_id: Any = None, request_id: Any = None,
-    parent_request_id: Any = None, source: str = "server", requested_at: datetime | None = None,
-    headers_ms: float | None = None, first_byte_ms: float | None = None,
-    duration_ms: float | None = None, finished_at: datetime | None = None,
-    outcome: str | None = None, timing_context: dict[str, Any] | None = None,
+    *,
+    method: str,
+    path: str,
+    status_code: int,
+    client_ip: str | None,
+    user_agent: str | None,
+    request_id: Any = None,
+    parent_request_id: Any = None,
+    source: str = 'server',
+    requested_at: datetime | None = None,
+    headers_ms: float | None = None,
+    first_byte_ms: float | None = None,
+    duration_ms: float | None = None,
+    finished_at: datetime | None = None,
+    outcome: str | None = None,
+    timing_context: dict[str, Any] | None = None,
 ) -> None:
     try:
         _record(
             """
             INSERT INTO api_audit_logs
-                (method, path, status_code, client_ip, user_agent, user_id, request_id,
+                (method, path, status_code, client_ip, user_agent, request_id,
                  parent_request_id, source, requested_at, headers_ms, first_byte_ms,
-                 duration_ms, finished_at, outcome, timing_context)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, CURRENT_TIMESTAMP), %s, %s, %s, %s, %s, %s::jsonb)
+                 duration_ms, finished_at, outcome, timing_context) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, CURRENT_TIMESTAMP), %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (request_id) WHERE request_id IS NOT NULL DO UPDATE SET
                 status_code = CASE WHEN api_audit_logs.finished_at IS NULL THEN EXCLUDED.status_code ELSE api_audit_logs.status_code END,
-                user_id = COALESCE(EXCLUDED.user_id, api_audit_logs.user_id),
                 headers_ms = COALESCE(api_audit_logs.headers_ms, EXCLUDED.headers_ms),
                 first_byte_ms = COALESCE(api_audit_logs.first_byte_ms, EXCLUDED.first_byte_ms),
                 duration_ms = COALESCE(EXCLUDED.duration_ms, api_audit_logs.duration_ms),
                 finished_at = COALESCE(EXCLUDED.finished_at, api_audit_logs.finished_at),
                 outcome = CASE WHEN api_audit_logs.finished_at IS NULL THEN EXCLUDED.outcome ELSE api_audit_logs.outcome END
             """,
-            (method, redact(path), status_code, client_ip, user_agent, user_id, request_id,
+            (method, redact(path), status_code, client_ip, user_agent, request_id,
              parent_request_id, source, requested_at, headers_ms, first_byte_ms, duration_ms,
              finished_at, outcome, json.dumps(redact(timing_context), ensure_ascii=False, default=str) if timing_context else None),
         )
@@ -2489,19 +2361,25 @@ def record_api_call(
 
 _API_ERROR_INSERT = """
     INSERT INTO api_error_logs
-        (method, path, status_code, error_type, error_message, provider_response, client_ip, user_agent, user_id, error_details)
-    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb)
+        (method, path, status_code, error_type, error_message, provider_response, client_ip, user_agent, error_details) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb)
 """
 
 
-def _api_error_parameters(*, method: str, path: str, status_code: int, error_type: str,
-                          error_message: str, client_ip: str | None, user_agent: str | None,
-                          user_id: Any = None, provider_response: dict[str, Any] | None = None,
-                          error_details: dict[str, Any] | None = None) -> tuple[Any, ...]:
+def _api_error_parameters(
+    *,
+    method: str,
+    path: str,
+    status_code: int,
+    error_type: str,
+    error_message: str,
+    client_ip: str | None,
+    user_agent: str | None,
+    provider_response: dict[str, Any] | None = None,
+    error_details: dict[str, Any] | None = None,
+) -> tuple[Any, ...]:
     return (method, redact(path), status_code, error_type[:128], redact(error_message),
             json.dumps(redact(provider_response), ensure_ascii=False, default=str) if provider_response is not None else None,
-            client_ip, user_agent, user_id,
-            json.dumps(redact(error_details), ensure_ascii=False, default=str) if error_details is not None else None)
+            client_ip, user_agent, json.dumps(redact(error_details), ensure_ascii=False, default=str) if error_details is not None else None)
 
 
 def record_api_error(**payload: Any) -> None:
@@ -2515,15 +2393,27 @@ def _write_api_error(**payload: Any) -> None:
     _write_record(_API_ERROR_INSERT, _api_error_parameters(**payload))
 
 
-def record_web_event(*, event_type: str, page_path: str, from_path: str | None,
-                     target_type: str, target_id: str | None, target_label: str | None,
-                     target_href: str | None, client_ip: str | None, user_agent: str | None,
-                     user_id: Any = None, event_id: Any = None, client_occurred_at: Any = None,
-                     visitor_id: Any = None, session_id: Any = None, target_path: str | None = None,
-                     target_context: dict[str, Any] | None = None) -> None:
+def record_web_event(
+    *,
+    event_type: str,
+    page_path: str,
+    from_path: str | None,
+    target_type: str,
+    target_id: str | None,
+    target_label: str | None,
+    target_href: str | None,
+    client_ip: str | None,
+    user_agent: str | None,
+    event_id: Any = None,
+    client_occurred_at: Any = None,
+    visitor_id: Any = None,
+    session_id: Any = None,
+    target_path: str | None = None,
+    target_context: dict[str, Any] | None = None,
+) -> None:
     try:
         parameters = (event_type, redact(page_path), redact(from_path), target_type, redact(target_id), redact(target_label),
-                      redact(target_href), client_ip, user_agent, user_id, event_id, client_occurred_at,
+                      redact(target_href), client_ip, user_agent, event_id, client_occurred_at,
                       visitor_id, session_id, redact(target_path),
                       json.dumps(redact(target_context or {}), ensure_ascii=False, default=str))
         fire_and_forget(_write_web_event, parameters, channel="web")
@@ -2536,9 +2426,8 @@ def _write_web_event(parameters: tuple[Any, ...]) -> None:
         connection.execute("""
             INSERT INTO web_event_logs
                 (event_type, page_path, from_path, target_type, target_id, target_label,
-                 target_href, client_ip, user_agent, user_id, event_id, client_occurred_at,
-                 visitor_id, session_id, target_path, target_context)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                 target_href, client_ip, user_agent, event_id, client_occurred_at,
+                 visitor_id, session_id, target_path, target_context) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (event_id) WHERE event_id IS NOT NULL DO NOTHING
         """, parameters)
 
@@ -2550,3 +2439,9 @@ def _record(statement: str, parameters: Iterable[Any]) -> None:
 def _write_record(statement: str, parameters: tuple[Any, ...]) -> None:
     with get_connection(audit=True) as connection:
         connection.execute(statement, parameters)
+
+
+def get_storage_owner(file_id: str) -> str:
+    with get_connection() as connection:
+        row = connection.execute("SELECT owner_id FROM storage_file_owners WHERE file_id = %s", (file_id,)).fetchone()
+    return row[0] if row is not None else "local-field"

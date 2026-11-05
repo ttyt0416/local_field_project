@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import SimpleNamespace
 
 import unittest
 import uuid
@@ -9,7 +10,6 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.auth import UserResponse
 from app.configs.constants import settings
 from app.model_downloads import (
     CivitaiFile,
@@ -34,7 +34,7 @@ class ModelFoldersTest(unittest.TestCase):
         self.root = Path(temporary.name)
         self.models = self.root / "checkpoints"
         self.models.mkdir()
-        self.user = UserResponse(id=uuid.uuid4(), username="folder-tester")
+
         settings_patch = patch("app.model_downloads.settings", replace(settings, comfyui_models_path=str(self.root)))
         settings_patch.start()
         self.addCleanup(settings_patch.stop)
@@ -52,8 +52,8 @@ class ModelFoldersTest(unittest.TestCase):
 
     def test_info_counts_nested_and_non_model_files_and_is_stable(self) -> None:
         self.tree()
-        info = model_folder_info("checkpoint", "styles/원본", self.user)
-        again = model_folder_info("checkpoint", "styles/원본", self.user)
+        info = model_folder_info("checkpoint", "styles/원본")
+        again = model_folder_info("checkpoint", "styles/원본")
         self.assertEqual((info.file_count, info.directory_count, info.size_bytes), (3, 2, 16))
         self.assertEqual(info.revision, again.revision)
         self.assertFalse(info.has_active_downloads)
@@ -62,7 +62,7 @@ class ModelFoldersTest(unittest.TestCase):
         folder = self.tree()
         sibling = self.models / "styles/sibling.safetensors"
         sibling.write_bytes(b"sibling")
-        result = rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="styles/원본", name="새 이름 #1"), self.user)
+        result = rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="styles/원본", name="새 이름 #1"))
         destination = self.models / "styles/새 이름 #1"
         self.assertEqual(result.subfolder, "styles/새 이름 #1")
         self.assertFalse(folder.exists())
@@ -76,40 +76,40 @@ class ModelFoldersTest(unittest.TestCase):
         sibling = self.models / "Anima-extra"
         sibling.mkdir()
         (sibling / "keep.bin").write_bytes(b"keep")
-        info = model_folder_info("checkpoint", "Anima", self.user)
-        delete_model_folder("checkpoint", "Anima", info.revision, self.user)
+        info = model_folder_info("checkpoint", "Anima")
+        delete_model_folder("checkpoint", "Anima", info.revision)
         self.assertFalse(folder.exists())
         self.assertEqual((sibling / "keep.bin").read_bytes(), b"keep")
         self.assertTrue(self.models.is_dir())
 
     def test_empty_folder_can_be_renamed_and_deleted(self) -> None:
         (self.models / "empty").mkdir()
-        rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="empty", name="renamed"), self.user)
-        info = model_folder_info("checkpoint", "renamed", self.user)
+        rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="empty", name="renamed"))
+        info = model_folder_info("checkpoint", "renamed")
         self.assertEqual((info.file_count, info.directory_count, info.size_bytes), (0, 0, 0))
-        delete_model_folder("checkpoint", "renamed", info.revision, self.user)
+        delete_model_folder("checkpoint", "renamed", info.revision)
         self.assertFalse((self.models / "renamed").exists())
 
     def test_changed_contents_require_a_new_delete_confirmation(self) -> None:
         folder = self.tree()
-        old = model_folder_info("checkpoint", "styles/원본", self.user)
+        old = model_folder_info("checkpoint", "styles/원본")
         (folder / "nested/new.txt").write_bytes(b"new")
         with self.assertRaises(HTTPException) as raised:
-            delete_model_folder("checkpoint", "styles/원본", old.revision, self.user)
+            delete_model_folder("checkpoint", "styles/원본", old.revision)
         self.assertEqual(raised.exception.status_code, 409)
         self.assertTrue((folder / "model.safetensors").exists())
-        updated = model_folder_info("checkpoint", "styles/원본", self.user)
-        delete_model_folder("checkpoint", "styles/원본", updated.revision, self.user)
+        updated = model_folder_info("checkpoint", "styles/원본")
+        delete_model_folder("checkpoint", "styles/원본", updated.revision)
         self.assertFalse(folder.exists())
 
     def test_active_download_blocks_rename_and_delete(self) -> None:
         folder = self.tree()
-        info = model_folder_info("checkpoint", "styles/원본", self.user)
+        info = model_folder_info("checkpoint", "styles/원본")
         self.active_downloads.return_value = True
-        self.assertTrue(model_folder_info("checkpoint", "styles/원본", self.user).has_active_downloads)
+        self.assertTrue(model_folder_info("checkpoint", "styles/원본").has_active_downloads)
         for operation in (
-            lambda: rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="styles/원본", name="new"), self.user),
-            lambda: delete_model_folder("checkpoint", "styles/원본", info.revision, self.user),
+            lambda: rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="styles/원본", name="new")),
+            lambda: delete_model_folder("checkpoint", "styles/원본", info.revision),
         ):
             with self.assertRaises(HTTPException) as raised:
                 operation()
@@ -121,7 +121,7 @@ class ModelFoldersTest(unittest.TestCase):
         self.tree("source")
         (self.models / "existing").mkdir()
         with self.assertRaises(HTTPException) as raised:
-            rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="source", name="existing"), self.user)
+            rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="source", name="existing"))
         self.assertEqual(raised.exception.status_code, 409)
         self.assertTrue((self.models / "source/model.safetensors").exists())
         self.assertTrue((self.models / "existing").is_dir())
@@ -130,16 +130,16 @@ class ModelFoldersTest(unittest.TestCase):
         for path in ("", " ", ".", "..", "../checkpoints", "/checkpoints", "a/../b", ".cache", "a\\b"):
             with self.subTest(path=path):
                 with self.assertRaises(HTTPException):
-                    model_folder_info("checkpoint", path, self.user)
+                    model_folder_info("checkpoint", path)
                 with self.assertRaises(HTTPException):
-                    delete_model_folder("checkpoint", path, "0" * 64, self.user)
+                    delete_model_folder("checkpoint", path, "0" * 64)
         self.assertTrue(self.models.is_dir())
 
     def test_rename_rejects_unsafe_names_and_retains_source(self) -> None:
         self.tree("source")
         for name in (" ", ".", "..", ".hidden", "../outside", "nested/name", "back\\slash", "C:drive", "bad\nname"):
             with self.subTest(name=name), self.assertRaises(HTTPException):
-                rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="source", name=name), self.user)
+                rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="source", name=name))
         self.assertTrue((self.models / "source/model.safetensors").is_file())
 
     def test_symlink_source_and_symlink_model_root_are_rejected(self) -> None:
@@ -151,7 +151,7 @@ class ModelFoldersTest(unittest.TestCase):
         (self.root / "loras").symlink_to(outside, target_is_directory=True)
         for type_, path in (("checkpoint", "link"), ("checkpoint", "link/nested"), ("lora", "nested")):
             with self.subTest(type_=type_, path=path), self.assertRaises(HTTPException):
-                delete_model_folder(type_, path, "0" * 64, self.user)
+                delete_model_folder(type_, path, "0" * 64)
         self.assertEqual(keep.read_bytes(), b"outside")
 
     def test_recursive_delete_unlinks_descendant_symlink_without_following_it(self) -> None:
@@ -160,14 +160,14 @@ class ModelFoldersTest(unittest.TestCase):
         outside.mkdir()
         (outside / "keep.bin").write_bytes(b"outside")
         (folder / "outside-link").symlink_to(outside, target_is_directory=True)
-        info = model_folder_info("checkpoint", "source", self.user)
+        info = model_folder_info("checkpoint", "source")
         self.assertEqual(info.file_count, 4)
-        delete_model_folder("checkpoint", "source", info.revision, self.user)
+        delete_model_folder("checkpoint", "source", info.revision)
         self.assertEqual((outside / "keep.bin").read_bytes(), b"outside")
 
     def test_missing_folder_has_no_filesystem_side_effects(self) -> None:
         with self.assertRaises(HTTPException) as raised:
-            rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="missing", name="new"), self.user)
+            rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder="missing", name="new"))
         self.assertEqual(raised.exception.status_code, 404)
         self.assertFalse((self.models / "new").exists())
 
@@ -176,7 +176,7 @@ class ModelFoldersTest(unittest.TestCase):
         source = self.models / parent / "source"
         source.mkdir(parents=True)
         with self.assertRaises(HTTPException) as raised:
-            rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder=f"{parent}/source", name="c" * 120), self.user)
+            rename_model_folder("checkpoint", RenameModelFolderRequest(subfolder=f"{parent}/source", name="c" * 120))
         self.assertEqual(raised.exception.status_code, 422)
         self.assertTrue(source.is_dir())
 
@@ -184,7 +184,7 @@ class ModelFoldersTest(unittest.TestCase):
         previous = {"model_type": "checkpoint", "target_path": str(self.models / "deleted/model.safetensors")}
         with patch("app.model_downloads.get_model_download", return_value=previous), patch("app.model_downloads.retry_model_download") as retry:
             with self.assertRaises(HTTPException) as raised:
-                retry_download(uuid.uuid4(), self.user)
+                retry_download(uuid.uuid4())
             self.assertEqual(raised.exception.status_code, 409)
             retry.assert_not_called()
         self.assertFalse((self.models / "deleted").exists())

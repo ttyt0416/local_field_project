@@ -5,3 +5,7 @@
 `python -B -m app.gelbooru /tag-data/gelbooru_tags_2026-06-11.jsonl`로 전체 JSONL을 가져온다. COPY 스테이징·중복 제거·테이블 교체·import 시각 갱신은 한 트랜잭션이므로 실패 시 기존 데이터가 보존된다. 같은 원본을 반복 가져올 수 있다.
 
 원본은 [DraconicDragon/Gelbooru-Tags-Full_2026-06-11](https://huggingface.co/datasets/DraconicDragon/Gelbooru-Tags-Full_2026-06-11)의 2026-06-11 전체 스냅샷이다. 145081565바이트 JSONL의 SHA-256은 ba99cbd800f9e3a0779a24026a9951b90c2918ef9f334b9c97697499effa3c41. 빈 이름 5행을 제외하고 같은 이름은 사용 수가 가장 큰 행으로 합쳐 1393566개를 유지한다. 운영 원본은 `.runtime/tag-catalogues/`에 두며 Git·서버 Docker build context에 포함하지 않는다. 라이선스는 데이터셋의 Apache-2.0 표기를 따른다.
+
+## 공용 사용
+
+Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.

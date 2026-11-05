@@ -1,16 +1,16 @@
+from types import SimpleNamespace
 import asyncio
 import json
 import re
 import unittest
 from pathlib import Path
 from typing import Literal, cast
-from unittest.mock import call, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 from model_fixtures import model_object_info
 
 from app import video
-from app.auth import UserResponse
 from app.comfyui import cancel_comfy_generation
 from pydantic import ValidationError
 from starlette.requests import Request
@@ -18,7 +18,7 @@ from starlette.requests import Request
 
 class VideoContractTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.user = UserResponse(id=uuid4(), username="tester")
+
         request = patch.object(video, "_request_json", return_value=model_object_info())
         request.start()
         self.addCleanup(request.stop)
@@ -478,7 +478,7 @@ class VideoContractTest(unittest.TestCase):
             patch.object(video, "_request_json", return_value={"prompt_id": "r2v-prompt"}) as submit,
             patch.object(video, "storage_download_file", return_value=(b"selected-reference", "image/png")),
         ):
-            prompt_id = video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
+            prompt_id = video._queue_video_continuation(generation, "f" * 32, b"last-frame")
 
         request = cast(video.VideoGenerationRequest, captured["request"])
         resolved = cast(dict[str, video._ResolvedAsset], captured["resolved"])
@@ -517,7 +517,7 @@ class VideoContractTest(unittest.TestCase):
             patch.object(video, "_build_prompt", side_effect=build),
             patch.object(video, "_request_json", return_value={"prompt_id": "i2v-prompt"}) as submit,
         ):
-            video._queue_video_continuation(generation, self.user.id, "f" * 32, b"last-frame")
+            video._queue_video_continuation(generation, "f" * 32, b"last-frame")
 
         request = cast(video.VideoGenerationRequest, captured["request"])
         self.assertEqual(set(submit.call_args.args[2]), {"prompt", "client_id"})
@@ -555,7 +555,6 @@ class VideoContractTest(unittest.TestCase):
             "prompt_id": "root-prompt",
             "active_prompt_id": None,
             "client_id": "client-1",
-            "user_id": self.user.id,
             "segment_index": 0,
             "segment_durations": [10.0, 3.0],
             "segment_prompts": ["opening", "continuation"],
@@ -578,13 +577,12 @@ class VideoContractTest(unittest.TestCase):
         ):
             video._sync_video_output(
                 generation,
-                self.user.id,
                 "completed-segment",
                 {"save": {"videos": [{"filename": "segment.mp4", "subfolder": "", "type": "output"}]}},
             )
 
         extract.assert_called_once_with(content=b"segment-video", filename="segment.mp4")
-        queue.assert_called_once_with(generation, self.user.id, "f" * 32, b"actual-last-frame")
+        queue.assert_called_once_with(generation, "f" * 32, b"actual-last-frame")
 
     def test_completed_sequence_status_does_not_requery_comfy_history(self) -> None:
         generation = {
@@ -605,7 +603,7 @@ class VideoContractTest(unittest.TestCase):
             patch.object(video, "storage_read_url", return_value="/vault/videos/root-prompt/download"),
             patch.object(video, "_request_json") as history,
         ):
-            result = video._history_status(generation, self.user.id)
+            result = video._history_status(generation)
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.progress, 100)
@@ -623,7 +621,6 @@ class VideoContractTest(unittest.TestCase):
                     "fl2v",
                     request,
                     [],
-                    self.user,
                 )
             )
         self.assertEqual(context.exception.status_code, 422)
@@ -640,7 +637,7 @@ class VideoContractTest(unittest.TestCase):
             patch.object(video, "storage_upload_file") as upload,
             patch.object(video, "create_media_asset") as create_media,
         ):
-            resolved = asyncio.run(video._resolve_assets("i2v", request, [], self.user))
+            resolved = asyncio.run(video._resolve_assets("i2v", request, []))
 
         self.assertEqual(next(iter(resolved.values())).file_id, "a" * 32)
         upload.assert_not_called()
@@ -749,7 +746,7 @@ class VideoContractTest(unittest.TestCase):
                 plan["shots"] = [{"start_ms": start, **{field: "content" for field in video._VIDEO_PROMPT_SHOT_FIELDS}} for start in starts]
                 request = Request({"type": "http", "headers": []})
                 with patch.object(video, "_request_structured_object", return_value=plan), self.assertRaises(video.HTTPException) as raised:
-                    video.enhance_video_prompt(payload, request, self.user)
+                    video.enhance_video_prompt(payload, request)
                 self.assertEqual(raised.exception.status_code, 503)
                 self.assertEqual(request.state.provider_response, plan)
 
@@ -802,7 +799,7 @@ class VideoContractTest(unittest.TestCase):
         provider_response = {"choices": [{"finish_reason": "length", "message": {"content": "partial response"}}]}
         with patch.object(video, "_enhance_video_prompt", side_effect=video._VLLMError("length", provider_response=provider_response)):
             with self.assertRaises(video.HTTPException) as raised:
-                video.enhance_video_prompt(payload, request, self.user)
+                video.enhance_video_prompt(payload, request)
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(request.state.provider_response, provider_response)

@@ -15,7 +15,7 @@
 	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
 	import ImagePresetModal from '../../../../../components/presets/image-preset-modal.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { imageGenerationStore } from '$lib/stores/image-generation.svelte';
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
@@ -92,11 +92,6 @@
 	});
 
 	async function loadDetail() {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		const generationId = page.params.id;
 		if (!generationId) {
 			error = '생성 결과 식별자가 없습니다.';
@@ -283,7 +278,7 @@
 
 <svelte:head>
 	<title>콘텐츠 상세 · Local Field</title>
-	<meta name="description" content="개인 콘텐츠와 사용된 이미지 생성 파라미터 상세" />
+	<meta name="description" content="콘텐츠와 사용된 이미지 생성 파라미터 상세" />
 </svelte:head>
 
 {#if !ready}

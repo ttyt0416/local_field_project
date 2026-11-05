@@ -1,8 +1,5 @@
-import { browser } from '$app/environment';
 import ky, { HTTPError, isTimeoutError, type Options, type ResponsePromise } from 'ky';
 import { SERVER_URL } from '$lib/configs/constants';
-
-export const ACCESS_TOKEN_KEY = 'local-field.access-token';
 
 export { trackWebEvent } from './telemetry';
 export type { WebEvent } from './telemetry';
@@ -11,18 +8,7 @@ import { reportApiError, startApiTiming } from './telemetry';
 const api = ky.create({
 	baseUrl: `${SERVER_URL.replace(/\/+$/, '')}/`,
 	retry: 0,
-	timeout: 15_000,
-	hooks: {
-		beforeRequest: [
-			({ request }) => {
-				if (!browser || request.headers.has('Authorization')) return;
-				const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-				if (token) {
-					request.headers.set('Authorization', `Bearer ${token}`);
-				}
-			}
-		]
-	}
+	timeout: 15_000
 });
 
 function getErrorMessage(error: unknown) {
@@ -33,13 +19,13 @@ function getErrorMessage(error: unknown) {
 			case 400:
 				return '요청 내용을 확인해 주세요.';
 			case 401:
-				return '인증 정보가 올바르지 않거나 로그인이 만료되었습니다.';
+				return '요청을 처리할 권한이 없습니다.';
 			case 403:
 				return '이 작업을 수행할 권한이 없습니다.';
 			case 404:
 				return '요청한 정보를 찾을 수 없습니다.';
 			case 409:
-				return '이미 가입된 정보입니다.';
+				return '이미 존재하거나 현재 상태와 충돌하는 요청입니다.';
 			case 413:
 				return '전송할 파일의 크기가 너무 큽니다.';
 			case 415:

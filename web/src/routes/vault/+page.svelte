@@ -16,7 +16,7 @@
 	import Typography from '../../../components/typography/typography.svelte';
 	import SearchBar from '../../../components/inputs/searchbar.svelte';
 	import Tab from '../../../components/tabs/tab.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore, type GenerationJob } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
@@ -171,11 +171,6 @@
 	});
 
 	async function loadVault(requestedPage = mediaTab === 'images' ? imagePage : mediaTab === 'videos' ? videoPage : modelPage) {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await generationJobStore.initialize();
 		try {
 			const params = new URLSearchParams({ sort, page: String(requestedPage) });

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { Bookmark, Check, Pencil, Plus, Trash2 } from '@lucide/svelte';
 	import IconOutlinedButton from '../../../components/buttons/icon-outlined-button.svelte';
 	import ImagePresetModal from '../../../components/presets/image-preset-modal.svelte';
@@ -13,7 +13,7 @@
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import VideoPresetModal from '../../../components/presets/video-preset-modal.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { imageGenerationModeTabs, imageGenerationFamilyTabs as imageModelFamilyTabs, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImageOptions, type ImagePresetType, type Preset, type PresetType } from '$lib/types/presets';
 
@@ -88,11 +88,6 @@
 	}
 
 	async function initialize() {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		try {
 			await loadImageOptions('t2i_anima');
 			await loadPresets();

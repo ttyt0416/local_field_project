@@ -1,17 +1,17 @@
 from __future__ import annotations
+from types import SimpleNamespace
 
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
-from app.auth import UserResponse
 from app import generations
 
 
 class ActiveGenerationRouteTest(unittest.TestCase):
     def test_returns_only_current_users_active_generation_rows(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         created_at = datetime.now(timezone.utc)
         image = {
             "id": uuid4(),
@@ -52,12 +52,12 @@ class ActiveGenerationRouteTest(unittest.TestCase):
             patch.object(generations, "list_active_three_d_generations", return_value=[three_d]) as three_d_list,
             patch.object(generations, "list_active_music_generations", return_value=[music]) as music_list,
         ):
-            result = generations.active_generations(user)
+            result = generations.active_generations()
 
-        image_list.assert_called_once_with(user.id)
-        video_list.assert_called_once_with(user.id)
-        three_d_list.assert_called_once_with(user.id)
-        music_list.assert_called_once_with(user.id)
+        image_list.assert_called_once_with()
+        video_list.assert_called_once_with()
+        three_d_list.assert_called_once_with()
+        music_list.assert_called_once_with()
         self.assertEqual([item.kind for item in result], ["image", "video", "3d", "music"])
         self.assertEqual(result[0].status, "processing")
         self.assertEqual(result[1].mode, "i2v")

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { Download, FileDown, RefreshCw } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
@@ -8,7 +8,7 @@
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import Modal from '../../../components/modals/modal.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { apiJson } from '$lib/utils/api';
 	import ModelFolderPicker from '../../../components/models/model-folder-picker.svelte';
 	import { modelTypes, type ModelType } from '$lib/types/model-storage';
@@ -90,12 +90,7 @@
 	});
 
 	async function initialize() {
-		await authStore.initialize();
 		if (!active) return;
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		try {
 			await refresh();
 			if (!active) return;
@@ -134,10 +129,7 @@
 				}
 				jobs = result.filter((job) => job.status === 'queued' || job.status === 'downloading');
 			}
-		} catch (reason) {
-			if (!active) return;
-			error = reason instanceof Error ? reason.message : '다운로드 목록을 불러오지 못했습니다.';
-			showToast('negative', '다운로드 목록 조회 실패', error);
+		} catch {
 		} finally {
 			jobsLoading = false;
 		}

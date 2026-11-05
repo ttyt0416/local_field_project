@@ -15,3 +15,7 @@ YuE2 연결: 최대 길이 10–900초(기본 120), 작곡 방식 `full`·`melod
 Music vLLM structured output: Style is `{language, genre, vocals, tempo_bpm, instruments, mood, production}`; Lyrics is `{sections: [{kind, lines}]}`. Extra keys, wrong types, tags/newlines in raw fields and unselected languages are rejected in server validation. The server orders Style fields, adds BPM, generates enum section tags and joins lyric lines/sections. The public response remains `{contents}` for editable UI proposals. Invalid provider output is attached to the existing error audit; no free-form fallback is used.
 
 생성 중이 아닐 때 왼쪽 결과 패널 상단에도 실행 버튼을 표시한다. 하단과 같은 generationButton snippet을 사용하며 form 속성으로 설정 폼을 제출하므로 입력 제약·비활성화·로딩 상태가 동일하다.
+
+## 공용 사용
+
+Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.

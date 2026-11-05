@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import Layout from '../../../components/layouts/layout.svelte';
 	import Tab from '../../../components/tabs/tab.svelte';
 	import PromptLibrary from '../../../components/prompts/prompt-library.svelte';
 	import LoadingSpinner from '../../../components/loadings/loading-spinner.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import type { PromptKind } from '$lib/utils/saved-prompts';
 	let kind = $state<PromptKind>('image');
 	let ready = $state(false);
-	onMount(() => { let active = true; void initialize(); async function initialize() { await authStore.initialize(); if (!active) return; if (!authStore.isAuthenticated) { await goto('/login'); return; } ready = true; } return () => { active = false; }; });
+	onMount(() => { let active = true; void initialize(); async function initialize() { if (!active) return; ready = true; } return () => { active = false; }; });
 </script>
 
 <svelte:head><title>프롬프트 관리 | Local Field</title></svelte:head>

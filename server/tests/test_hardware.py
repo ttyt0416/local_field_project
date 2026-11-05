@@ -4,11 +4,8 @@ import uuid
 from dataclasses import replace
 from unittest.mock import patch
 
-from fastapi import HTTPException
-from starlette.requests import Request
 
 from app import hardware
-from app.auth import UserResponse, current_user
 from app.configs.constants import settings
 
 
@@ -43,19 +40,13 @@ class HardwareMonitorTest(unittest.TestCase):
             with self.assertRaises(hardware.HardwareMonitorError):
                 hardware.fetch_hardware_metrics()
 
-    def test_metrics_route_requires_authentication(self) -> None:
-        request = Request({"type": "http", "headers": []})
 
-        with self.assertRaises(HTTPException) as raised:
-            current_user(request, None)
-
-        self.assertEqual(raised.exception.status_code, 401)
 
     def test_metrics_route_returns_proxy_payload_for_authenticated_user(self) -> None:
         payload = {"cpu_percent": 10.0, "gpu_percent": 20.0, "ram_percent": 30.0, "disk_percent": 40.0}
 
         with patch("app.hardware.fetch_hardware_metrics", return_value=payload):
-            response = hardware.hardware_metrics(UserResponse(id=uuid.uuid4(), username="monitor"))
+            response = hardware.hardware_metrics()
 
         self.assertEqual(response.model_dump(), payload)
 

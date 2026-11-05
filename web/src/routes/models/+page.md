@@ -8,13 +8,17 @@ base model에 Anima, MiniMax, Illustrious가 있고 selected model type root 아
 
 공통 `다운로드 중인 콘텐츠`는 `GET /models/downloads?limit=100`에서 queued/downloading만 표시하고 출처·모델 종류와 해당 version 또는 repo/commit을 구분한다. 화면에서 추적 중이던 작업이 failed로 바뀌면 error_message를 Toast와 공통 inline 안내로 표시한다. 지난 실패 이력은 새 방문 때 다시 알리지 않는다. 오래된 polling 응답이 새 enqueue·중단 결과를 덮어쓰지 않도록 로컬 revision을 확인한다. `중단` 성공 시 항목을 즉시 제거하고 `.part` 임시 파일도 삭제한다. enqueue 성공 후 URL, lookup, 파일과 폴더 선택을 초기화하며 URL 변경 시 이전 lookup을 즉시 무효화한다. 실제 download request는 화면의 mutable URL이 아니라 조회된 version ID를 사용한다. 서버 worker가 브라우저와 무관하게 다운로드를 계속한다.
 
-이 페이지는 설치 파일 목록을 요청하지 않으며 모델 파일의 이동·삭제도 제공하지 않는다. 해당 기능은 사이드바의 별도 `/files` 파일 관리로 분리한다. 화면 상단에서 파일 관리로 이동할 수 있다. Civitai token과 download URL은 frontend에 노출하지 않는다. 다운로드 목록의 새로고침과 polling 실패는 catch 후 Toast로 표시한다.
+이 페이지는 설치 파일 목록을 요청하지 않으며 모델 파일의 이동·삭제도 제공하지 않는다. 해당 기능은 사이드바의 별도 `/files` 파일 관리로 분리한다. 화면 상단에서 파일 관리로 이동할 수 있다. Civitai token과 download URL은 frontend에 노출하지 않는다. 다운로드 목록의 새로고침과 polling 조회 실패는 기존 목록을 유지하고 Toast나 오류 문구 없이 처리한다. 공용 API 유틸의 오류·레이턴시 기록은 유지하며 실제 다운로드 작업이 failed 상태로 바뀌면 기존 Toast와 inline 안내를 표시한다.
 
 
 MOSS LoRA의 폴더 선택·설치 목록 필터는 공통 MOSS 폴더를 사용한다. Civitai base model의 MOSS Image/SFT/DMD 변형도 MOSS family로 자동 분류한다. MOSS checkpoint는 Diffusion Model·MOSS 폴더, MOSS LoRA는 LoRA·MOSS 폴더를 기본 선택한다. 서버도 빈 저장 폴더를 같은 MOSS 경로로 처리한다. MOSS 폴더가 없으면 폴더 모달에서 생성해야 하며 이름에 MOSS가 포함된 다른 폴더나 root로 자동 대체하지 않는다.
 
 Hugging Face 탭은 공용 HuggingFaceDownload 패널을 사용한다. 저장소·파일·폴더 링크와 선택 리비전을 조회해 모델 파일을 검색·선택하고 공용 폴더 모달로 저장 위치를 선택한다. 조회한 commit에 고정해 enqueue하고, 두 출처의 작업은 탭 변경 후에도 같은 진행 목록에 표시한다. 작업 요청 중 탭 전환을 막으며 Civitai URL·타입·탭 변경 후 이전 조회 응답은 적용하지 않는다.
 
-각 provider 탭 아래 DownloadToken에서 해당 서비스 API 토큰을 개인 계정에 별도로 저장·교체·삭제한다. 원문을 브라우저에 저장하지 않고 등록 상태만 조회한다.
+각 provider 탭 아래 DownloadToken에서 해당 서비스 API 토큰을 공용으로 저장·교체·삭제한다. 원문을 브라우저에 저장하지 않고 등록 상태만 조회한다.
 
 Civitai에서 사용자가 종류를 직접 선택한 뒤에는 버전을 변경해도 해당 종류를 유지한다. 새 링크 입력·새 조회에서는 다시 자동 선택한다.
+
+## 공용 사용
+
+Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.

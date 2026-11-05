@@ -66,3 +66,7 @@ MOSS LoRA는 `loras/MOSS/` 및 하위폴더에서 파일명과 관계없이 선�
 각 HTTP JSON/바이트/이미지 업로드 및 vLLM 요청에 timed_urlopen을 적용한다. WebSocket은 핸드셰이크·첫 메시지·전체 연결 시간을 따로 기록한다.
 
 공통 `_request_structured_object`는 optional `image_inputs`의 label·image data URL을 user message의 text·image_url parts로 전송한다. 이미지가 없는 이미지·음악 개선 호출은 기존 단일 text content를 유지한다.
+
+## 공용 사용
+
+Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.

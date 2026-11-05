@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { Copy, X } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import Tab from '../../../components/tabs/tab.svelte';
@@ -10,7 +10,7 @@
 	import Typography from '../../../components/typography/typography.svelte';
 	import BooruBrowser from '../../../components/tags/booru-browser.svelte';
 	import CatalogueBrowser from '../../../components/tags/catalogue-browser.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 
 	type ExplorerTab = 'danbooru' | 'gelbooru' | 'characters' | 'artists' | 'series';
 	const tabs = [{value:'danbooru',label:'Danbooru'},{value:'gelbooru',label:'Gelbooru'},{value:'characters',label:'캐릭터'},{value:'artists',label:'아티스트'},{value:'series',label:'시리즈'}] as const;
@@ -21,7 +21,7 @@
 	let copying = $state(false);
 	let error = $state('');
 	let notice = $state('');
-	onMount(() => { let active = true; void initialize(); async function initialize() { await authStore.initialize(); if (!active) return; if (!authStore.isAuthenticated) { await goto('/login'); return; } ready = true; } return () => { active = false; }; });
+	onMount(() => { let active = true; void initialize(); async function initialize() { if (!active) return; ready = true; } return () => { active = false; }; });
 	function add(text: string) { selectedTags = selectedTags.trim() ? `${selectedTags.trim()}, ${text}` : text; }
 	function select(value: ExplorerTab) { selected = value; series = ''; }
 	function showSeries(slug: string) { series = slug; selected = 'characters'; }

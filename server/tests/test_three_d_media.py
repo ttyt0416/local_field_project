@@ -8,13 +8,12 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 
 from app import three_d, vault
-from app.auth import UserResponse, current_user
 from app.storage import StorageError
 
 
 class ThreeDMediaTest(unittest.TestCase):
     def setUp(self):
-        self.user = UserResponse(id=uuid4(), username="model-test")
+
         self.generation_id = uuid4()
         self.row = {
             "id": self.generation_id, "prompt_id": "prompt", "client_id": "client",
@@ -27,7 +26,6 @@ class ThreeDMediaTest(unittest.TestCase):
         }
         app = FastAPI()
         app.include_router(vault.router)
-        app.dependency_overrides[current_user] = lambda: self.user
         self.app = app
         self.path = f"/vault/3d/{self.generation_id}/model"
 
@@ -66,8 +64,8 @@ class ThreeDMediaTest(unittest.TestCase):
         self.assertEqual(response.headers["content-type"], "model/gltf-binary")
         self.assertEqual(response.headers["cache-control"], "private, no-store")
         self.assertNotIn("location", response.headers)
-        owned.assert_called_once_with(self.generation_id, self.user.id)
-        download.assert_called_once_with(file_id="output-file", owner_id=str(self.user.id))
+        owned.assert_called_once_with(self.generation_id)
+        download.assert_called_once_with(file_id="output-file")
 
     def test_inaccessible_generation_does_not_read_storage(self):
         with (
@@ -78,12 +76,7 @@ class ThreeDMediaTest(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         download.assert_not_called()
 
-    def test_unauthenticated_request_is_rejected_before_storage(self):
-        self.app.dependency_overrides.clear()
-        with patch.object(vault, "storage_download_file") as download:
-            response = self.get(self.path)
-        self.assertEqual(response.status_code, 401)
-        download.assert_not_called()
+
 
     def test_mesh_source_and_unfinished_output_are_unavailable(self):
         for row, query in ((self.row, "?source=true"), ({**self.row, "status": "processing"}, "")):
@@ -106,7 +99,7 @@ class ThreeDMediaTest(unittest.TestCase):
             response = self.get(self.path + "?source=true")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"glTF-source")
-        download.assert_called_once_with(file_id="source-model", owner_id=str(self.user.id))
+        download.assert_called_once_with(file_id="source-model")
 
     def test_storage_failure_is_reported(self):
         with (
@@ -125,8 +118,8 @@ class ThreeDMediaTest(unittest.TestCase):
                 patch.object(vault, "storage_enabled", return_value=True),
                 patch.object(vault, "storage_read_url", return_value="https://storage/source") as signed_url,
             ):
-                summary = vault._three_d_summary(row, self.user.id)
-                result = three_d._status_from_row(row, self.user.id, progress={"progress": 100})
+                summary = vault._three_d_summary(row)
+                result = three_d._status_from_row(row, progress={"progress": 100})
             self.assertEqual(summary.model_url, self.path.lstrip("/"))
             self.assertEqual(result.model.url, summary.model_url)
             if mode == "rigging":

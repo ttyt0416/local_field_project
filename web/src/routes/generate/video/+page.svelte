@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import PromptLibrary from '../../../../components/prompts/prompt-library.svelte';
-	import { goto } from '$app/navigation';
+
 	import { AudioLines, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Image as ImageIcon, Plus, Save, Sparkles, Trash2, Video, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
@@ -18,7 +18,7 @@
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
 	import VideoMedia from '../../../../components/media/video.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { videoGenerationStore, type VideoLibraryAsset, type VideoMode } from '$lib/stores/video-generation.svelte';
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
 	import { buildVideoPromptReferences, createVideoPromptPreview, type VideoPromptSource } from '$lib/utils/video-prompt-references';
@@ -232,11 +232,6 @@
 
 	async function initialize() {
 		resetResult();
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await generationJobStore.initialize();
 		applyPendingSelection();
 		await loadVideoOptions(mode);

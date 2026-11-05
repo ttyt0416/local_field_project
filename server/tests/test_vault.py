@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import asyncio
 import json
 import unittest
@@ -9,17 +10,13 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app import vault
-from app.auth import UserResponse
 from app.storage import StorageError
 
 
 class VaultRouteTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.user = UserResponse(id=uuid4(), username="tester")
-
     def test_list_passes_search_sort_favorites_and_page_to_database(self) -> None:
         with patch.object(vault, "list_image_generations", return_value=([], 21, 17)) as list_images:
-            result = vault.vault_images("portrait", "most_viewed", True, 2, self.user)
+            result = vault.vault_images("portrait", "most_viewed", True, 2)
 
         self.assertEqual(result.items, [])
         self.assertEqual(result.page, 2)
@@ -28,7 +25,7 @@ class VaultRouteTest(unittest.TestCase):
         self.assertEqual(result.completed_count, 17)
         self.assertEqual(result.total_pages, 3)
         list_images.assert_called_once_with(
-            self.user.id,
+
             search="portrait",
             sort="most_viewed",
             favorites_only=True,
@@ -39,10 +36,10 @@ class VaultRouteTest(unittest.TestCase):
 
     def test_list_passes_exact_image_category_to_database(self) -> None:
         with patch.object(vault, "list_image_generations", return_value=([], 0, 0)) as list_images:
-            vault.vault_images("", "latest", False, 1, self.user, "i2i", "illustrious")
+            vault.vault_images("", "latest", False, 1, "i2i", "illustrious")
 
         list_images.assert_called_once_with(
-            self.user.id,
+
             search="",
             sort="latest",
             favorites_only=False,
@@ -53,10 +50,10 @@ class VaultRouteTest(unittest.TestCase):
 
     def test_list_passes_krea2_image_category_to_database(self) -> None:
         with patch.object(vault, "list_image_generations", return_value=([], 0, 0)) as list_images:
-            vault.vault_images("", "latest", False, 1, self.user, "t2i", "krea2")
+            vault.vault_images("", "latest", False, 1, "t2i", "krea2")
 
         list_images.assert_called_once_with(
-            self.user.id,
+
             search="",
             sort="latest",
             favorites_only=False,
@@ -96,28 +93,28 @@ class VaultRouteTest(unittest.TestCase):
             "id": uuid4(), "prompt_id": "3d-prompt", "client_id": "3d-client", "status": "queued", "stage": "queued", "preset": "standard", "seed": 7, "storage_file_id": None, "source_file_id": None, "view_count": 0, "is_favorite": False, "created_at": created_at, "completed_at": None, "elapsed_seconds": 3, "size_bytes": None,
         }
         with patch.object(vault, "storage_enabled", return_value=False):
-            image = vault._summary(image_row, self.user.id)
-            three_d = vault._three_d_summary(three_d_row, self.user.id)
+            image = vault._summary(image_row)
+            three_d = vault._three_d_summary(three_d_row)
 
         self.assertEqual((image.prompt_id, image.client_id), ("image-prompt", "image-client"))
         self.assertEqual((three_d.prompt_id, three_d.client_id), ("3d-prompt", "3d-client"))
 
     def test_list_rejects_partial_image_category(self) -> None:
         with self.assertRaises(HTTPException) as raised:
-            vault.vault_images("", "latest", False, 1, self.user, "i2i")
+            vault.vault_images("", "latest", False, 1, "i2i")
 
         self.assertEqual(raised.exception.status_code, 422)
 
     def test_three_d_list_passes_page_to_database(self) -> None:
         with patch.object(vault, "list_three_d_generations", return_value=([], 12, 9)) as list_three_d:
-            result = vault.vault_three_d("asset", "oldest", True, 2, self.user)
+            result = vault.vault_three_d("asset", "oldest", True, 2)
 
         self.assertEqual(result.items, [])
         self.assertEqual(result.page, 2)
         self.assertEqual(result.total_pages, 2)
         self.assertEqual(result.completed_count, 9)
         list_three_d.assert_called_once_with(
-            self.user.id,
+
             search="asset",
             sort="oldest",
             favorites_only=True,
@@ -126,13 +123,13 @@ class VaultRouteTest(unittest.TestCase):
 
     def test_video_list_passes_page_to_database(self) -> None:
         with patch.object(vault, "list_video_generations", return_value=([], 0, 0)) as list_videos:
-            result = vault.vault_videos("", "latest", False, 1, self.user)
+            result = vault.vault_videos("", "latest", False, 1)
 
         self.assertEqual(result.items, [])
         self.assertEqual(result.page_size, 10)
         self.assertEqual(result.total_pages, 0)
         list_videos.assert_called_once_with(
-            self.user.id,
+
             search="",
             sort="latest",
             favorites_only=False,
@@ -146,11 +143,11 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "increment_image_generation_view_count", return_value=stored) as increment,
             patch.object(vault, "_detail", return_value="detail") as detail,
         ):
-            result = vault.vault_image_detail(generation_id, self.user)
+            result = vault.vault_image_detail(generation_id)
 
         self.assertEqual(result, "detail")
-        increment.assert_called_once_with(generation_id, self.user.id)
-        detail.assert_called_once_with(stored, self.user.id)
+        increment.assert_called_once_with(generation_id)
+        detail.assert_called_once_with(stored)
 
     def test_video_detail_returns_every_input_and_improved_segment_prompt(self) -> None:
         generation_id = uuid4()
@@ -198,7 +195,7 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "increment_video_generation_view_count", return_value=stored),
             patch.object(vault, "_video_summary", return_value=summary),
         ):
-            result = vault.vault_video_detail(generation_id, self.user)
+            result = vault.vault_video_detail(generation_id)
 
         self.assertEqual(result.input_segment_prompts, ["input 1", "input 2"])
         self.assertEqual(result.improved_segment_prompts, ["improved 1", "improved 2"])
@@ -247,7 +244,7 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "get_video_generation_by_id", return_value=stored),
             patch.object(vault, "create_video", new_callable=AsyncMock, return_value=accepted) as create,
         ):
-            result = asyncio.run(vault.upscale_vault_video(generation_id, vault.VaultVideoUpscaleRequest(target_megapixels=0.4), self.user))
+            result = asyncio.run(vault.upscale_vault_video(generation_id, vault.VaultVideoUpscaleRequest(target_megapixels=0.4)))
 
         self.assertEqual(result, accepted)
         self.assertEqual(create.call_args.args[0], "r2v")
@@ -264,13 +261,13 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "storage_enabled", return_value=True),
             patch.object(vault, "storage_download_file", return_value=(b"image", "image/png")) as download,
         ):
-            response = vault.download_vault_image(generation_id, self.user)
+            response = vault.download_vault_image(generation_id)
 
         self.assertEqual(response.body, b"image")
         self.assertEqual(response.media_type, "image/png")
         self.assertEqual(response.headers["content-disposition"], "attachment; filename=\"portrait.png\"; filename*=UTF-8''portrait.png")
-        get_generation.assert_called_once_with(generation_id, self.user.id)
-        download.assert_called_once_with(file_id="image-file", owner_id=str(self.user.id))
+        get_generation.assert_called_once_with(generation_id)
+        download.assert_called_once_with(file_id="image-file")
 
     def test_video_download_reads_owned_storage_as_attachment(self) -> None:
         generation_id = uuid4()
@@ -280,22 +277,22 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "storage_enabled", return_value=True),
             patch.object(vault, "storage_download_file", return_value=(b"video", "video/mp4")) as download,
         ):
-            response = vault.download_vault_video(generation_id, self.user)
+            response = vault.download_vault_video(generation_id)
 
         self.assertEqual(response.body, b"video")
         self.assertEqual(response.media_type, "video/mp4")
         self.assertEqual(response.headers["content-disposition"], "attachment; filename=\"scene.mp4\"; filename*=UTF-8''scene.mp4")
-        get_generation.assert_called_once_with(generation_id, self.user.id)
-        download.assert_called_once_with(file_id="video-file", owner_id=str(self.user.id))
+        get_generation.assert_called_once_with(generation_id)
+        download.assert_called_once_with(file_id="video-file")
 
     def test_favorite_request_is_explicit(self) -> None:
         payload = vault.FavoriteRequest(is_favorite=True)
         generation_id = uuid4()
         with patch.object(vault, "update_image_favorite", return_value=True) as update:
-            result = vault.update_vault_image_favorite(generation_id, payload, self.user)
+            result = vault.update_vault_image_favorite(generation_id, payload)
 
         self.assertTrue(result.is_favorite)
-        update.assert_called_once_with(generation_id, self.user.id, True)
+        update.assert_called_once_with(generation_id, True)
 
     def test_bulk_delete_finishes_storage_before_database_delete(self) -> None:
         generation_ids = [uuid4(), uuid4()]
@@ -321,10 +318,10 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "delete_image_generations", side_effect=delete_database) as delete_database_mock,
             patch.object(vault, "storage_delete_file", side_effect=delete_storage) as delete_storage_mock,
         ):
-            result = vault.delete_vault_images(vault.BulkDeleteRequest(generation_ids=generation_ids), self.user)
+            result = vault.delete_vault_images(vault.BulkDeleteRequest(generation_ids=generation_ids))
 
         self.assertEqual(result.deleted_count, 2)
-        delete_database_mock.assert_called_once_with(generation_ids, self.user.id)
+        delete_database_mock.assert_called_once_with(generation_ids)
         self.assertEqual(delete_storage_mock.call_count, 2)
 
     def test_filtered_three_d_delete_deletes_every_matching_row(self) -> None:
@@ -334,11 +331,11 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "list_filtered_three_d_generations", return_value=rows) as list_filtered,
             patch.object(vault, "delete_three_d_generations", return_value=2) as delete_rows,
         ):
-            result = vault.delete_filtered_vault_three_d("asset", False, 2, True, self.user)
+            result = vault.delete_filtered_vault_three_d("asset", False, 2, True)
 
         self.assertEqual(result.deleted_count, 2)
-        list_filtered.assert_called_once_with(self.user.id, search="asset", favorites_only=False)
-        delete_rows.assert_called_once_with(generation_ids, self.user.id)
+        list_filtered.assert_called_once_with( search="asset", favorites_only=False)
+        delete_rows.assert_called_once_with(generation_ids)
 
     def test_filtered_video_delete_deletes_every_matching_row(self) -> None:
         generation_ids = [uuid4(), uuid4()]
@@ -347,11 +344,11 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "list_filtered_video_generations", return_value=rows) as list_filtered,
             patch.object(vault, "delete_video_generations", return_value=2) as delete_rows,
         ):
-            result = vault.delete_filtered_vault_videos("portrait", True, 2, True, self.user)
+            result = vault.delete_filtered_vault_videos("portrait", True, 2, True)
 
         self.assertEqual(result.deleted_count, 2)
-        list_filtered.assert_called_once_with(self.user.id, search="portrait", favorites_only=True)
-        delete_rows.assert_called_once_with(generation_ids, self.user.id)
+        list_filtered.assert_called_once_with( search="portrait", favorites_only=True)
+        delete_rows.assert_called_once_with(generation_ids)
 
     def test_vault_delete_cancels_active_image_video_and_three_d(self) -> None:
         cases = (
@@ -361,7 +358,7 @@ class VaultRouteTest(unittest.TestCase):
                 "delete_image_generation",
                 "cancel_image_generation",
                 {"status": "queued", "prompt_id": "image-prompt"},
-                ("image-prompt", self.user),
+                ("image-prompt",),
             ),
             (
                 vault.delete_vault_video,
@@ -369,7 +366,7 @@ class VaultRouteTest(unittest.TestCase):
                 "delete_video_generation",
                 "cancel_video_generation",
                 {"status": "processing", "prompt_id": "video-prompt", "mode": "i2v"},
-                ("i2v", "video-prompt", self.user),
+                ("i2v", "video-prompt"),
             ),
             (
                 vault.delete_vault_three_d,
@@ -377,7 +374,7 @@ class VaultRouteTest(unittest.TestCase):
                 "delete_three_d_generation",
                 "cancel_three_d",
                 {"status": "queued", "prompt_id": "three-d-prompt"},
-                ("three-d-prompt", self.user),
+                ("three-d-prompt",),
             ),
         )
         for delete_route, get_name, delete_name, cancel_name, generation, cancel_args in cases:
@@ -387,7 +384,7 @@ class VaultRouteTest(unittest.TestCase):
                 patch.object(vault, delete_name, return_value=True) as delete_record,
                 patch.object(vault, cancel_name) as cancel,
             ):
-                response = delete_route(uuid4(), self.user)
+                response = delete_route(uuid4())
 
             self.assertEqual(response.status_code, 204)
             cancel.assert_called_once_with(*cancel_args)
@@ -401,11 +398,11 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "cancel_video_generation") as cancel,
             patch.object(vault, "delete_video_generations", return_value=1) as delete_rows,
         ):
-            result = vault.delete_filtered_vault_videos("", False, 1, True, self.user)
+            result = vault.delete_filtered_vault_videos("", False, 1, True)
 
         self.assertEqual(result.deleted_count, 1)
-        cancel.assert_called_once_with("r2v", "video-prompt", self.user)
-        delete_rows.assert_called_once_with([generation_id], self.user.id)
+        cancel.assert_called_once_with("r2v", "video-prompt")
+        delete_rows.assert_called_once_with([generation_id])
 
     def test_bulk_storage_failure_keeps_database_rows(self) -> None:
         generation_id = uuid4()
@@ -419,7 +416,7 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "delete_image_generations") as delete_rows,
             self.assertRaises(HTTPException) as raised,
         ):
-            vault.delete_vault_images(vault.BulkDeleteRequest(generation_ids=[generation_id]), self.user)
+            vault.delete_vault_images(vault.BulkDeleteRequest(generation_ids=[generation_id]))
 
         self.assertEqual(raised.exception.status_code, 503)
         delete_rows.assert_not_called()
@@ -431,7 +428,7 @@ class VaultRouteTest(unittest.TestCase):
             patch.object(vault, "delete_video_generations") as delete_rows,
             self.assertRaises(HTTPException) as raised,
         ):
-            vault.delete_filtered_vault_videos("", False, 2, True, self.user)
+            vault.delete_filtered_vault_videos("", False, 2, True)
 
         self.assertEqual(raised.exception.status_code, 409)
         delete_rows.assert_not_called()

@@ -88,7 +88,7 @@ class MossWorkflowTest(unittest.TestCase):
                 comfyui._build_prompt(self.request(), **kwargs)
             self.assertEqual(caught.exception.status_code, 422)
         with self.assertRaises(HTTPException) as caught:
-            asyncio.run(comfyui.create_image_to_image_generation(json.dumps({**self.request().model_dump(), "source": {"file_index": 0}}), [], None))
+            asyncio.run(comfyui.create_image_to_image_generation(json.dumps({**self.request().model_dump(), "source": {"file_index": 0}}), []))
         self.assertEqual(caught.exception.status_code, 422)
         json.dumps(caught.exception.detail)
         with self.assertRaises(ValidationError):

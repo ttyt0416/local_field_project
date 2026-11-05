@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { ArrowDownWideNarrow, ChevronRight, Download, FileBox, Folder, FolderInput, FolderPlus, HardDrive, Info, LayoutGrid, List, Pencil, RefreshCw, Trash2, X } from '@lucide/svelte';
 	import Layout from '../../../components/layouts/layout.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
@@ -12,7 +12,7 @@
 	import Modal from '../../../components/modals/modal.svelte';
 	import Toast from '../../../components/feedback/toast.svelte';
 	import ModelFolderPicker from '../../../components/models/model-folder-picker.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatFileSize } from '$lib/utils/generation';
 	import { parentModelFolder } from '$lib/utils/model-folders';
@@ -80,12 +80,7 @@
 	});
 
 	async function initialize() {
-		await authStore.initialize();
 		if (!active) return;
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await refresh();
 		if (active) ready = true;
 	}

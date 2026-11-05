@@ -12,7 +12,7 @@
 	import Toast from '../../../../../components/feedback/toast.svelte';
 	import Modal from '../../../../../components/modals/modal.svelte';
 	import Typography from '../../../../../components/typography/typography.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
@@ -62,11 +62,6 @@
 	});
 
 	async function loadDetail() {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		const generationId = page.params.id;
 		if (!generationId) {
 			error = '3D 생성 결과 식별자가 없습니다.';

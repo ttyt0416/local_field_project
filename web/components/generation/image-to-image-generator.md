@@ -23,3 +23,7 @@ Anima·Illustrious I2I는 T2I와 같은 enhanceImagePrompt 유틸과 vLLM 개선
 수정 지시/긍정·부정 프롬프트 아래 PromptLibrary로 이미지용 문장을 저장하거나 현재 입력 뒤에 추가한다. Reference edit의 부정 입력은 기존과 같이 숨긴다.
 
 생성 중이 아닐 때 왼쪽 결과 패널 상단에도 실행 버튼을 표시한다. 하단과 같은 generationButton snippet을 사용하며 form 속성으로 설정 폼을 제출하므로 입력 제약·비활성화·로딩 상태가 동일하다.
+
+## 공용 사용
+
+Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.

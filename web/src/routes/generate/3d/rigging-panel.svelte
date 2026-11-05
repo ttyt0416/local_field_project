@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { Bone, Download, HardDrive, X } from '@lucide/svelte';
 	import ModelViewer from '../../../../components/media/model-viewer.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -10,7 +10,7 @@
 	import RiggingSourceModal, { type RiggingSourceSelection, type StoredRiggingSource } from './rigging-source-modal.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiForm, apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
@@ -58,9 +58,7 @@
 		jobKey = '';
 		announced = '';
 		try {
-			await authStore.initialize();
 			if (!mounted) return;
-			if (!authStore.isAuthenticated) { await goto('/login'); return; }
 			await generationJobStore.initialize();
 			if (!mounted) return;
 			const options = await apiJson<{ ready: boolean; detail: string }>('generation/3d/rigging/options');

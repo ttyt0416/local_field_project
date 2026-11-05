@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import PromptLibrary from '../prompts/prompt-library.svelte';
-	import { goto } from '$app/navigation';
+
 	import { ArrowLeftRight, Check, FolderOpen, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../media/image.svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
@@ -18,7 +18,7 @@
 	import { SERVER_URL } from '$lib/configs/constants';
 	import { apiJson } from '$lib/utils/api';
 	import { enhanceImagePrompt } from '$lib/utils/prompt-enhancement';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
@@ -510,11 +510,6 @@
 
 	async function initialize() {
 		resetResult();
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await generationJobStore.initialize();
 		if (!active) return;
 		const regenerationParameters = imageGenerationStore.consume();

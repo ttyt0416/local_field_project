@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import asyncio
 from datetime import datetime, timezone
 from io import BytesIO
@@ -9,13 +10,12 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 
 from app import rigging, three_d, vault
-from app.auth import UserResponse
 
 
 class RiggingTest(unittest.TestCase):
     def setUp(self):
-        self.user = UserResponse(id=uuid4(), username='rigging-test')
-        self.row = dict(id=uuid4(), user_id=self.user.id, prompt_id=uuid4().hex, client_id='client',
+
+        self.row = dict(id=uuid4(), prompt_id=uuid4().hex, client_id='client',
                         generation_mode='rigging', status='processing', stage='rigging',
                         created_at=datetime.now(timezone.utc), elapsed_seconds=0)
 
@@ -25,9 +25,9 @@ class RiggingTest(unittest.TestCase):
               patch.object(rigging, 'get_three_d_generation_by_id', return_value=None) as owned,
               patch.object(rigging, 'download_file') as download):
             with self.assertRaises(HTTPException) as raised:
-                asyncio.run(rigging.create_rigging(json.dumps({'source_generation_id': str(uuid4())}), None, self.user))
+                asyncio.run(rigging.create_rigging(json.dumps({'source_generation_id': str(uuid4())}), None))
         self.assertEqual(raised.exception.status_code, 404)
-        self.assertEqual(owned.call_args.args[1], self.user.id)
+        self.assertEqual(len(owned.call_args.args), 1)
         download.assert_not_called()
 
     def test_rejects_forged_glb_before_storage_or_worker_submission(self):
@@ -37,7 +37,7 @@ class RiggingTest(unittest.TestCase):
               patch.object(rigging, 'upload_file') as upload,
               patch.object(rigging, 'request_worker') as submit):
             with self.assertRaises(HTTPException) as raised:
-                asyncio.run(rigging.create_rigging('{}', file, self.user))
+                asyncio.run(rigging.create_rigging('{}', file))
         self.assertEqual(raised.exception.status_code, 422)
         upload.assert_not_called()
         submit.assert_not_called()
@@ -46,7 +46,7 @@ class RiggingTest(unittest.TestCase):
         completed = {**self.row, 'status': 'completed', 'stage': 'completed', 'storage_file_id': 'result', 'filename': 'rigged.glb'}
         with (patch.object(three_d, '_queue_position') as queue,
               patch.object(rigging, 'request_worker') as worker):
-            result = three_d._history_status(completed, self.user.id)
+            result = three_d._history_status(completed)
         self.assertEqual(result.generation_mode, 'rigging')
         self.assertEqual(result.model.url, f"vault/3d/{completed['id']}/model")
         queue.assert_not_called()
@@ -57,7 +57,7 @@ class RiggingTest(unittest.TestCase):
         with (patch.object(rigging, 'get_three_d_generation', return_value=completed),
               patch.object(rigging, 'request_worker') as worker,
               patch.object(rigging, 'upload_file') as upload):
-            result = rigging.history_status(self.row, self.user.id)
+            result = rigging.history_status(self.row)
         self.assertEqual(result.status, 'completed')
         worker.assert_not_called()
         upload.assert_not_called()
@@ -67,7 +67,7 @@ class RiggingTest(unittest.TestCase):
               patch.object(rigging, 'request_worker', side_effect=rigging._ComfyUIError('offline')),
               patch.object(rigging, 'update_three_d_generation_status') as update):
             with self.assertRaises(HTTPException) as raised:
-                rigging.cancel_rigging(self.row, self.user.id)
+                rigging.cancel_rigging(self.row)
         self.assertEqual(raised.exception.status_code, 503)
         update.assert_not_called()
 
@@ -77,7 +77,7 @@ class RiggingTest(unittest.TestCase):
               patch.object(rigging, 'get_three_d_generation', side_effect=[self.row, failed]),
               patch.object(rigging, 'update_three_d_generation_status') as update,
               patch.object(rigging, 'record_remote_error')):
-            result = rigging.history_status(self.row, self.user.id)
+            result = rigging.history_status(self.row)
         self.assertEqual(result.message, 'invalid mesh')
         self.assertEqual(update.call_args.kwargs['error_message'], 'invalid mesh')
 
@@ -88,7 +88,7 @@ class RiggingTest(unittest.TestCase):
               patch.object(vault, 'has_generation_storage_reference_outside', return_value=True),
               patch.object(vault, 'storage_delete_file') as delete_file,
               patch.object(vault, 'delete_three_d_generation', return_value=True)):
-            response = vault.delete_vault_three_d(row['id'], self.user)
+            response = vault.delete_vault_three_d(row['id'])
         self.assertEqual(response.status_code, 204)
         delete_file.assert_not_called()
 
@@ -100,7 +100,7 @@ class RiggingTest(unittest.TestCase):
               patch.object(vault, 'storage_enabled', return_value=True),
               patch.object(vault, 'storage_delete_file') as delete_file,
               patch.object(vault, 'delete_three_d_generation', return_value=True)):
-            vault.delete_vault_three_d(row['id'], self.user)
+            vault.delete_vault_three_d(row['id'])
         self.assertEqual({call.kwargs['file_id'] for call in delete_file.call_args_list}, {'result', 'uploaded-source'})
 
 

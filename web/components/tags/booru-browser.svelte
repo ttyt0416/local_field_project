@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { Copy, ChevronLeft, ChevronRight, Plus } from '@lucide/svelte';
 	import LoadingSpinner from '../loadings/loading-spinner.svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
@@ -8,7 +8,7 @@
 	import SearchBar from '../inputs/searchbar.svelte';
 	import Toast from '../feedback/toast.svelte';
 	import Typography from '../typography/typography.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { apiJson } from '$lib/utils/api';
 
 	type DanbooruTag = {
@@ -71,12 +71,7 @@
 
 	async function loadTags(requestedPage = currentPage) {
 		const request = ++requestId;
-		await authStore.initialize();
 		if (!active || request !== requestId) return;
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		loading = true;
 		error = '';
 		try {

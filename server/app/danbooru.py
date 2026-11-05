@@ -12,11 +12,10 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from .latency import timed_urlopen
-from .auth import UserResponse, current_user
 from .configs.constants import settings
 from .database import get_connection
 
@@ -43,11 +42,10 @@ class DanbooruTagPage(BaseModel):
 
 @router.get("", response_model=DanbooruTagPage)
 def browse_danbooru_tags(
-    search: str = Query(default="", max_length=120),
+    search: str = Query(default='', max_length=120),
     category: int | None = Query(default=None, ge=0, le=5),
-    sort: TagSort = Query(default="match"),
+    sort: TagSort = Query(default='match'),
     page: int = Query(default=1, ge=1),
-    _: UserResponse = Depends(current_user),
 ) -> DanbooruTagPage:
     try:
         items, total_count = list_danbooru_tags(search=search, category=category, sort=sort, page=page)

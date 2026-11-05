@@ -11,18 +11,15 @@ local_field_project/
 │   │   │   ├── configs/
 │   │   │   │   └── constants.ts  # 웹 상수 및 공개 환경변수 설정
 │   │   │   ├── utils/
-│   │   │   │   ├── api.ts          # ky API client·인증 SSE stream·오류 변환
+│   │   │   │   ├── api.ts          # ky API client·SSE stream·오류 변환
 │   │   │   │   └── jwt.ts          # JWT payload·만료·사용 가능 상태 확인
 │   │   │   └── stores/
-│   │   │       └── auth.svelte.ts # JWT 인증 상태 및 자동로그인 상태관리
 │   │   └── routes/
-│   │       ├── login/
-│   │       │   └── +page.svelte    # 로그인·회원가입 화면
 │   │       ├── generate/
 │   │       │   └── image/
 │   │       │       └── +page.svelte # ComfyUI Anima 이미지 생성 화면
 │   │       └── vault/
-│   │           └── +page.svelte    # 인증 사용자 개인 보관함
+│   │           └── +page.svelte    # 공용 보관함
 │   ├── components/
 │   │   ├── buttons/
 │   │   │   ├── primary-button.svelte
@@ -57,7 +54,6 @@ local_field_project/
 │
 ├── server/
 │   ├── app/
-│   │   ├── auth.py               # JWT 회원가입·로그인·현재 사용자 API
 │   │   ├── comfyui.py            # ComfyUI Anima 옵션·생성·결과 프록시 API
 │   │   ├── database.py           # PostgreSQL users·auth_history·API 로그 스키마 및 기록
 │   │   ├── main.py               # FastAPI 앱과 API 감사 미들웨어
@@ -101,18 +97,12 @@ local_field_project/
 - `web/components/layouts/body.svelte`: 반응형 max-width 콘텐츠 영역
 - `web/components/layouts/layout.svelte`: Sidebar, Navbar, Body를 조합하는 전체 레이아웃
 
-## 인증
+## 공용 사용
 
-- `server/app/auth.py`: `/auth/signup`, `/auth/login`, `/auth/me` JWT API
-- `server/app/database.py`: 사용자·인증 이력·API 감사·오류 로그 DB 처리
-- `server/app/comfyui.py`: ComfyUI Anima 옵션·생성 요청·WebSocket 진행 이벤트의 인증 SSE 변환·결과 프록시
-- `web/src/routes/generate/image/+page.svelte`: 프롬프트, 체크포인트, LoRA, CFG, steps와 queued·progress·completed SSE 상태를 표시하는 이미지 생성 화면
-- `web/components/feedback/toast.svelte`: 비동기 생성 오류·완료 상태 알림
-- `web/src/lib/utils/api.ts`: ky 기반 API·인증 SSE stream 호출, JWT header 주입, HTTP 오류 변환
-- `web/src/lib/utils/jwt.ts`: JWT payload decode와 만료·사용 가능 상태 확인
-- `web/src/lib/stores/auth.svelte.ts`: Svelte 5 rune 기반 JWT 상태관리와 `localStorage` 자동로그인 복원
-- 로그인·회원가입 성공 후 `/vault`로 이동합니다.
-- `/vault`는 `/auth/me`로 JWT를 검증한 인증 사용자만 접근합니다.
+- 로그인·회원가입·JWT 검증 없이 모든 기능을 사용한다.
+- 콘텐츠·프리셋·저장 프롬프트·다운로드와 서비스 토큰은 공용이다.
+- server/app/accountless.py는 기존 계정정보를 삭제하고 콘텐츠와 외부 파일 참조를 유지한다.
+- 첫 화면은 /vault로 이동한다.
 
 ## configs/constants
 

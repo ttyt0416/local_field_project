@@ -22,12 +22,11 @@ from urllib.request import HTTPRedirectHandler, Request as UrlRequest
 from urllib.request import build_opener
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from .latency import api_user, timed_urlopen
+from .latency import timed_urlopen
 from .audit import exception_message, record_exception
-from .auth import UserResponse, current_user
 from .configs.constants import settings
 from . import hugging_face as hf
 from .download_tokens import CredentialError, get_effective_token
@@ -69,9 +68,9 @@ _MODEL_FILES_LOCK = RLock()
 _CIVITAI_REQUEST_TOKEN: ContextVar[str] = ContextVar("civitai_request_token", default="")
 
 
-def _user_token(user_id: uuid.UUID | None, provider: Literal["civitai", "hugging_face"]) -> str:
+def _download_token(provider: Literal['civitai', 'hugging_face']) -> str:
     try:
-        return get_effective_token(user_id, provider)
+        return get_effective_token(provider)
     except CredentialError as exc:
         raise CivitaiError(str(exc), 503) from None
 
@@ -239,7 +238,7 @@ class MoveInstalledModelRequest(BaseModel):
 
 
 @router.get("/installed", response_model=list[InstalledModelResponse])
-def installed_models(_: UserResponse = Depends(current_user)) -> list[InstalledModelResponse]:
+def installed_models() -> list[InstalledModelResponse]:
     root = Path(settings.comfyui_models_path)
     result: list[InstalledModelResponse] = []
     for model_type, target in _MODEL_TARGETS.items():
@@ -270,7 +269,6 @@ def installed_models(_: UserResponse = Depends(current_user)) -> list[InstalledM
 def delete_installed_model(
     model_type: ModelType,
     filename: str,
-    _: UserResponse = Depends(current_user),
 ) -> None:
     with _MODEL_FILES_LOCK:
         target = _installed_model_path(model_type, filename)
@@ -288,7 +286,6 @@ def delete_installed_model(
 def move_installed_model(
     model_type: ModelType,
     payload: MoveInstalledModelRequest,
-    _: UserResponse = Depends(current_user),
 ) -> InstalledModelResponse:
     with _MODEL_FILES_LOCK:
         source = _installed_model_path(model_type, payload.filename)
@@ -352,8 +349,7 @@ def _installed_model_path(model_type: ModelType, filename: str) -> Path:
 
 @router.get("/folders", response_model=list[ModelFolderResponse])
 def list_model_folders(
-    model_type: ModelType = Query(...),
-    _: UserResponse = Depends(current_user),
+    model_type: ModelType=Query(...),
 ) -> list[ModelFolderResponse]:
     base = _model_target_directory(model_type, "")
     folders = [""]
@@ -375,7 +371,6 @@ def list_model_folders(
 @router.post("/folders", response_model=ModelFolderResponse, status_code=status.HTTP_201_CREATED)
 def create_model_folder(
     payload: ModelFolderRequest,
-    _: UserResponse = Depends(current_user),
 ) -> ModelFolderResponse:
     with _MODEL_FILES_LOCK:
         try:
@@ -469,7 +464,6 @@ def _ensure_folder_idle(target: Path) -> None:
 def model_folder_info(
     model_type: ModelType,
     subfolder: str = Query(min_length=1, max_length=255),
-    _: UserResponse = Depends(current_user),
 ) -> ModelFolderInfo:
     with _MODEL_FILES_LOCK:
         relative, target = _existing_model_folder(model_type, subfolder)
@@ -480,7 +474,6 @@ def model_folder_info(
 def rename_model_folder(
     model_type: ModelType,
     payload: RenameModelFolderRequest,
-    _: UserResponse = Depends(current_user),
 ) -> ModelFolderResponse:
     with _MODEL_FILES_LOCK:
         subfolder, target = _existing_model_folder(model_type, payload.subfolder)
@@ -509,8 +502,7 @@ def rename_model_folder(
 def delete_model_folder(
     model_type: ModelType,
     subfolder: str,
-    revision: str = Query(min_length=64, max_length=64, pattern="^[0-9a-f]{64}$"),
-    _: UserResponse = Depends(current_user),
+    revision: str = Query(min_length=64, max_length=64, pattern='^[0-9a-f]{64}$'),
 ) -> None:
     with _MODEL_FILES_LOCK:
         relative, target = _existing_model_folder(model_type, subfolder)
@@ -528,17 +520,16 @@ def delete_model_folder(
 
 @router.get("/downloads", response_model=list[ModelDownloadResponse])
 def model_downloads(
-    user: UserResponse = Depends(current_user),
     limit: int = Query(default=20, ge=1, le=100),
     active_only: bool = False,
 ) -> list[ModelDownloadResponse]:
-    return [_download_response(row) for row in list_model_downloads(user.id, limit, active_only=active_only)]
+    return [_download_response(row) for row in list_model_downloads(limit, active_only=active_only)]
 
 
 @router.post("/downloads/{download_id}/retry", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
-def retry_download(download_id: uuid.UUID, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
+def retry_download(download_id: uuid.UUID) -> ModelDownloadResponse:
     with _MODEL_FILES_LOCK:
-        previous = get_model_download(download_id, user.id)
+        previous = get_model_download(download_id)
         if previous is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
         try:
@@ -547,15 +538,15 @@ def retry_download(download_id: uuid.UUID, user: UserResponse = Depends(current_
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not target.parent.is_dir():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="저장 폴더가 변경되었거나 삭제되었습니다. 모델을 다시 조회해 저장 위치를 선택해 주세요.")
-        row = retry_model_download(download_id, user.id)
+        row = retry_model_download(download_id)
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="다시 시도할 수 있는 다운로드를 찾을 수 없습니다.")
         return _download_response(row)
 
 
 @router.post("/downloads/{download_id}/cancel", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
-def cancel_download(download_id: uuid.UUID, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
-    row = cancel_model_download(download_id, user.id)
+def cancel_download(download_id: uuid.UUID) -> ModelDownloadResponse:
+    row = cancel_model_download(download_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="중단할 수 있는 다운로드를 찾을 수 없습니다.")
     try:
@@ -568,12 +559,11 @@ def cancel_download(download_id: uuid.UUID, user: UserResponse = Depends(current
 @router.get("/civitai/lookup", response_model=CivitaiLookupResponse)
 def lookup_civitai_model(
     source: str = Query(min_length=1, max_length=2048),
-    model_type: ModelType = "checkpoint",
+    model_type: ModelType = 'checkpoint',
     file_index: int | None = Query(default=None, ge=0),
-    user: UserResponse = Depends(current_user),
 ) -> CivitaiLookupResponse:
     try:
-        with _civitai_token_scope(_user_token(user.id, "civitai")):
+        with _civitai_token_scope(_download_token("civitai")):
             version, target_model_type, selected_index, versions = _resolve_civitai_source(source, model_type, file_index)
     except CivitaiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -583,13 +573,12 @@ def lookup_civitai_model(
 @router.post("/civitai/download", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
 def download_civitai_model(
     payload: ModelDownloadRequest,
-    user: UserResponse = Depends(current_user),
 ) -> ModelDownloadResponse:
     root = Path(settings.comfyui_models_path)
     if not root.is_dir():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ComfyUI 모델 폴더를 찾을 수 없습니다.")
     try:
-        token = _user_token(user.id, "civitai")
+        token = _download_token("civitai")
         if not token:
             raise CivitaiError("다운로드 관리에서 Civitai API 토큰을 저장해 주세요.", 503)
         with _civitai_token_scope(token):
@@ -612,7 +601,6 @@ def download_civitai_model(
         if target_path.exists() or target_path.is_symlink():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
         row = create_model_download(
-            user_id=user.id,
             version_id=version.version_id,
             model_type=target_model_type,
             file_index=selected_index,
@@ -627,12 +615,11 @@ def download_civitai_model(
 @router.get("/hugging-face/lookup", response_model=HuggingFaceLookupResponse)
 def lookup_hugging_face_model(
     source: str = Query(min_length=1, max_length=2048),
-    revision: str = Query(default="", max_length=200),
-    user: UserResponse = Depends(current_user),
+    revision: str = Query(default='', max_length=200),
 ) -> HuggingFaceLookupResponse:
     try:
         parsed = hf.parse_source(source, revision)
-        repository = hf.fetch_repository(parsed.repo_id, parsed.revision, _user_token(user.id, "hugging_face"), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        repository = hf.fetch_repository(parsed.repo_id, parsed.revision, _download_token("hugging_face"), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
         files = [file for file in repository.files if not parsed.path or (file.path == parsed.path if parsed.is_file else file.path.startswith(f"{parsed.path}/"))]
         if not files:
             raise hf.HuggingFaceError("이 위치에서 다운로드할 수 있는 모델 파일을 찾지 못했습니다.", 404)
@@ -648,10 +635,10 @@ def lookup_hugging_face_model(
 
 
 @router.post("/hugging-face/download", response_model=ModelDownloadResponse, status_code=status.HTTP_202_ACCEPTED)
-def download_hugging_face_model(payload: HuggingFaceDownloadRequest, user: UserResponse = Depends(current_user)) -> ModelDownloadResponse:
+def download_hugging_face_model(payload: HuggingFaceDownloadRequest) -> ModelDownloadResponse:
     try:
         hf.safe_repo_path(payload.filename)
-        repository = hf.fetch_repository(payload.repo_id, payload.revision, _user_token(user.id, "hugging_face"), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
+        repository = hf.fetch_repository(payload.repo_id, payload.revision, _download_token("hugging_face"), _NO_REDIRECT_OPENER, _MODEL_EXTENSIONS)
         if not any(file.path == payload.filename for file in repository.files):
             raise hf.HuggingFaceError("선택한 리비전에 모델 파일이 없습니다. 다시 조회해 주세요.", 404)
         filename = _safe_filename(Path(payload.filename).name)
@@ -669,7 +656,7 @@ def download_hugging_face_model(payload: HuggingFaceDownloadRequest, user: UserR
         if target.exists() or target.is_symlink():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="같은 이름의 모델 파일이 이미 있습니다.")
         row = create_model_download(
-            user_id=user.id, version_id=0, model_type=payload.model_type, file_index=0,
+            version_id=0, model_type=payload.model_type, file_index=0,
             filename=filename, target_path=str(target), provider="hugging_face",
             source_repo=repository.repo_id, source_revision=repository.revision, source_filename=payload.filename,
         )
@@ -1108,7 +1095,7 @@ def _open_download(url: str, token: str, resume_from: int):
 
 def _process_model_download(job: dict[str, Any]) -> None:
     if job.get("provider", "civitai") == "hugging_face":
-        token = _user_token(job.get("user_id"), "hugging_face")
+        token = _download_token("hugging_face")
         repo = hf.safe_repo_id(job["source_repo"])
         commit = hf.safe_revision(job["source_revision"], pinned=True)
         path = hf.safe_repo_path(job["source_filename"])
@@ -1121,7 +1108,7 @@ def _process_model_download(job: dict[str, Any]) -> None:
         return
     if job.get("provider", "civitai") != "civitai":
         raise CivitaiError("지원하지 않는 다운로드 출처입니다.")
-    token = _user_token(job.get("user_id"), "civitai")
+    token = _download_token("civitai")
     if not token:
         raise CivitaiError("Civitai 토큰이 설정되지 않았습니다.")
     with _civitai_token_scope(token):
@@ -1234,16 +1221,14 @@ async def _run_model_download_worker(stop_event: asyncio.Event) -> None:
         job = await asyncio.to_thread(claim_model_download)
         if job is not None:
             try:
-                with api_user(job["user_id"]):
-                    await asyncio.to_thread(_process_model_download, job)
+                await asyncio.to_thread(_process_model_download, job)
             except _ModelDownloadCancelled:
                 continue
             except (CivitaiError, hf.HuggingFaceError, OSError, URLError, TimeoutError, ValueError) as exc:
-                record_exception(exc, operation="models.download", user_id=job["user_id"],
-                                 context={"download_id": str(job["id"]), "filename": job.get("filename"), "provider": job.get("provider")})
+                record_exception(exc, operation="models.download", context={"download_id": str(job["id"]), "filename": job.get("filename"), "provider": job.get("provider")})
                 await asyncio.to_thread(fail_model_download, job["id"], exception_message(exc))
             except Exception as exc:
-                record_exception(exc, operation="models.download", user_id=job["user_id"], context={"download_id": str(job["id"])})
+                record_exception(exc, operation="models.download", context={"download_id": str(job["id"])})
                 raise
             continue
         try:

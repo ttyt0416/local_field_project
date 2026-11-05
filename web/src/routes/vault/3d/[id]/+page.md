@@ -7,3 +7,7 @@
 상세 화면은 기존 이미지·동영상 상세와 같은 패턴으로 모델 다운로드, `PATCH /vault/3d/{id}/favorite` 즐겨찾기, 확인 모달 뒤 `DELETE /vault/3d/{id}` 삭제를 제공한다. 삭제가 완료되면 browser history에 삭제된 detail route를 남기지 않도록 route replace로 `/vault?tab=3d`에 이동한다. 모든 서버 통신 실패는 negative toast로 표시하고 비동기 버튼은 처리 중 loading 및 disabled 상태를 유지한다. queued/processing 3D detail은 shared generation SSE store의 actual 3D stage, queue position, elapsed time을 결과 media area와 생성 metadata에 표시한다.
 
 generation_mode=rigging이면 원본 GLB를 source_model_url로 미리보고 Temperature·Beam 수를 표시한다. MESH용 프리셋·Seed·배경 제거·여백은 리깅 상세에서 표시하지 않는다. 리깅 작업도 기존 전역 3D SSE·다운로드·즐겨찾기·삭제를 재사용한다.
+
+## 공용 사용
+
+Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.

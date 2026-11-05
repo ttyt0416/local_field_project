@@ -12,7 +12,7 @@ DEFAULT_WEB_LOG_DB_PORT = 5432
 DEFAULT_WEB_LOG_POSTGRES_DB = "local_field_web_logs"
 DEFAULT_WEB_LOG_POSTGRES_USER = "local_field_web_logs"
 DEFAULT_WEB_LOG_POSTGRES_PASSWORD = ""
-DEFAULT_AUTH_SECRET = ""
+DEFAULT_TOKEN_ENCRYPTION_SECRET = ""
 DEFAULT_COMFYUI_URL = "http://host.docker.internal:8188"
 DEFAULT_STORAGE_URL = ""
 DEFAULT_STORAGE_API_TOKEN = ""
@@ -46,7 +46,7 @@ class Settings:
     web_log_postgres_db: str
     web_log_postgres_user: str
     web_log_postgres_password: str
-    auth_secret: str
+    token_encryption_secret: str
     comfyui_url: str
     storage_url: str
     storage_api_token: str
@@ -77,7 +77,7 @@ class Settings:
             web_log_postgres_password=os.getenv(
                 "WEB_LOG_POSTGRES_PASSWORD", DEFAULT_WEB_LOG_POSTGRES_PASSWORD
             ),
-            auth_secret=os.getenv("AUTH_SECRET", DEFAULT_AUTH_SECRET),
+            token_encryption_secret=os.getenv("TOKEN_ENCRYPTION_SECRET", DEFAULT_TOKEN_ENCRYPTION_SECRET),
             comfyui_url=os.getenv("COMFYUI_URL", DEFAULT_COMFYUI_URL),
             storage_url=os.getenv("STORAGE_URL", DEFAULT_STORAGE_URL),
             storage_api_token=os.getenv("STORAGE_API_TOKEN", DEFAULT_STORAGE_API_TOKEN),

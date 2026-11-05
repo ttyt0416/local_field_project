@@ -6,11 +6,9 @@ import unittest
 from http.client import RemoteDisconnected
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import urlsplit
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
-from starlette.requests import Request
 
 from app import animadex, animadex_assets as assets
 
@@ -29,9 +27,6 @@ class ThumbnailImportTest(unittest.TestCase):
         audit = patch.object(assets, 'record_exception')
         self.audit = audit.start()
         self.addCleanup(audit.stop)
-        config = patch.object(assets, 'settings', SimpleNamespace(auth_secret='synthetic-thumbnail-signing-secret'))
-        config.start()
-        self.addCleanup(config.stop)
         self.entries = animadex._build_entries([{'character': 'char', 'trigger': 'char: a/b (series)', 'copyright': 'series/a'}], [{'artist': 'artist', 'trigger': 'artist'}])
         self.manifest = {'version': 100, 'r2_base': 'https://blobs.animadex.net', 'prefixes': {'char_thumb': 'Outputs/thumbs', 'artist_thumb': 'ArtistOutputs/thumbs', 'copyright_thumb': 'Outputs/copyrights'}}
         self.index = {'version': 100, 'chars': {'char': 1}, 'artists': {'artist': 0}, 'copyrights': {'series_a.webp': 5}}
@@ -113,12 +108,12 @@ class ThumbnailImportTest(unittest.TestCase):
         url = assets.thumbnail_url('characters', 'char')
         self.assertTrue(url.startswith('tags/catalogue/characters/thumbnail/'))
         key = assets.asset_key('characters', 'char')
-        response = animadex.local_thumbnail('characters', key, None)
+        response = animadex.local_thumbnail('characters', key)
         self.assertEqual(response.media_type, 'image/webp')
         self.assertIn('private', response.headers['cache-control'])
         for key in ['../thumbnails.json', 'a' * 63, 'a' * 64]:
             with self.subTest(key=key), self.assertRaises(HTTPException) as raised:
-                animadex.local_thumbnail('characters', key, None)
+                animadex.local_thumbnail('characters', key)
             self.assertEqual(raised.exception.status_code, 404)
 
     def test_full_rate_limit_falls_back_to_delta_and_token_never_goes_to_cdn(self):
@@ -140,34 +135,12 @@ class ThumbnailImportTest(unittest.TestCase):
                 with assets.catalogue_lock():
                     self.fail('Second importer acquired the lock')
 
-    def test_signed_image_url_expires_and_cannot_read_another_file_or_kind(self):
-        assets.sync_thumbnails(self.entries, self.manifest, self.index, MagicMock(return_value=WEBP))
-        with patch.object(assets.time, 'time', return_value=1000):
-            url = assets.thumbnail_url('characters', 'char')
-            parsed = urlsplit(url)
-            key = assets.asset_key('characters', 'char')
-            request = Request({'type': 'http', 'path_params': {'kind': 'characters', 'key': key}, 'query_string': parsed.query.encode()})
-            with patch.object(animadex, 'current_user', side_effect=AssertionError('Scoped URL must not require a bearer token')):
-                self.assertIsNone(animadex.thumbnail_access(request, None))
-            for kind, other_key in [('artists', key), ('characters', 'b' * 64)]:
-                request = Request({'type': 'http', 'path_params': {'kind': kind, 'key': other_key}, 'query_string': parsed.query.encode()})
-                with self.assertRaises(HTTPException) as raised:
-                    animadex.thumbnail_access(request, None)
-                self.assertEqual(raised.exception.status_code, 403)
-        with patch.object(assets.time, 'time', return_value=2000):
-            request = Request({'type': 'http', 'path_params': {'kind': 'characters', 'key': key}, 'query_string': parsed.query.encode()})
-            with self.assertRaises(HTTPException) as raised:
-                animadex.thumbnail_access(request, None)
-            self.assertEqual(raised.exception.status_code, 403)
-        request = Request({'type': 'http', 'path_params': {'kind': 'characters', 'key': key}, 'query_string': b''})
-        with self.assertRaises(HTTPException) as raised:
-            animadex.thumbnail_access(request, None)
-        self.assertEqual(raised.exception.status_code, 401)
+
 
 
 class ThumbnailConnectionTest(unittest.TestCase):
     def setUp(self):
-        for name, value in [('_THUMBNAIL_CONNECTION', SimpleNamespace()), ('record_api_call', MagicMock()), ('record_exception', MagicMock())]:
+        for name, value in [('_THUMBNAIL_CONNECTION', SimpleNamespace()), ('record_exception', MagicMock())]:
             patcher = patch.object(animadex, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)

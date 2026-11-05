@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import unittest
 from datetime import datetime, timezone
 from io import BytesIO
@@ -8,14 +9,13 @@ from fastapi import UploadFile
 from starlette.datastructures import Headers
 
 from app import uploads
-from app.auth import UserResponse
 from app.media_editing import VideoMetadata
 from app.storage import StorageError
 
 
 class UploadsRouteTest(unittest.TestCase):
     def test_source_reads_selected_generated_and_uploaded_media(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         for source_type, content_type in (
             ("image_generation", "image/png"),
             ("video_generation", "video/mp4"),
@@ -28,42 +28,42 @@ class UploadsRouteTest(unittest.TestCase):
                 patch.object(uploads, "get_reusable_media", return_value={"file_id": "selected-file", "content_type": content_type, "source_type": source_type}) as reusable,
                 patch.object(uploads, "storage_download_file", return_value=(b"source-bytes", content_type)) as download,
             ):
-                result = uploads.upload_source("selected-file", user)
+                result = uploads.upload_source("selected-file")
 
             self.assertEqual(result.status_code, 200)
             self.assertEqual(result.body, b"source-bytes")
             self.assertEqual(result.media_type, content_type)
-            reusable.assert_called_once_with("selected-file", user.id)
-            download.assert_called_once_with(file_id="selected-file", owner_id=str(user.id))
+            reusable.assert_called_once_with("selected-file")
+            download.assert_called_once_with(file_id="selected-file")
             uploaded_only.assert_not_called()
 
     def test_source_rejects_missing_or_other_users_media_before_storage(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "get_reusable_media", return_value=None) as reusable,
             patch.object(uploads, "storage_download_file") as download,
         ):
             with self.assertRaises(uploads.HTTPException) as raised:
-                uploads.upload_source("other-users-file", user)
+                uploads.upload_source("other-users-file")
 
         self.assertEqual(raised.exception.status_code, 404)
-        reusable.assert_called_once_with("other-users-file", user.id)
+        reusable.assert_called_once_with("other-users-file")
         download.assert_not_called()
 
     def test_source_reports_storage_failure_after_owned_generated_lookup(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "get_reusable_media", return_value={"file_id": "generated-file", "content_type": "image/png"}),
             patch.object(uploads, "storage_download_file", side_effect=StorageError("storage unavailable")),
         ):
             with self.assertRaises(uploads.HTTPException) as raised:
-                uploads.upload_source("generated-file", user)
+                uploads.upload_source("generated-file")
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(raised.exception.detail, "storage unavailable")
 
     def test_detail_returns_video_duration_and_size(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         asset = {
             "storage_file_id": "file-1",
             "filename": "clip.mp4",
@@ -80,7 +80,7 @@ class UploadsRouteTest(unittest.TestCase):
             patch.object(uploads, "storage_download_file", return_value=(b"video", "video/mp4")),
             patch.object(uploads, "probe_video", return_value=VideoMetadata(1920, 1080, 65.25, 30)),
         ):
-            result = uploads.upload_detail("file-1", user)
+            result = uploads.upload_detail("file-1")
 
         self.assertEqual(result.size, 1234)
         self.assertEqual(result.duration_seconds, 65.25)
@@ -88,7 +88,7 @@ class UploadsRouteTest(unittest.TestCase):
         self.assertEqual(result.height, 1080)
 
     def test_image_edit_creates_new_uploaded_asset(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         asset = {
             "storage_file_id": "file-1",
             "filename": "photo.jpg",
@@ -111,12 +111,11 @@ class UploadsRouteTest(unittest.TestCase):
             patch.object(uploads, "storage_upload_file", return_value="new-file") as upload,
             patch.object(uploads, "create_media_asset", return_value={"storage_file_id": "new-file"}) as create,
         ):
-            result = uploads.edit_uploaded_image("file-1", upload_file, 640, 480, user)
+            result = uploads.edit_uploaded_image("file-1", upload_file, 640, 480)
 
         self.assertEqual(result.generation_id, "new-file")
-        upload.assert_called_once_with(content=b"png-bytes", media_type="image/png", owner_id=str(user.id))
+        upload.assert_called_once_with(content=b"png-bytes", media_type="image/png")
         create.assert_called_once_with(
-            user_id=user.id,
             storage_file_id="new-file",
             filename="photo-edited.png",
             content_type="image/png",
@@ -126,12 +125,12 @@ class UploadsRouteTest(unittest.TestCase):
         )
 
     def test_list_passes_media_filter_and_page_to_database(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "storage_enabled", return_value=True),
             patch.object(uploads, "list_reusable_media", return_value=([], 21)) as list_assets,
         ):
-            result = uploads.reusable_media("", "latest", False, "image", 2, user)
+            result = uploads.reusable_media("", "latest", False, "image", 2)
 
         self.assertEqual(result.items, [])
         self.assertEqual(result.page, 2)
@@ -139,7 +138,7 @@ class UploadsRouteTest(unittest.TestCase):
         self.assertEqual(result.total_count, 21)
         self.assertEqual(result.total_pages, 3)
         list_assets.assert_called_once_with(
-            user.id,
+
             search="",
             sort="latest",
             include_generated=False,
@@ -147,15 +146,15 @@ class UploadsRouteTest(unittest.TestCase):
             page=2,
         )
     def test_list_passes_source_filter_to_database(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "storage_enabled", return_value=True),
             patch.object(uploads, "list_reusable_media", return_value=([], 0)) as list_assets,
         ):
-            uploads.reusable_media("", "latest", True, "video", 1, user, "generated")
+            uploads.reusable_media("", "latest", True, "video", 1, "generated")
 
         list_assets.assert_called_once_with(
-            user.id,
+
             search="",
             sort="latest",
             include_generated=True,
@@ -165,15 +164,15 @@ class UploadsRouteTest(unittest.TestCase):
         )
 
     def test_list_passes_exact_generated_image_category_to_database(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "storage_enabled", return_value=True),
             patch.object(uploads, "list_reusable_media", return_value=([], 0)) as list_assets,
         ):
-            uploads.reusable_media("", "latest", True, "image", 1, user, "generated", "i2i", "illustrious")
+            uploads.reusable_media("", "latest", True, "image", 1, "generated", "i2i", "illustrious")
 
         list_assets.assert_called_once_with(
-            user.id,
+
             search="",
             sort="latest",
             include_generated=True,
@@ -185,15 +184,15 @@ class UploadsRouteTest(unittest.TestCase):
         )
 
     def test_list_passes_krea2_generated_image_category_to_database(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "storage_enabled", return_value=True),
             patch.object(uploads, "list_reusable_media", return_value=([], 0)) as list_assets,
         ):
-            uploads.reusable_media("", "latest", True, "image", 1, user, "generated", "t2i", "krea2")
+            uploads.reusable_media("", "latest", True, "image", 1, "generated", "t2i", "krea2")
 
         list_assets.assert_called_once_with(
-            user.id,
+
             search="",
             sort="latest",
             include_generated=True,
@@ -205,34 +204,34 @@ class UploadsRouteTest(unittest.TestCase):
         )
 
     def test_list_rejects_partial_generated_image_category(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with self.assertRaises(uploads.HTTPException) as raised:
-            uploads.reusable_media("", "latest", True, "image", 1, user, "generated", "i2i")
+            uploads.reusable_media("", "latest", True, "image", 1, "generated", "i2i")
 
         self.assertEqual(raised.exception.status_code, 422)
 
     def test_delete_removes_owned_storage_file_and_database_asset(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+
         with (
             patch.object(uploads, "get_media_asset", return_value={"file_id": "file-1"}),
             patch.object(uploads, "storage_enabled", return_value=True),
             patch.object(uploads, "storage_delete_file") as delete_storage,
             patch.object(uploads, "delete_media_asset", return_value=True) as delete_database,
         ):
-            response = uploads.delete_upload("file-1", user)
+            response = uploads.delete_upload("file-1")
 
         self.assertEqual(response.status_code, 204)
-        delete_storage.assert_called_once_with(file_id="file-1", owner_id=str(user.id))
-        delete_database.assert_called_once_with("file-1", user.id)
+        delete_storage.assert_called_once_with(file_id="file-1")
+        delete_database.assert_called_once_with("file-1")
 
-    def test_delete_rejects_missing_owned_asset_before_storage_call(self) -> None:
-        user = UserResponse(id=uuid4(), username="tester")
+    def test_delete_rejects_missing_require_asset_before_storage_call(self) -> None:
+
         with (
             patch.object(uploads, "get_media_asset", return_value=None),
             patch.object(uploads, "storage_delete_file") as delete_storage,
         ):
             with self.assertRaises(uploads.HTTPException) as raised:
-                uploads.delete_upload("other-file", user)
+                uploads.delete_upload("other-file")
 
         self.assertEqual(raised.exception.status_code, 404)
         delete_storage.assert_not_called()

@@ -4,10 +4,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .auth import UserResponse, current_user
 from .database import create_preset, delete_preset, list_presets, update_preset
 from .moss import MossSettings
 
@@ -117,23 +116,20 @@ class PresetResponse(BaseModel):
 
 @router.get("", response_model=list[PresetResponse])
 def get_presets(
-    preset_type: PresetType = Query(alias="type"),
-    user: UserResponse = Depends(current_user),
+    preset_type: PresetType = Query(alias='type'),
 ) -> list[PresetResponse]:
-    return [_response(row) for row in list_presets(user_id=user.id, preset_type=preset_type)]
+    return [_response(row) for row in list_presets(preset_type=preset_type)]
 
 
 @router.post("", response_model=PresetResponse, status_code=status.HTTP_201_CREATED)
 def save_preset(
     payload: PresetCreateRequest,
-    user: UserResponse = Depends(current_user),
 ) -> PresetResponse:
     values = payload.values.model_dump(exclude_none=True)
     if not values:
         raise HTTPException(status_code=422, detail="저장할 설정을 하나 이상 선택해 주세요.")
     return _response(
         create_preset(
-            user_id=user.id,
             preset_type=payload.type,
             name=payload.name,
             values=values,
@@ -146,14 +142,12 @@ def save_preset(
 def edit_preset(
     preset_id: UUID,
     payload: PresetUpdateRequest,
-    user: UserResponse = Depends(current_user),
 ) -> PresetResponse:
     values = payload.values.model_dump(exclude_none=True)
     if not values:
         raise HTTPException(status_code=422, detail="저장할 설정을 하나 이상 선택해 주세요.")
     row = update_preset(
         preset_id=preset_id,
-        user_id=user.id,
         preset_type=payload.type,
         name=payload.name,
         values=values,
@@ -167,10 +161,9 @@ def edit_preset(
 @router.delete("/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_preset(
     preset_id: UUID,
-    preset_type: PresetType = Query(alias="type"),
-    user: UserResponse = Depends(current_user),
+    preset_type: PresetType = Query(alias='type'),
 ) -> Response:
-    if not delete_preset(preset_id=preset_id, user_id=user.id, preset_type=preset_type):
+    if not delete_preset(preset_id=preset_id, preset_type=preset_type):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="프리셋을 찾을 수 없습니다.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

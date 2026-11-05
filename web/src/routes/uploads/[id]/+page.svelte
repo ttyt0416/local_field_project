@@ -14,7 +14,7 @@
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Modal from '../../../../components/modals/modal.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds, formatFileSize, formatKstDateTime } from '$lib/utils/generation';
 	import { downloadMedia } from '$lib/utils/download';
@@ -48,11 +48,6 @@
 	});
 
 	async function loadDetail() {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		const fileId = page.params.id;
 		if (!fileId) {
 			error = '업로드 콘텐츠 식별자가 없습니다.';

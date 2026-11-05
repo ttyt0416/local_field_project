@@ -10,12 +10,11 @@ from typing import Any, Literal
 from urllib.parse import urlencode
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import StreamingResponse
 
 from .audit import audit_stream, record_exception, record_remote_error
-from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
     _queue_position,
@@ -125,7 +124,7 @@ class ThreeDOptions(BaseModel):
 
 
 @router.get("/options", response_model=ThreeDOptions)
-def three_d_options(_: UserResponse = Depends(current_user)) -> ThreeDOptions:
+def three_d_options() -> ThreeDOptions:
     try:
         missing_nodes, missing_models = _readiness()
     except _ComfyUIError as exc:
@@ -139,9 +138,8 @@ def three_d_options(_: UserResponse = Depends(current_user)) -> ThreeDOptions:
 
 @router.post("", response_model=ThreeDGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_three_d(
-    payload: str = Form(...),
-    files: list[UploadFile] = File(default_factory=list),
-    user: UserResponse = Depends(current_user),
+    payload: str=Form(...),
+    files: list[UploadFile]=File(default_factory=list),
 ) -> ThreeDGenerationAccepted:
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
@@ -155,7 +153,7 @@ async def create_three_d(
         if missing_nodes or missing_models:
             missing = ", ".join([*missing_nodes, *missing_models])
             raise _ComfyUIError(f"TripoSplat 실행 항목이 준비되지 않았습니다: {missing}")
-        resolved = await _resolve_source(request.source, files, user)
+        resolved = await _resolve_source(request.source, files)
         source_asset = VideoAsset(
             kind="image", file_id=request.source.file_id, file_index=request.source.file_index
         )
@@ -171,7 +169,6 @@ async def create_three_d(
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 3D 생성 작업 ID를 반환하지 않았습니다.")
     generation_id, created_at = create_three_d_generation(
-        user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
         preset=request.preset,
@@ -196,11 +193,10 @@ async def create_three_d(
 @router.get("/{prompt_id}", response_model=ThreeDGenerationStatus)
 def three_d_status(
     prompt_id: str,
-    user: UserResponse = Depends(current_user),
 ) -> ThreeDGenerationStatus:
-    generation = _require_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     try:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -208,31 +204,30 @@ def three_d_status(
 @router.post("/{prompt_id}/cancel", response_model=ThreeDGenerationStatus)
 def cancel_three_d(
     prompt_id: str,
-    user: UserResponse = Depends(current_user),
 ) -> ThreeDGenerationStatus:
-    generation = _require_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     if generation.get('generation_mode') == 'rigging':
         from .rigging import cancel_rigging
-        return cancel_rigging(generation, user.id)
+        return cancel_rigging(generation)
     if generation["status"] in {"completed", "failed", "cancelled"}:
-        return _status_from_row(generation, user.id)
+        return _status_from_row(generation)
     if generation["status"] not in {"queued", "processing"}:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     try:
         if not cancel_comfy_generation(prompt_id):
-            current = _history_status(generation, user.id)
+            current = _history_status(generation)
             if current.status in {"completed", "failed", "cancelled"}:
                 return current
             raise HTTPException(status_code=409, detail="이미 처리 중인 작업이라 취소할 수 없습니다.")
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     update_three_d_generation_status(
-        prompt_id=prompt_id, user_id=user.id, status="cancelled", stage="cancelled"
+        prompt_id=prompt_id, status="cancelled", stage="cancelled"
     )
-    cancelled = get_three_d_generation(prompt_id, user.id) or generation
-    result = _status_from_row(cancelled, user.id)
+    cancelled = get_three_d_generation(prompt_id) or generation
+    result = _status_from_row(cancelled)
     generation_event_broker.publish(
-        key=generation_key("3d", user.id, prompt_id),
+        key=generation_key("3d", prompt_id),
         event="cancelled",
         data=result.model_dump(mode="json"),
     )
@@ -243,29 +238,28 @@ def cancel_three_d(
 async def three_d_events(
     prompt_id: str,
     client_id: str = Query(min_length=1, max_length=128),
-    user: UserResponse = Depends(current_user),
 ) -> StreamingResponse:
-    generation = _require_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     if generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="3D 생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        audit_stream(_stream_events(prompt_id, user.id), operation="3d.events", user_id=user.id, context={"prompt_id": prompt_id}),
+        audit_stream(_stream_events(prompt_id), operation="3d.events", context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
-async def _stream_events(prompt_id: str, user_id: uuid.UUID):
-    key = generation_key("3d", user_id, prompt_id)
+async def _stream_events(prompt_id: str):
+    key = generation_key("3d", prompt_id)
     async with generation_event_broker.subscribe(key) as events:
-        generation = await asyncio.to_thread(get_three_d_generation, prompt_id, user_id)
+        generation = await asyncio.to_thread(get_three_d_generation, prompt_id)
         if generation is None:
             yield _sse("failed", {"prompt_id": prompt_id, "status": "failed", "message": "3D 생성 결과를 찾을 수 없습니다."})
             return
         try:
-            current = await asyncio.to_thread(_history_status, generation, user_id)
+            current = await asyncio.to_thread(_history_status, generation)
         except (StorageError, _ComfyUIError) as exc:
-            record_exception(exc, operation="3d.events", user_id=user_id, context={"prompt_id": prompt_id})
+            record_exception(exc, operation="3d.events", context={"prompt_id": prompt_id})
             yield _sse("error", {"prompt_id": prompt_id, "message": str(exc)})
             return
         event = current.status if current.status in {"completed", "failed", "cancelled"} else "status"
@@ -295,17 +289,16 @@ def _validate_source(source: ThreeDSource, files: list[UploadFile]) -> None:
         raise HTTPException(status_code=422, detail="Storage file_id 형식이 올바르지 않습니다.")
 
 
-async def _resolve_source(source: ThreeDSource, files: list[UploadFile], user: UserResponse) -> _ResolvedAsset:
+async def _resolve_source(source: ThreeDSource, files: list[UploadFile]) -> _ResolvedAsset:
     if source.file_id:
-        record = get_reusable_media(source.file_id, user.id)
+        record = get_reusable_media(source.file_id)
         if record is None or record["media_kind"] != "image":
             raise HTTPException(status_code=404, detail="선택한 이미지를 찾을 수 없습니다.")
-        content, stored_type = storage_download_file(file_id=source.file_id, owner_id=str(user.id))
+        content, stored_type = storage_download_file(file_id=source.file_id)
         media_type = record["content_type"] or stored_type
         if not media_type.startswith("image/"):
             raise HTTPException(status_code=415, detail="이미지 파일만 사용할 수 있습니다.")
         create_media_asset(
-            user_id=user.id,
             storage_file_id=source.file_id,
             filename=record["filename"],
             content_type=media_type,
@@ -328,9 +321,8 @@ async def _resolve_source(source: ThreeDSource, files: list[UploadFile], user: U
         raise HTTPException(status_code=422, detail="빈 이미지 파일은 사용할 수 없습니다.")
     filename = _safe_filename(upload.filename, "image", upload.content_type)
     media_type = upload.content_type or "image/png"
-    file_id = storage_upload_file(content=content, media_type=media_type, owner_id=str(user.id))
+    file_id = storage_upload_file(content=content, media_type=media_type)
     create_media_asset(
-        user_id=user.id,
         storage_file_id=file_id,
         filename=filename,
         content_type=media_type,
@@ -374,47 +366,47 @@ def _readiness() -> tuple[list[str], list[str]]:
     return missing_nodes, missing_models
 
 
-def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> ThreeDGenerationStatus:
+def _history_status(generation: dict[str, Any]) -> ThreeDGenerationStatus:
     if generation["status"] in {"completed", "failed", "cancelled"}:
-        return _status_from_row(generation, user_id)
+        return _status_from_row(generation)
     if generation.get('generation_mode') == 'rigging':
         from .rigging import history_status
-        return history_status(generation, user_id)
+        return history_status(generation)
     prompt_id = generation["prompt_id"]
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
-    progress = generation_progress(prompt_id, user_id)
-    node = generation_node(prompt_id, user_id)
+    progress = generation_progress(prompt_id)
+    node = generation_node(prompt_id)
     if not isinstance(entry, dict):
         current_status = progress["status"] or "queued"
         stage = _stage_for(node, generation["stage"], current_status)
         update_three_d_generation_status(
-            prompt_id=prompt_id, user_id=user_id, status=current_status, stage=stage
+            prompt_id=prompt_id, status=current_status, stage=stage
         )
-        current = get_three_d_generation(prompt_id, user_id) or generation
-        return _status_from_row(current, user_id, progress=progress)
+        current = get_three_d_generation(prompt_id) or generation
+        return _status_from_row(current, progress=progress)
 
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     if str(comfy_status.get("status_str", "")) in {"error", "failed"}:
-        record_remote_error(comfy_status, operation=f"comfyui.3d.history/{prompt_id}", user_id=user_id)
+        record_remote_error(comfy_status, operation=f"comfyui.3d.history/{prompt_id}")
         update_three_d_generation_status(
-            prompt_id=prompt_id, user_id=user_id, status="failed", stage="failed"
+            prompt_id=prompt_id, status="failed", stage="failed"
         )
-        current = get_three_d_generation(prompt_id, user_id) or generation
-        return _status_from_row(current, user_id, progress=progress)
+        current = get_three_d_generation(prompt_id) or generation
+        return _status_from_row(current, progress=progress)
     if comfy_status.get("completed") is True:
         raw_model = _raw_model_output(entry.get("outputs"))
-        _sync_model_output(generation, raw_model, user_id)
-        current = get_three_d_generation(prompt_id, user_id) or generation
-        return _status_from_row(current, user_id, progress={"progress": 100, "queue_position": None})
+        _sync_model_output(generation, raw_model)
+        current = get_three_d_generation(prompt_id) or generation
+        return _status_from_row(current, progress={"progress": 100, "queue_position": None})
 
     stage = _stage_for(node, generation["stage"], "processing")
     update_three_d_generation_status(
-        prompt_id=prompt_id, user_id=user_id, status="processing", stage=stage
+        prompt_id=prompt_id, status="processing", stage=stage
     )
-    current = get_three_d_generation(prompt_id, user_id) or generation
-    return _status_from_row(current, user_id, progress=progress)
+    current = get_three_d_generation(prompt_id) or generation
+    return _status_from_row(current, progress=progress)
 
 
 def _raw_model_output(outputs: Any) -> dict[str, str] | None:
@@ -442,19 +434,19 @@ def _raw_model_output(outputs: Any) -> dict[str, str] | None:
     return None
 
 
-def _sync_model_output(generation: dict[str, Any], model: dict[str, str] | None, user_id: uuid.UUID) -> None:
+def _sync_model_output(generation: dict[str, Any], model: dict[str, str] | None) -> None:
     if generation.get("storage_file_id"):
         update_three_d_generation_status(
-            prompt_id=generation["prompt_id"], user_id=user_id, status="completed", stage="completed"
+            prompt_id=generation["prompt_id"], status="completed", stage="completed"
         )
         return
     if model is None:
         update_three_d_generation_status(
-            prompt_id=generation["prompt_id"], user_id=user_id, status="failed", stage="failed"
+            prompt_id=generation["prompt_id"], status="failed", stage="failed"
         )
         raise _ComfyUIError("ComfyUI가 GLB 결과를 반환하지 않았습니다.")
     update_three_d_generation_status(
-        prompt_id=generation["prompt_id"], user_id=user_id, status="processing", stage="storage"
+        prompt_id=generation["prompt_id"], status="processing", stage="storage"
     )
     query = urlencode(
         {"filename": model["filename"], "subfolder": model["subfolder"], "type": model["type"]}
@@ -462,21 +454,20 @@ def _sync_model_output(generation: dict[str, Any], model: dict[str, str] | None,
     content, _ = _request_bytes(f"/view?{query}")
     if len(content) < 12 or content[:4] != b"glTF":
         update_three_d_generation_status(
-            prompt_id=generation["prompt_id"], user_id=user_id, status="failed", stage="failed"
+            prompt_id=generation["prompt_id"], status="failed", stage="failed"
         )
         raise _ComfyUIError("ComfyUI GLB 결과 형식이 올바르지 않습니다.")
     try:
         storage_file_id = storage_upload_file(
-            content=content, media_type="model/gltf-binary", owner_id=str(user_id)
+            content=content, media_type="model/gltf-binary"
         )
     except StorageError:
         update_three_d_generation_status(
-            prompt_id=generation["prompt_id"], user_id=user_id, status="failed", stage="failed"
+            prompt_id=generation["prompt_id"], status="failed", stage="failed"
         )
         raise
     update_three_d_generation_status(
         prompt_id=generation["prompt_id"],
-        user_id=user_id,
         status="completed",
         stage="completed",
         storage_file_id=storage_file_id,
@@ -489,11 +480,10 @@ def _sync_model_output(generation: dict[str, Any], model: dict[str, str] | None,
 
 def _status_from_row(
     generation: dict[str, Any],
-    user_id: uuid.UUID,
     *,
     progress: dict[str, Any] | None = None,
 ) -> ThreeDGenerationStatus:
-    progress = progress or generation_progress(generation["prompt_id"], user_id)
+    progress = progress or generation_progress(generation["prompt_id"])
     output = None
     file_id = generation.get("storage_file_id")
     filename = generation.get("filename")
@@ -530,8 +520,8 @@ def _stage_for(node: Any, stored_stage: str, current_status: str) -> str:
     return stored_stage if stored_stage not in {"queued", "completed"} else "structure"
 
 
-def _require_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
-    generation = get_three_d_generation(prompt_id, user_id)
+def _require_generation(prompt_id: str) -> dict[str, Any]:
+    generation = get_three_d_generation(prompt_id)
     if generation is None:
         raise HTTPException(status_code=404, detail="3D 생성 결과를 찾을 수 없습니다.")
     return generation

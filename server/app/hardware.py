@@ -7,11 +7,10 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from .latency import timed_urlopen
-from .auth import UserResponse, current_user
 from .configs.constants import settings
 
 router = APIRouter(prefix="/hardware", tags=["hardware"])
@@ -31,7 +30,7 @@ class HardwareMonitorError(RuntimeError):
 
 
 @router.get("/metrics", response_model=HardwareMetricsResponse)
-def hardware_metrics(_: UserResponse = Depends(current_user)) -> HardwareMetricsResponse:
+def hardware_metrics() -> HardwareMetricsResponse:
     try:
         return HardwareMetricsResponse(**fetch_hardware_metrics())
     except HardwareMonitorError as exc:

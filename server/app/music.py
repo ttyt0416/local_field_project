@@ -11,12 +11,11 @@ from typing import Any, Literal
 from urllib.parse import urlencode
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.responses import StreamingResponse
 
 from .audit import audit_stream, record_exception, record_remote_error
-from .auth import UserResponse, current_user
 from .comfyui import (
     _ComfyUIError,
     _VLLMError,
@@ -183,7 +182,7 @@ class MusicGenerationStatus(BaseModel):
 
 
 @router.get("/options", response_model=MusicGenerationOptions)
-def music_options(_: UserResponse = Depends(current_user)) -> MusicGenerationOptions:
+def music_options() -> MusicGenerationOptions:
     try:
         missing = _readiness()
     except _ComfyUIError as exc:
@@ -197,7 +196,6 @@ def music_options(_: UserResponse = Depends(current_user)) -> MusicGenerationOpt
 def enhance_music_prompt(
     payload: MusicPromptEnhancementRequest,
     request: Request,
-    _: UserResponse = Depends(current_user),
 ) -> MusicPromptEnhancementResponse:
     try:
         return _enhance_music_prompt(payload)
@@ -207,7 +205,7 @@ def enhance_music_prompt(
 
 
 @router.post("", response_model=MusicGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
-def create_music(payload: MusicGenerationRequest, user: UserResponse = Depends(current_user)) -> MusicGenerationAccepted:
+def create_music(payload: MusicGenerationRequest) -> MusicGenerationAccepted:
     if not storage_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="스토리지 설정이 없습니다.")
     try:
@@ -223,7 +221,6 @@ def create_music(payload: MusicGenerationRequest, user: UserResponse = Depends(c
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 음악 생성 작업 ID를 반환하지 않았습니다.")
     generation_id, created_at = create_music_generation(
-        user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
         description=payload.description,
@@ -244,45 +241,45 @@ def create_music(payload: MusicGenerationRequest, user: UserResponse = Depends(c
 
 
 @router.get("/latest", response_model=MusicGenerationStatus | None)
-def latest_music(user: UserResponse = Depends(current_user)) -> MusicGenerationStatus | None:
-    generation = get_latest_music_generation(user.id)
+def latest_music() -> MusicGenerationStatus | None:
+    generation = get_latest_music_generation()
     if generation is None:
         return None
     try:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.get("/{prompt_id}", response_model=MusicGenerationStatus)
-def music_status(prompt_id: str, user: UserResponse = Depends(current_user)) -> MusicGenerationStatus:
-    generation = _require_generation(prompt_id, user.id)
+def music_status(prompt_id: str) -> MusicGenerationStatus:
+    generation = _require_generation(prompt_id)
     try:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     except (StorageError, _ComfyUIError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/{prompt_id}/cancel", response_model=MusicGenerationStatus)
-def cancel_music(prompt_id: str, user: UserResponse = Depends(current_user)) -> MusicGenerationStatus:
-    generation = _require_generation(prompt_id, user.id)
+def cancel_music(prompt_id: str) -> MusicGenerationStatus:
+    generation = _require_generation(prompt_id)
     if generation["status"] == "cancelled":
-        return _status_from_row(generation, user.id)
+        return _status_from_row(generation)
     if generation["status"] not in {"queued", "processing"}:
-        return _history_status(generation, user.id)
+        return _history_status(generation)
     try:
         if not cancel_comfy_generation(prompt_id):
-            current = _history_status(generation, user.id)
+            current = _history_status(generation)
             if current.status in {"completed", "failed", "cancelled"}:
                 return current
             raise HTTPException(status_code=409, detail="이미 처리 중인 작업이라 취소할 수 없습니다.")
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    update_music_generation_status(prompt_id=prompt_id, user_id=user.id, status="cancelled")
-    current = get_music_generation(prompt_id, user.id) or generation
-    result = _status_from_row(current, user.id)
+    update_music_generation_status(prompt_id=prompt_id, status="cancelled")
+    current = get_music_generation(prompt_id) or generation
+    result = _status_from_row(current)
     generation_event_broker.publish(
-        key=generation_key("music", user.id, prompt_id),
+        key=generation_key("music", prompt_id),
         event="cancelled",
         data=result.model_dump(mode="json"),
     )
@@ -293,29 +290,28 @@ def cancel_music(prompt_id: str, user: UserResponse = Depends(current_user)) -> 
 async def music_events(
     prompt_id: str,
     client_id: str = Query(min_length=1, max_length=128),
-    user: UserResponse = Depends(current_user),
 ) -> StreamingResponse:
-    generation = _require_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     if generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="음악 생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        audit_stream(_stream_events(prompt_id, user.id), operation="music.events", user_id=user.id, context={"prompt_id": prompt_id}),
+        audit_stream(_stream_events(prompt_id), operation="music.events", context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
-async def _stream_events(prompt_id: str, user_id: uuid.UUID):
-    key = generation_key("music", user_id, prompt_id)
+async def _stream_events(prompt_id: str):
+    key = generation_key("music", prompt_id)
     async with generation_event_broker.subscribe(key) as events:
-        generation = await asyncio.to_thread(get_music_generation, prompt_id, user_id)
+        generation = await asyncio.to_thread(get_music_generation, prompt_id)
         if generation is None:
             yield _sse("failed", {"prompt_id": prompt_id, "status": "failed", "message": "음악 생성 결과를 찾을 수 없습니다."})
             return
         try:
-            current = await asyncio.to_thread(_history_status, generation, user_id)
+            current = await asyncio.to_thread(_history_status, generation)
         except (StorageError, _ComfyUIError) as exc:
-            record_exception(exc, operation="music.events", user_id=user_id, context={"prompt_id": prompt_id})
+            record_exception(exc, operation="music.events", context={"prompt_id": prompt_id})
             yield _sse("error", {"prompt_id": prompt_id, "message": str(exc)})
             return
         event = current.status if current.status in {"completed", "failed", "cancelled"} else "status"
@@ -443,32 +439,32 @@ def _readiness() -> list[str]:
     return missing
 
 
-def _history_status(generation: dict[str, Any], user_id: uuid.UUID) -> MusicGenerationStatus:
+def _history_status(generation: dict[str, Any]) -> MusicGenerationStatus:
     if generation["status"] in {"completed", "failed", "cancelled"}:
-        return _status_from_row(generation, user_id)
+        return _status_from_row(generation)
     prompt_id = generation["prompt_id"]
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
-    progress = generation_progress(prompt_id, user_id)
+    progress = generation_progress(prompt_id)
     if not isinstance(entry, dict):
         current_status = progress["status"] or "queued"
-        update_music_generation_status(prompt_id=prompt_id, user_id=user_id, status=current_status)
-        current = get_music_generation(prompt_id, user_id) or generation
-        return _status_from_row(current, user_id, progress=progress)
+        update_music_generation_status(prompt_id=prompt_id, status=current_status)
+        current = get_music_generation(prompt_id) or generation
+        return _status_from_row(current, progress=progress)
     raw_status = entry.get("status")
     comfy_status = raw_status if isinstance(raw_status, dict) else {}
     if str(comfy_status.get("status_str", "")) in {"error", "failed"}:
-        record_remote_error(comfy_status, operation=f"comfyui.music.history/{prompt_id}", user_id=user_id)
-        update_music_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-        current = get_music_generation(prompt_id, user_id) or generation
-        return _status_from_row(current, user_id, progress=progress)
+        record_remote_error(comfy_status, operation=f"comfyui.music.history/{prompt_id}")
+        update_music_generation_status(prompt_id=prompt_id, status="failed")
+        current = get_music_generation(prompt_id) or generation
+        return _status_from_row(current, progress=progress)
     if comfy_status.get("completed") is True:
-        _sync_audio_output(generation, _raw_audio_output(entry.get("outputs")), user_id)
-        current = get_music_generation(prompt_id, user_id) or generation
-        return _status_from_row(current, user_id, progress={"progress": 100, "queue_position": None})
-    update_music_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
-    current = get_music_generation(prompt_id, user_id) or generation
-    return _status_from_row(current, user_id, progress=progress)
+        _sync_audio_output(generation, _raw_audio_output(entry.get("outputs")))
+        current = get_music_generation(prompt_id) or generation
+        return _status_from_row(current, progress={"progress": 100, "queue_position": None})
+    update_music_generation_status(prompt_id=prompt_id, status="processing")
+    current = get_music_generation(prompt_id) or generation
+    return _status_from_row(current, progress=progress)
 
 
 def _raw_audio_output(outputs: Any) -> dict[str, str] | None:
@@ -491,27 +487,26 @@ def _raw_audio_output(outputs: Any) -> dict[str, str] | None:
     return None
 
 
-def _sync_audio_output(generation: dict[str, Any], audio: dict[str, str] | None, user_id: uuid.UUID) -> None:
+def _sync_audio_output(generation: dict[str, Any], audio: dict[str, str] | None) -> None:
     if generation.get("storage_file_id"):
-        update_music_generation_status(prompt_id=generation["prompt_id"], user_id=user_id, status="completed")
+        update_music_generation_status(prompt_id=generation["prompt_id"], status="completed")
         return
     if audio is None:
-        update_music_generation_status(prompt_id=generation["prompt_id"], user_id=user_id, status="failed")
+        update_music_generation_status(prompt_id=generation["prompt_id"], status="failed")
         raise _ComfyUIError("ComfyUI가 음악 결과를 반환하지 않았습니다.")
     query = urlencode({"filename": audio["filename"], "subfolder": audio["subfolder"], "type": audio["type"]})
     content, _ = _request_bytes(f"/view?{query}")
     suffix = Path(audio["filename"]).suffix.lower()
     if not _valid_audio_magic(content, suffix):
-        update_music_generation_status(prompt_id=generation["prompt_id"], user_id=user_id, status="failed")
+        update_music_generation_status(prompt_id=generation["prompt_id"], status="failed")
         raise _ComfyUIError("ComfyUI 음악 결과 형식이 올바르지 않습니다.")
     try:
-        storage_file_id = storage_upload_file(content=content, media_type=_AUDIO_TYPES[suffix], owner_id=str(user_id))
+        storage_file_id = storage_upload_file(content=content, media_type=_AUDIO_TYPES[suffix])
     except StorageError:
-        update_music_generation_status(prompt_id=generation["prompt_id"], user_id=user_id, status="failed")
+        update_music_generation_status(prompt_id=generation["prompt_id"], status="failed")
         raise
     update_music_generation_status(
         prompt_id=generation["prompt_id"],
-        user_id=user_id,
         status="completed",
         storage_file_id=storage_file_id,
         filename=audio["filename"],
@@ -534,18 +529,17 @@ def _valid_audio_magic(content: bytes, suffix: str) -> bool:
 
 def _status_from_row(
     generation: dict[str, Any],
-    user_id: uuid.UUID,
     *,
     progress: dict[str, Any] | None = None,
 ) -> MusicGenerationStatus:
-    progress = progress or generation_progress(generation["prompt_id"], user_id)
+    progress = progress or generation_progress(generation["prompt_id"])
     output = None
     file_id = generation.get("storage_file_id")
     filename = generation.get("filename")
     content_type = generation.get("content_type")
     if generation["status"] == "completed" and isinstance(file_id, str) and isinstance(filename, str) and isinstance(content_type, str):
         output = MusicOutput(
-            url=storage_read_url(file_id=file_id, owner_id=str(user_id)),
+            url=storage_read_url(file_id=file_id),
             filename=filename,
             content_type=content_type,
             duration_seconds=generation.get("duration_seconds"),
@@ -569,8 +563,8 @@ def _status_from_row(
     )
 
 
-def _require_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
-    generation = get_music_generation(prompt_id, user_id)
+def _require_generation(prompt_id: str) -> dict[str, Any]:
+    generation = get_music_generation(prompt_id)
     if generation is None:
         raise HTTPException(status_code=404, detail="음악 생성 결과를 찾을 수 없습니다.")
     return generation

@@ -14,7 +14,7 @@
 	import Toast from '../../../components/feedback/toast.svelte';
 	import Typography from '../../../components/typography/typography.svelte';
 	import VideoMedia from '../../../components/media/video.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { videoGenerationStore, type VideoLibraryAsset } from '$lib/stores/video-generation.svelte';
 	import { apiDelete, apiJson } from '$lib/utils/api';
 	import { formatFileSize } from '$lib/utils/generation';
@@ -68,11 +68,6 @@
 	});
 
 	async function loadAssets(requestedPage = currentPage) {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		loading = true;
 		try {
 			const params = new URLSearchParams({ page: String(requestedPage), sort });

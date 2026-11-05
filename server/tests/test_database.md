@@ -9,3 +9,7 @@ Video generation insert coverage verifies persisted `steps` and `use_pdd` parame
 MOSS 설정 JSON의 insert 매개변수와 참조 이미지 매개변수가 별도로 직렬화되는지 확인한다. 실제 PostgreSQL 임시 테이블에서 insert/read와 편집본 복사도 확인했고 트랜잭션은 롤백했다.
 
 이미지 INSERT의 SQL placeholder 수와 reference_images·MOSS layout·LLM 활성 플래그 보존을 확인한다.
+
+## 공용 사용
+
+계정 fixture와 소유자 인자를 제거하고 공용 데이터·API 계약으로 기존 회귀 검사를 유지한다.

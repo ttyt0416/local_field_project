@@ -4,7 +4,7 @@
 
 composedPath로 중첩 SVG와 open shadow DOM의 실제 요소를 찾는다. 실제 클릭 요소와 의미상 상위 컨트롤을 함께 기록한다. ID가 없으면 태그·nth-of-type 경로로 식별하며 모달/영역의 경로와 제목 및 가까운 상위 요소 4개의 ID·텍스트를 보존해 같은 이름의 선택 버튼이 속한 항목도 확인할 수 있다. 라벨은 data-audit-label, aria-label, aria-labelledby, 연결된 label, title, alt, name, 텍스트 순으로 찾는다. 명시적인 안정 ID가 필요하면 data-audit-id를 지원한다. 라벨은 512자로 제한하고 전체 DOM 경로를 별도로 저장한다.
 
-기록에는 event UUID, 클라이언트 시각, query/hash를 포함한 페이지, 링크, 실제 요소·컨트롤 경로, 상태·좌표·키가 포함된다. 서버가 JWT를 검증해 user_id를 붙이고 익명/로그인 공통 방문자·세션 UUID도 보존한다. Storage가 막히면 메모리 ID로 유지한다. 입력 텍스트·비밀번호·선택 파일 내용은 수집하지 않는다.
+기록에는 event UUID, 클라이언트 시각, query/hash를 포함한 페이지, 링크, 실제 요소·컨트롤 경로, 상태·좌표·키가 포함된다. 계정 식별자 없이 익명 방문자·세션 UUID를 보존한다. 기존 Local Field 로그인 토큰은 전송하지 않는다. Storage가 막히면 메모리 ID로 유지한다. 입력 텍스트·비밀번호·선택 파일 내용은 수집하지 않는다.
 
 루트 afterNavigate가 최초 진입과 모든 경로 이동·뒤로/앞으로 이동을 기록한다. 전/후 경로, route ID, navigation_type을 포함한다. 18개 페이지 경로에 같은 유틸을 적용하며 페이지별 버튼 누락을 만드는 개별 등록 방식은 사용하지 않는다.
 
@@ -15,3 +15,7 @@ fetch는 void로 호출하고 완료를 기다리지 않는다. 작은 본문은
 ## API 레이턴시 기록
 
 startApiTiming은 performance.now로 headers_ms/first_byte_ms/duration_ms를 구분하고 시작 페이지·UTC 시각·UUID·세션을 보존한다. 정상/HTTP 오류/연결 오류/타임아웃/취소를 기록하며 종료 기록은 한 번만 보낸다. /web/api-timings 전송은 기다리지 않고 기존 send를 재사용한다. 기록 요청 자체를 브라우저에서 재측정하지 않아 재귀 전송을 막으며 서버에서는 해당 요청도 측정한다.
+
+## 공용 사용
+
+Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.

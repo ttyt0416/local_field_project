@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import SimpleNamespace
 
 import io
 import uuid
@@ -12,7 +13,6 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.auth import UserResponse
 from app.configs.constants import settings
 from app.model_downloads import (
     CivitaiError,
@@ -206,7 +206,7 @@ class ModelDownloadsTest(unittest.TestCase):
                 self.assertFalse((root / "diffusion_models/MOSS").exists())
 
     def test_moss_download_defaults_to_canonical_folder_and_keeps_selected_subfolder(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             with (
@@ -217,7 +217,7 @@ class ModelDownloadsTest(unittest.TestCase):
                     version = CivitaiVersion(3316573, None, "Miao MOSS", version_type, "v1", "MOSS Image", (CivitaiFile("miao.safetensors", "Model", "https://civitai.com/file", 1, None, True),))
                     with patch("app.model_downloads._fetch_version", return_value=version):
                         with self.assertRaises(HTTPException) as missing:
-                            download_civitai_model(ModelDownloadRequest(source="3316573", model_type=cast(ModelType, expected_type)), user)
+                            download_civitai_model(ModelDownloadRequest(source="3316573", model_type=cast(ModelType, expected_type)))
                         self.assertEqual(missing.exception.status_code, 422)
                         create_job.assert_not_called()
                         for selected, expected_folder in (("", "MOSS"), ("MOSS/custom", "MOSS/custom")):
@@ -231,14 +231,14 @@ class ModelDownloadsTest(unittest.TestCase):
                                     "total_bytes": 1, "error_message": None,
                                     "created_at": datetime.now(timezone.utc), "completed_at": None,
                                 }
-                                response = download_civitai_model(ModelDownloadRequest(source="3316573", model_type=cast(ModelType, expected_type), subfolder=selected), user)
+                                response = download_civitai_model(ModelDownloadRequest(source="3316573", model_type=cast(ModelType, expected_type), subfolder=selected))
                                 self.assertEqual(create_job.call_args.kwargs["model_type"], expected_type)
                                 self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
                                 self.assertEqual(response.subfolder, expected_folder)
                                 create_job.reset_mock()
 
     def test_manual_destination_survives_enqueue_and_worker(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         contents = b"synthetic model bytes"
 
         class DownloadResponse(io.BytesIO):
@@ -269,7 +269,7 @@ class ModelDownloadsTest(unittest.TestCase):
                         patch("app.model_downloads.update_model_download_progress", return_value=True),
                         patch("app.model_downloads.complete_model_download", return_value=True),
                     ):
-                        response = download_civitai_model(ModelDownloadRequest(source="1", model_type=cast(ModelType, model_type), file_index=1), user)
+                        response = download_civitai_model(ModelDownloadRequest(source="1", model_type=cast(ModelType, model_type), file_index=1))
                         self.assertEqual(response.model_type, model_type)
                         self.assertEqual(create_job.call_args.kwargs["model_type"], model_type)
                         self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
@@ -330,20 +330,20 @@ class ModelDownloadsTest(unittest.TestCase):
                 _safe_subfolder(invalid)
 
     def test_existing_folders_can_be_listed_and_new_folder_created(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory) / "loras"
             (root / "character/anime").mkdir(parents=True)
             (root / ".cache/internal").mkdir(parents=True)
             with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary_directory)):
-                folders = list_model_folders("lora", user)
-                created = create_model_folder(ModelFolderRequest(model_type="lora", parent="character", name="realistic"), user)
+                folders = list_model_folders("lora")
+                created = create_model_folder(ModelFolderRequest(model_type="lora", parent="character", name="realistic"))
                 with self.assertRaises(HTTPException) as duplicate:
-                    create_model_folder(ModelFolderRequest(model_type="lora", parent="character", name="realistic"), user)
+                    create_model_folder(ModelFolderRequest(model_type="lora", parent="character", name="realistic"))
                 with self.assertRaises(HTTPException) as invalid_name:
-                    create_model_folder(ModelFolderRequest(model_type="lora", name="style/anime"), user)
+                    create_model_folder(ModelFolderRequest(model_type="lora", name="style/anime"))
                 with self.assertRaises(HTTPException) as hidden_parent:
-                    create_model_folder(ModelFolderRequest(model_type="lora", parent=".cache", name="new"), user)
+                    create_model_folder(ModelFolderRequest(model_type="lora", parent=".cache", name="new"))
 
             self.assertEqual([folder.subfolder for folder in folders], ["", "character", "character/anime"])
             self.assertEqual(created.subfolder, "character/realistic")
@@ -353,7 +353,7 @@ class ModelDownloadsTest(unittest.TestCase):
             self.assertEqual(hidden_parent.exception.status_code, 400)
 
     def test_download_request_uses_subfolder_in_target_path(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         version = CivitaiVersion(
             version_id=1,
             model_id=None,
@@ -397,7 +397,6 @@ class ModelDownloadsTest(unittest.TestCase):
             ):
                 response = download_civitai_model(
                     ModelDownloadRequest(source="1", model_type="checkpoint", file_index=0, subfolder="characters/anime"),
-                    user,
                 )
 
             self.assertEqual(create_job.call_args.kwargs["target_path"], str(target))
@@ -405,7 +404,7 @@ class ModelDownloadsTest(unittest.TestCase):
             self.assertEqual(response.filename, "model.safetensors")
 
     def test_installed_model_can_move_to_existing_nested_folder(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             source = root / "checkpoints" / "model.safetensors"
@@ -417,7 +416,6 @@ class ModelDownloadsTest(unittest.TestCase):
                 moved = move_installed_model(
                     "checkpoint",
                     MoveInstalledModelRequest(filename="model.safetensors", subfolder="characters/anime"),
-                    user,
                 )
                 with self.assertRaises(HTTPException) as collision:
                     (root / "checkpoints" / "other.safetensors").write_bytes(b"other")
@@ -425,7 +423,6 @@ class ModelDownloadsTest(unittest.TestCase):
                     move_installed_model(
                         "checkpoint",
                         MoveInstalledModelRequest(filename="other.safetensors", subfolder="characters/anime"),
-                        user,
                     )
 
             self.assertEqual(moved.filename, "characters/anime/model.safetensors")
@@ -434,7 +431,7 @@ class ModelDownloadsTest(unittest.TestCase):
             self.assertEqual(collision.exception.status_code, 409)
 
     def test_installed_model_delete_stays_inside_model_directory(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             model_directory = root / "checkpoints"
@@ -450,7 +447,7 @@ class ModelDownloadsTest(unittest.TestCase):
                 "app.model_downloads.settings",
                 replace(settings, comfyui_models_path=temporary_directory),
             ):
-                delete_installed_model("checkpoint", "model.safetensors", user)
+                delete_installed_model("checkpoint", "model.safetensors")
                 self.assertFalse(model.exists())
                 self.assertEqual(
                     _installed_model_path("checkpoint", "nested/model.safetensors"),
@@ -529,7 +526,7 @@ class ModelDownloadsTest(unittest.TestCase):
             self.assertFalse(target.exists())
 
     def test_cancel_endpoint_deletes_partial_file_before_returning(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with TemporaryDirectory() as temporary_directory:
             target = Path(temporary_directory) / "checkpoints" / "model.safetensors"
             partial = target.with_name(f".{target.name}.part")
@@ -537,7 +534,6 @@ class ModelDownloadsTest(unittest.TestCase):
             partial.write_bytes(b"partial")
             row = {
                 "id": uuid.uuid4(),
-                "user_id": user.id,
                 "version_id": 1,
                 "model_type": "checkpoint",
                 "filename": target.name,
@@ -550,7 +546,7 @@ class ModelDownloadsTest(unittest.TestCase):
                 "completed_at": None,
             }
             with patch("app.model_downloads.cancel_model_download", return_value=row):
-                response = cancel_download(row["id"], user)
+                response = cancel_download(row["id"])
 
             self.assertEqual(response.status, "cancelled")
             self.assertFalse(partial.exists())

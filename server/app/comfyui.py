@@ -19,13 +19,12 @@ from urllib.request import urlopen
 
 from websockets.asyncio.client import connect as websocket_connect
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import RedirectResponse, StreamingResponse
 
 from .latency import ApiTimer, timed_urlopen, upstream_path
 from .audit import audit_stream, record_exception, record_remote_error
-from .auth import UserResponse, current_user
 from .configs.constants import settings
 from .danbooru import DanbooruError, search_danbooru_tags, validate_danbooru_tags
 from .database import (
@@ -198,13 +197,13 @@ class ImageGenerationAccepted(BaseModel):
     elapsed_seconds: float = Field(default=0, ge=0)
 
 
-def _progress_key(prompt_id: str, user_id: uuid.UUID) -> str:
-    return f"{user_id}:{prompt_id}"
+def _progress_key(prompt_id: str) -> str:
+    return prompt_id
 
 
-def generation_progress(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
+def generation_progress(prompt_id: str) -> dict[str, Any]:
     with _progress_lock:
-        state = _progress_states.get(_progress_key(prompt_id, user_id), {})
+        state = _progress_states.get(_progress_key(prompt_id), {})
         return {
             "status": state.get("status"),
             "progress": float(state.get("progress", 0)),
@@ -212,26 +211,25 @@ def generation_progress(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
         }
 
 
-def reset_generation_progress(prompt_id: str, user_id: uuid.UUID) -> bool:
-    return _set_progress_state(prompt_id, user_id, status="queued", progress=0, queue_position=None, node=None)
+def reset_generation_progress(prompt_id: str) -> bool:
+    return _set_progress_state(prompt_id, status="queued", progress=0, queue_position=None, node=None)
 
 
-def generation_node(prompt_id: str, user_id: uuid.UUID) -> str | None:
+def generation_node(prompt_id: str) -> str | None:
     with _progress_lock:
-        node = _progress_states.get(_progress_key(prompt_id, user_id), {}).get("node")
+        node = _progress_states.get(_progress_key(prompt_id), {}).get("node")
     return node if isinstance(node, str) else None
 
 
 def _set_progress_state(
     prompt_id: str,
-    user_id: uuid.UUID,
     *,
-    status: Any = _PROGRESS_UNSET,
-    progress: Any = _PROGRESS_UNSET,
-    queue_position: Any = _PROGRESS_UNSET,
-    node: Any = _PROGRESS_UNSET,
+    status: Any=_PROGRESS_UNSET,
+    progress: Any=_PROGRESS_UNSET,
+    queue_position: Any=_PROGRESS_UNSET,
+    node: Any=_PROGRESS_UNSET,
 ) -> bool:
-    key = _progress_key(prompt_id, user_id)
+    key = _progress_key(prompt_id)
     with _progress_lock:
         state = _progress_states.setdefault(
             key, {"status": None, "progress": 0.0, "queue_position": None, "node": None}
@@ -250,7 +248,6 @@ def _set_progress_state(
 
 def record_comfy_progress(
     prompt_id: str,
-    user_id: uuid.UUID,
     event_name: str,
     data: dict[str, Any],
     *,
@@ -261,14 +258,13 @@ def record_comfy_progress(
         return False
     if event_name == "execution_start":
         return _set_progress_state(
-            prompt_id, user_id, status="processing", progress=0, queue_position=None, node=None
+            prompt_id, status="processing", progress=0, queue_position=None, node=None
         )
     if event_name == "executing":
         if data.get("node") is None:
             return False
         return _set_progress_state(
             prompt_id,
-            user_id,
             status="processing",
             queue_position=None,
             node=str(data["node"]),
@@ -280,7 +276,6 @@ def record_comfy_progress(
             return False
         return _set_progress_state(
             prompt_id,
-            user_id,
             status="processing",
             progress=value / maximum * 100,
             queue_position=None,
@@ -301,14 +296,13 @@ def record_comfy_progress(
             return False
         return _set_progress_state(
             prompt_id,
-            user_id,
             status="processing",
             progress=max(values),
             queue_position=None,
         )
     if event_name == "execution_error":
-        record_remote_error(data, operation="comfyui.execution", user_id=user_id)
-        return _set_progress_state(prompt_id, user_id, status="failed")
+        record_remote_error(data, operation="comfyui.execution")
+        return _set_progress_state(prompt_id, status="failed")
     return False
 
 
@@ -373,8 +367,7 @@ class PromptEnhancementResponse(BaseModel):
 
 @router.get("/options", response_model=ImageGenerationOptions)
 def image_options(
-    family: ModelFamily = Query(default="anima"),
-    _: UserResponse = Depends(current_user),
+    family: ModelFamily = Query(default='anima'),
 ) -> ImageGenerationOptions:
     try:
         return _image_options(family)
@@ -385,7 +378,6 @@ def image_options(
 @router.post("/enhance-prompt", response_model=PromptEnhancementResponse)
 def enhance_prompt(
     payload: PromptEnhancementRequest,
-    _: UserResponse = Depends(current_user),
 ) -> PromptEnhancementResponse:
     try:
         return _enhance_prompt(payload.prompt, payload.model_family)
@@ -396,16 +388,14 @@ def enhance_prompt(
 @router.post("", response_model=ImageGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 def create_image_generation(
     payload: ImageGenerationRequest,
-    user: UserResponse = Depends(current_user),
 ) -> ImageGenerationAccepted:
-    return _submit_image_generation(payload, user)
+    return _submit_image_generation(payload)
 
 
 @router.post("/i2i", response_model=ImageGenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_image_to_image_generation(
-    payload: str = Form(...),
-    files: list[UploadFile] = File(default=[]),
-    user: UserResponse = Depends(current_user),
+    payload: str=Form(...),
+    files: list[UploadFile]=File(default=[]),
 ) -> ImageGenerationAccepted:
     try:
         request = ImageToImageGenerationRequest.model_validate_json(payload)
@@ -416,7 +406,7 @@ async def create_image_to_image_generation(
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     _validate_image_sources(request, files)
-    resolved = [await _resolve_image_source(source, files, user) for source in [request.source, *request.references]]
+    resolved = [await _resolve_image_source(source, files) for source in [request.source, *request.references]]
     source_file_id, source_filename, _, _ = resolved[0]
     try:
         input_names = [_upload_comfy_input(content, filename, media_type) for _, filename, content, media_type in resolved]
@@ -424,7 +414,6 @@ async def create_image_to_image_generation(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return _submit_image_generation(
         request,
-        user,
         input_image=input_names[0],
         input_references=input_names[1:],
         reference_images=[{"file_id": item[0], "filename": item[1]} for item in resolved[1:]],
@@ -437,14 +426,13 @@ async def create_image_to_image_generation(
 
 def _submit_image_generation(
     payload: ImageGenerationRequest,
-    user: UserResponse,
     *,
     input_image: str | None = None,
     source_file_id: str | None = None,
     source_filename: str | None = None,
     input_references: list[str] | None = None,
     reference_images: list[dict[str, str]] | None = None,
-    generation_mode: Literal["t2i", "i2i"] = "t2i",
+    generation_mode: Literal['t2i', 'i2i'] = 't2i',
     denoise: float = 1.0,
 ) -> ImageGenerationAccepted:
     try:
@@ -464,7 +452,6 @@ def _submit_image_generation(
     if not isinstance(prompt_id, str) or not prompt_id:
         raise HTTPException(status_code=502, detail="ComfyUI가 생성 작업 ID를 반환하지 않았습니다.")
     generation_id, created_at = create_image_generation_record(
-        user_id=user.id,
         prompt_id=prompt_id,
         client_id=client_id,
         prompt=payload.prompt,
@@ -512,23 +499,21 @@ def _validate_image_sources(request: ImageToImageGenerationRequest, files: list[
 async def _resolve_image_source(
     source: ImageSource,
     files: list[UploadFile],
-    user: UserResponse,
 ) -> tuple[str, str, bytes, str]:
     if not storage_enabled():
         raise HTTPException(status_code=503, detail="Storage가 설정되지 않아 I2I 입력 이미지를 저장할 수 없습니다.")
     if source.file_id:
-        record = get_reusable_media(source.file_id, user.id)
+        record = get_reusable_media(source.file_id)
         if record is None or record["media_kind"] != "image":
             raise HTTPException(status_code=404, detail="선택한 이미지를 찾을 수 없습니다.")
         try:
-            content, stored_type = storage_download_file(file_id=source.file_id, owner_id=str(user.id))
+            content, stored_type = storage_download_file(file_id=source.file_id)
         except StorageError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         media_type = record["content_type"] or stored_type
         if not media_type.startswith("image/"):
             raise HTTPException(status_code=415, detail="이미지 파일만 사용할 수 있습니다.")
         create_media_asset(
-            user_id=user.id,
             storage_file_id=source.file_id,
             filename=record["filename"],
             content_type=media_type,
@@ -549,11 +534,10 @@ async def _resolve_image_source(
         raise HTTPException(status_code=413, detail="I2I 입력 이미지는 50MB 이하여야 합니다.")
     filename = re.sub(r"[^A-Za-z0-9._-]+", "_", (upload.filename or "image.png").split("/")[-1])[:255]
     try:
-        file_id = storage_upload_file(content=content, media_type=media_type, owner_id=str(user.id))
+        file_id = storage_upload_file(content=content, media_type=media_type)
     except StorageError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     create_media_asset(
-        user_id=user.id,
         storage_file_id=file_id,
         filename=filename,
         content_type=media_type,
@@ -603,13 +587,12 @@ def _upload_comfy_input(content: bytes, filename: str, media_type: str) -> str:
 async def image_generation_events(
     prompt_id: str,
     client_id: str = Query(min_length=1, max_length=128),
-    user: UserResponse = Depends(current_user),
 ) -> StreamingResponse:
-    generation = _require_owned_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     if generation["client_id"] != client_id:
         raise HTTPException(status_code=404, detail="생성 결과를 찾을 수 없습니다.")
     return StreamingResponse(
-        audit_stream(_stream_generation_events(prompt_id, client_id, user.id), operation="image.events", user_id=user.id, context={"prompt_id": prompt_id}),
+        audit_stream(_stream_generation_events(prompt_id, client_id), operation="image.events", context={"prompt_id": prompt_id}),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -622,11 +605,10 @@ async def image_generation_events(
 @router.get("/{prompt_id}", response_model=ImageGenerationStatus)
 def image_generation_status(
     prompt_id: str,
-    user: UserResponse = Depends(current_user),
 ) -> ImageGenerationStatus:
-    _require_owned_generation(prompt_id, user.id)
+    _require_generation(prompt_id)
     try:
-        return _history_generation_status(prompt_id, user.id)
+        return _history_generation_status(prompt_id)
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -634,43 +616,42 @@ def image_generation_status(
 @router.post("/{prompt_id}/cancel", response_model=ImageGenerationStatus)
 def cancel_image_generation(
     prompt_id: str,
-    user: UserResponse = Depends(current_user),
 ) -> ImageGenerationStatus:
-    generation = _require_owned_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     if generation["status"] == "cancelled":
-        return _cancelled_image_status(generation, user.id)
+        return _cancelled_image_status(generation)
     if generation["status"] not in {"queued", "processing"}:
-        return _history_generation_status(prompt_id, user.id)
+        return _history_generation_status(prompt_id)
     try:
         dispatched = cancel_comfy_generation(prompt_id)
         if not dispatched:
-            current = _history_generation_status(prompt_id, user.id)
+            current = _history_generation_status(prompt_id)
             if current.status in {"completed", "failed", "cancelled"}:
                 return current
             raise HTTPException(status_code=409, detail="이미 처리 중인 작업이라 취소할 수 없습니다.")
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    update_image_generation_status(prompt_id=prompt_id, user_id=user.id, status="cancelled")
-    cancelled = get_image_generation(prompt_id, user.id) or generation
+    update_image_generation_status(prompt_id=prompt_id, status="cancelled")
+    cancelled = get_image_generation(prompt_id) or generation
     data = {
         "prompt_id": prompt_id,
         "status": "cancelled",
-        "progress": generation_progress(prompt_id, user.id)["progress"],
+        "progress": generation_progress(prompt_id)["progress"],
         "queue_position": None,
-        **_image_timing(prompt_id, user.id, cancelled),
+        **_image_timing(prompt_id, cancelled),
     }
     generation_event_broker.publish(
-        key=generation_key("image", user.id, prompt_id),
+        key=generation_key("image", prompt_id),
         event="cancelled",
         data=data,
     )
     return ImageGenerationStatus(**data)
 
 
-async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uuid.UUID):
-    key = generation_key("image", user_id, prompt_id)
+async def _stream_generation_events(prompt_id: str, client_id: str):
+    key = generation_key("image", prompt_id)
     async with generation_event_broker.subscribe(key) as events:
-        generation = await asyncio.to_thread(get_image_generation, prompt_id, user_id)
+        generation = await asyncio.to_thread(get_image_generation, prompt_id)
         if generation is None or generation["client_id"] != client_id:
             yield _sse_message("failed", {"prompt_id": prompt_id, "status": "failed", "message": "생성 결과를 찾을 수 없습니다."})
             return
@@ -678,9 +659,9 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
         current_status = str(generation["status"])
         if current_status == "completed":
             try:
-                images = await asyncio.to_thread(_stored_image_outputs, generation, user_id)
+                images = await asyncio.to_thread(_stored_image_outputs, generation)
             except StorageError as exc:
-                record_exception(exc, operation="image.events", user_id=user_id, context={"prompt_id": prompt_id})
+                record_exception(exc, operation="image.events", context={"prompt_id": prompt_id})
                 yield _sse_message("error", {"prompt_id": prompt_id, "message": str(exc)})
                 return
             yield _sse_message(
@@ -702,14 +683,14 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                     "status": "failed",
                     "progress": 0,
                     "queue_position": None,
-                    **_image_timing(prompt_id, user_id, generation),
+                    **_image_timing(prompt_id, generation),
                 },
             )
             return
         if current_status == "cancelled":
-            yield _sse_message("cancelled", _cancelled_image_status(generation, user_id).model_dump(mode="json"))
+            yield _sse_message("cancelled", _cancelled_image_status(generation).model_dump(mode="json"))
             return
-        progress_state = generation_progress(prompt_id, user_id)
+        progress_state = generation_progress(prompt_id)
         yield _sse_message(
             "status",
             {
@@ -717,7 +698,7 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 "status": current_status,
                 "progress": progress_state["progress"],
                 "queue_position": progress_state["queue_position"] or _queue_position(prompt_id),
-                **_image_timing(prompt_id, user_id, generation),
+                **_image_timing(prompt_id, generation),
             },
         )
 
@@ -732,8 +713,8 @@ async def _stream_generation_events(prompt_id: str, client_id: str, user_id: uui
                 return
 
 
-def _image_timing(prompt_id: str, user_id: uuid.UUID, generation: dict[str, Any] | None = None) -> dict[str, Any]:
-    generation = generation or get_image_generation(prompt_id, user_id)
+def _image_timing(prompt_id: str, generation: dict[str, Any] | None=None) -> dict[str, Any]:
+    generation = generation or get_image_generation(prompt_id)
     if generation is None:
         return {"created_at": None, "elapsed_seconds": 0}
     created_at = generation.get("created_at")
@@ -743,30 +724,30 @@ def _image_timing(prompt_id: str, user_id: uuid.UUID, generation: dict[str, Any]
     }
 
 
-def _cancelled_image_status(generation: dict[str, Any], user_id: uuid.UUID) -> ImageGenerationStatus:
+def _cancelled_image_status(generation: dict[str, Any]) -> ImageGenerationStatus:
     return ImageGenerationStatus(
         prompt_id=generation["prompt_id"],
         status="cancelled",
-        progress=generation_progress(generation["prompt_id"], user_id)["progress"],
+        progress=generation_progress(generation["prompt_id"])["progress"],
         queue_position=None,
-        **_image_timing(generation["prompt_id"], user_id, generation),
+        **_image_timing(generation["prompt_id"], generation),
     )
 
 
-def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGenerationStatus:
-    generation = get_image_generation(prompt_id, user_id)
+def _history_generation_status(prompt_id: str) -> ImageGenerationStatus:
+    generation = get_image_generation(prompt_id)
     if generation is not None and generation.get("status") == "cancelled":
-        return _cancelled_image_status(generation, user_id)
+        return _cancelled_image_status(generation)
     history = _request_json("GET", f"/history/{prompt_id}")
     entry = history.get(prompt_id)
-    progress_state = generation_progress(prompt_id, user_id)
+    progress_state = generation_progress(prompt_id)
     if not isinstance(entry, dict):
         current_status = progress_state["status"] or "queued"
         if current_status == "processing":
-            update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
+            update_image_generation_status(prompt_id=prompt_id, status="processing")
         elif current_status == "failed":
-            update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
-        timing = _image_timing(prompt_id, user_id)
+            update_image_generation_status(prompt_id=prompt_id, status="failed")
+        timing = _image_timing(prompt_id)
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status=current_status,
@@ -780,30 +761,30 @@ def _history_generation_status(prompt_id: str, user_id: uuid.UUID) -> ImageGener
     status_name = str(comfy_status.get("status_str", ""))
     if status_name in {"error", "failed"}:
         if generation is None or generation.get("status") != "failed":
-            record_remote_error(comfy_status, operation=f"comfyui.image.history/{prompt_id}", user_id=user_id)
-        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
+            record_remote_error(comfy_status, operation=f"comfyui.image.history/{prompt_id}")
+        update_image_generation_status(prompt_id=prompt_id, status="failed")
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status="failed",
             progress=progress_state["progress"],
-            **_image_timing(prompt_id, user_id),
+            **_image_timing(prompt_id),
         )
     if comfy_status.get("completed") is True:
         raw_images = _raw_image_outputs(entry.get("outputs"))
-        _sync_generation_output(prompt_id, user_id, raw_images)
+        _sync_generation_output(prompt_id, raw_images)
         return ImageGenerationStatus(
             prompt_id=prompt_id,
             status="completed",
             progress=100,
-            images=_image_outputs(prompt_id, user_id, entry.get("outputs")),
-            **_image_timing(prompt_id, user_id),
+            images=_image_outputs(prompt_id, entry.get("outputs")),
+            **_image_timing(prompt_id),
         )
-    update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="processing")
+    update_image_generation_status(prompt_id=prompt_id, status="processing")
     return ImageGenerationStatus(
         prompt_id=prompt_id,
         status="processing",
         progress=progress_state["progress"],
-        **_image_timing(prompt_id, user_id),
+        **_image_timing(prompt_id),
     )
 
 
@@ -811,29 +792,29 @@ def _sse_message(event_name: str, data: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _require_owned_generation(prompt_id: str, user_id: uuid.UUID) -> dict[str, Any]:
-    generation = get_image_generation(prompt_id, user_id)
+def _require_generation(prompt_id: str) -> dict[str, Any]:
+    generation = get_image_generation(prompt_id)
     if generation is None:
         raise HTTPException(status_code=404, detail="생성 결과를 찾을 수 없습니다.")
     return generation
 
 
-def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dict[str, Any]]) -> None:
+def _sync_generation_output(prompt_id: str, images: list[dict[str, Any]]) -> None:
     image = images[0] if images else None
     if not isinstance(image, dict):
-        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
+        update_image_generation_status(prompt_id=prompt_id, status="completed")
         return
     filename = image.get("filename")
     if not isinstance(filename, str) or not filename:
-        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
+        update_image_generation_status(prompt_id=prompt_id, status="completed")
         return
     subfolder = image.get("subfolder", "")
     image_type = image.get("type", "output")
     if not isinstance(subfolder, str) or not isinstance(image_type, str):
-        update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="completed")
+        update_image_generation_status(prompt_id=prompt_id, status="completed")
         return
 
-    generation = get_image_generation(prompt_id, user_id)
+    generation = get_image_generation(prompt_id)
     storage_file_id = generation.get("storage_file_id") if generation else None
     size_bytes: int | None = None
     if storage_enabled() and not storage_file_id:
@@ -843,18 +824,16 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
             storage_file_id = storage_upload_file(
                 content=content,
                 media_type=media_type or "image/png",
-                owner_id=str(user_id),
             )
             size_bytes = len(content)
         except StorageError as exc:
-            update_image_generation_status(prompt_id=prompt_id, user_id=user_id, status="failed")
+            update_image_generation_status(prompt_id=prompt_id, status="failed")
             raise _ComfyUIError(str(exc)) from exc
 
     path_parts = [image_type, subfolder, filename]
     file_path = "/".join(part for part in path_parts if part)
     update_image_generation_status(
         prompt_id=prompt_id,
-        user_id=user_id,
         status="completed",
         file_path=file_path,
         storage_file_id=storage_file_id if isinstance(storage_file_id, str) else None,
@@ -869,11 +848,10 @@ def _sync_generation_output(prompt_id: str, user_id: uuid.UUID, images: list[dic
 def view_generated_image(
     prompt_id: str,
     filename: str = Query(min_length=1, max_length=255),
-    subfolder: str = Query(default="", max_length=255),
-    image_type: str = Query(default="output", alias="type", max_length=32),
-    user: UserResponse = Depends(current_user),
+    subfolder: str = Query(default='', max_length=255),
+    image_type: str = Query(default='output', alias='type', max_length=32),
 ) -> Response:
-    generation = _require_owned_generation(prompt_id, user.id)
+    generation = _require_generation(prompt_id)
     if (
         generation["filename"] != filename
         or generation["subfolder"] != subfolder
@@ -884,7 +862,7 @@ def view_generated_image(
     if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
         try:
             return RedirectResponse(
-                storage_read_url(file_id=storage_file_id, owner_id=str(user.id)),
+                storage_read_url(file_id=storage_file_id),
                 status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             )
         except StorageError as exc:
@@ -1318,7 +1296,7 @@ def _build_qwen21_edit_prompt(payload: ImageGenerationRequest, input_image: str,
     return graph, seed
 
 
-def _stored_image_outputs(generation: dict[str, Any], user_id: uuid.UUID) -> list[ImageOutput]:
+def _stored_image_outputs(generation: dict[str, Any]) -> list[ImageOutput]:
     filename = generation.get("filename")
     if not isinstance(filename, str) or not filename:
         return []
@@ -1328,20 +1306,20 @@ def _stored_image_outputs(generation: dict[str, Any], user_id: uuid.UUID) -> lis
         return []
     storage_file_id = generation.get("storage_file_id")
     if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
-        url = storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+        url = storage_read_url(file_id=storage_file_id)
     else:
         url = _legacy_image_url(generation["prompt_id"], filename, subfolder, image_type)
     return [ImageOutput(url=url, filename=filename, subfolder=subfolder, type=image_type)]
 
 
-def _image_outputs(prompt_id: str, user_id: uuid.UUID, outputs: Any) -> list[ImageOutput]:
+def _image_outputs(prompt_id: str, outputs: Any) -> list[ImageOutput]:
     result = []
-    generation = get_image_generation(prompt_id, user_id)
+    generation = get_image_generation(prompt_id)
     storage_file_id = generation.get("storage_file_id") if generation else None
     storage_url = None
     if storage_enabled() and isinstance(storage_file_id, str) and storage_file_id:
         try:
-            storage_url = storage_read_url(file_id=storage_file_id, owner_id=str(user_id))
+            storage_url = storage_read_url(file_id=storage_file_id)
         except StorageError as exc:
             raise _ComfyUIError(str(exc)) from exc
 

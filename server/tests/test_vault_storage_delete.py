@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -5,14 +6,13 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app import vault
-from app.auth import UserResponse
 from app.storage import StorageError
 
 
 class VaultDeleteTest(unittest.TestCase):
     def setUp(self) -> None:
         self.generation_id = uuid4()
-        self.user = UserResponse(id=uuid4(), username="tester")
+
 
     def test_storage_is_deleted_before_local_record(self) -> None:
         events: list[str] = []
@@ -27,7 +27,7 @@ class VaultDeleteTest(unittest.TestCase):
             patch.object(vault, "storage_delete_file", side_effect=lambda **_: events.append("storage")),
             patch.object(vault, "delete_image_generation", side_effect=lambda *_: events.append("database") or True),
         ):
-            response = vault.delete_vault_image(self.generation_id, self.user)
+            response = vault.delete_vault_image(self.generation_id)
 
         self.assertEqual(response.status_code, 204)
         self.assertEqual(events, ["storage", "database"])
@@ -45,7 +45,7 @@ class VaultDeleteTest(unittest.TestCase):
             patch.object(vault, "delete_image_generation") as delete_database,
         ):
             with self.assertRaises(HTTPException) as raised:
-                vault.delete_vault_image(self.generation_id, self.user)
+                vault.delete_vault_image(self.generation_id)
 
         self.assertEqual(raised.exception.status_code, 503)
         delete_database.assert_not_called()
@@ -57,11 +57,11 @@ class VaultDeleteTest(unittest.TestCase):
             patch.object(vault, "storage_delete_file") as delete_storage,
             patch.object(vault, "delete_image_generation", return_value=True) as delete_database,
         ):
-            response = vault.delete_vault_image(self.generation_id, self.user)
+            response = vault.delete_vault_image(self.generation_id)
 
         self.assertEqual(response.status_code, 204)
         delete_storage.assert_not_called()
-        delete_database.assert_called_once_with(self.generation_id, self.user.id)
+        delete_database.assert_called_once_with(self.generation_id)
 
 
 if __name__ == "__main__":

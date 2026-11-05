@@ -29,11 +29,8 @@ function storedId(kind: 'localStorage' | 'sessionStorage', key: string) {
 function send(path: string, payload: Record<string, unknown>) {
 	try {
 		if (typeof window === 'undefined') return;
-		let token: string | null = null;
-		try { token = localStorage.getItem('local-field.access-token'); } catch {}
 		const body = JSON.stringify(payload);
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-		if (token) headers.Authorization = `Bearer ${token}`;
 		void fetch(`${SERVER_URL.replace(/\/+$/, '')}/${path}`, {
 			method: 'POST', headers, body, keepalive: new TextEncoder().encode(body).byteLength <= 60_000,
 			signal: AbortSignal.timeout(5_000)

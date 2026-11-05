@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .auth import UserResponse, current_user
 from .comfyui import generation_progress
 from .database import (
     generation_elapsed_seconds,
@@ -44,17 +43,17 @@ class ActiveGeneration(BaseModel):
 
 
 @router.get("/active", response_model=list[ActiveGeneration])
-def active_generations(user: UserResponse = Depends(current_user)) -> list[ActiveGeneration]:
+def active_generations() -> list[ActiveGeneration]:
     def active_fields(generation: dict[str, Any], *, video: bool = False) -> dict[str, Any]:
         if video:
-            progress, aggregate_progress = _video_sequence_progress(generation, user.id)
+            progress, aggregate_progress = _video_sequence_progress(generation)
             return {
                 "progress": aggregate_progress,
                 "queue_position": progress["queue_position"],
                 **_video_sequence_fields(generation),
                 "elapsed_seconds": generation_elapsed_seconds(generation),
             }
-        progress = generation_progress(generation["prompt_id"], user.id)
+        progress = generation_progress(generation["prompt_id"])
         return {
             "progress": progress["progress"],
             "queue_position": progress["queue_position"],
@@ -72,7 +71,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 **active_fields(generation),
                 "created_at": generation["created_at"],
             }
-            for generation in list_active_image_generations(user.id)
+            for generation in list_active_image_generations()
         ),
         *(
             {
@@ -85,7 +84,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 **active_fields(generation, video=True),
                 "created_at": generation["created_at"],
             }
-            for generation in list_active_video_generations(user.id)
+            for generation in list_active_video_generations()
         ),
         *(
             {
@@ -101,7 +100,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 **active_fields(generation),
                 "created_at": generation["created_at"],
             }
-            for generation in list_active_three_d_generations(user.id)
+            for generation in list_active_three_d_generations()
         ),
         *(
             {
@@ -114,7 +113,7 @@ def active_generations(user: UserResponse = Depends(current_user)) -> list[Activ
                 **active_fields(generation),
                 "created_at": generation["created_at"],
             }
-            for generation in list_active_music_generations(user.id)
+            for generation in list_active_music_generations()
         ),
     ]
     return [ActiveGeneration.model_validate(row) for row in sorted(rows, key=lambda row: row["created_at"])]

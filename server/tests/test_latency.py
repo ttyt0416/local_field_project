@@ -35,14 +35,14 @@ class LatencyTest(unittest.TestCase):
         self.assertEqual(len({item['request_id'] for item in calls}), 1)
 
     def test_parent_request_and_user_are_captured_before_background_write(self):
-        user, parent = uuid4(), uuid4()
-        token = request_context.set({'user_id': user, 'request_id': parent, 'path': '/feature'})
+        parent = uuid4()
+        token = request_context.set({'request_id': parent, 'path': '/feature'})
         try:
             with patch.object(database, 'record_api_call') as record:
                 timer = latency.ApiTimer('POST', 'https://provider.test/api')
                 request_context.set(None)
                 timer.finish()
-            self.assertEqual(record.call_args.kwargs['user_id'], user)
+            self.assertNotIn('user_id', record.call_args.kwargs)
             self.assertEqual(record.call_args.kwargs['parent_request_id'], parent)
             self.assertEqual(record.call_args.kwargs['source'], 'upstream')
         finally:
@@ -91,27 +91,16 @@ class LatencyTest(unittest.TestCase):
         self.assertEqual(record.call_args.kwargs['outcome'], 'error')
 
     def test_storage_owner_is_retained_without_thread_request_context(self):
-        user_id = uuid4()
-        request = Request('https://storage.test/file', headers={'X-Owner-ID': str(user_id)})
+        request = Request('https://storage.test/file', headers={'X-Owner-ID': str()})
         with patch.object(database, 'record_api_call') as record:
             with latency.timed_urlopen(lambda *args: Response(b''), request) as response:
                 response.read()
-        self.assertEqual(record.call_args.kwargs['user_id'], user_id)
+        self.assertNotIn('user_id', record.call_args.kwargs)
 
-    def test_user_context_reaches_worker_and_is_restored(self):
-        user_id = uuid4()
-        async def run():
-            with latency.api_user(user_id):
-                result = await asyncio.to_thread(lambda: latency.ApiTimer('GET', '/worker').metadata['user_id'])
-            return result
-        self.assertEqual(asyncio.run(run()), user_id)
-        self.assertIsNone(request_context.get())
 
     def test_asgi_headers_first_body_and_full_stream_duration(self):
         now = [1.0]
-        user_id = uuid4()
         async def app(scope, receive, send):
-            scope['state']['user_id'] = user_id
             now[0] = 1.05
             await send({'type': 'http.response.start', 'status': 200, 'headers': [(b'content-type', b'text/event-stream')]})
             now[0] = 1.08
@@ -127,7 +116,7 @@ class LatencyTest(unittest.TestCase):
         self.assertEqual(calls[1]['first_byte_ms'], 80)
         self.assertEqual(calls[-1]['duration_ms'], 400)
         self.assertEqual(calls[-1]['source'], 'server')
-        self.assertEqual(calls[-1]['user_id'], user_id)
+        self.assertNotIn('user_id', record.call_args.kwargs)
         self.assertEqual([item['type'] for item in messages], ['http.response.start', 'http.response.body', 'http.response.body'])
 
     def test_asgi_error_and_client_disconnect_finish_metrics(self):
@@ -155,9 +144,9 @@ class LatencyTest(unittest.TestCase):
                                      request_id=request_id, requested_at=requested_at, duration_ms=123.456, outcome='completed')
         statement, parameters = record.call_args.args
         self.assertIn('ON CONFLICT (request_id)', statement)
-        self.assertEqual(parameters[6], request_id)
-        self.assertEqual(parameters[9], requested_at)
-        self.assertEqual(parameters[12], 123.456)
+        self.assertEqual(parameters[5], request_id)
+        self.assertEqual(parameters[8], requested_at)
+        self.assertEqual(parameters[11], 123.456)
 
     def test_upstream_url_does_not_store_credentials_or_query(self):
         self.assertEqual(latency.upstream_path('https://user:private@example.test:443/path?token=private#fragment'), 'https://example.test:443/path')

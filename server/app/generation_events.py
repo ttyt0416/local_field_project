@@ -5,8 +5,8 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 
-def generation_key(kind: str, user_id: object, prompt_id: str) -> str:
-    return f"{kind}:{user_id}:{prompt_id}"
+def generation_key(kind: str, prompt_id: str) -> str:
+    return f"{kind}:{prompt_id}"
 
 
 class GenerationEventBroker:

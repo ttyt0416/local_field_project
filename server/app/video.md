@@ -39,3 +39,7 @@ I2V와 FL2V는 shots와 두 sound field를, R2V는 추가로 subject_definitions
 ## API 레이턴시 기록
 
 영상 입력 파일 업로드 요청에 공통 HTTP 시간 측정을 적용한다. 공유 ComfyUI 호출은 comfyui 유틸을 재사용한다.
+
+## 공용 사용
+
+Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.

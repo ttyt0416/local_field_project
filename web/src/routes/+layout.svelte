@@ -2,7 +2,7 @@
 	import { browser } from '$app/environment';
 	import { afterNavigate } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { installInteractionAudit, trackWebEvent } from '$lib/utils/telemetry';
@@ -26,10 +26,9 @@
 	});
 
 	onMount(() => {
+		try { localStorage.removeItem('local-field.access-token'); } catch {}
 		themeStore.initialize();
-		void authStore.initialize().then(() => {
-			if (authStore.isAuthenticated) void generationJobStore.initialize();
-		});
+		void generationJobStore.initialize();
 		return installInteractionAudit();
 	});
 </script>

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
 from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from .audit import redact, request_context
 
@@ -26,24 +25,19 @@ def upstream_path(request: Any) -> str:
     return str(redact(urlunsplit((parsed.scheme, host, parsed.path, '', ''))))
 
 
-@contextmanager
-def api_user(user_id: Any):
-    token = request_context.set({**(request_context.get() or {}), 'user_id': user_id})
-    try:
-        yield
-    finally:
-        request_context.reset(token)
-
-
 class ApiTimer:
-    def __init__(self, method: str, path: str, *, source: str = 'upstream', user_id: Any = None,
-                 metadata: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        method: str,
+        path: str,
+        *,
+        source: str = 'upstream',
+        metadata: dict[str, Any] | None = None,
+    ):
         self.started = perf_counter()
         self.requested_at = datetime.now(timezone.utc)
         self.request_id = uuid4()
         self.metadata = dict(metadata if metadata is not None else request_context.get() or {})
-        if user_id is not None:
-            self.metadata['user_id'] = user_id
         self.method, self.path, self.source = method, path, source
         self.status_code = 0
         self.headers_ms: float | None = None
@@ -93,7 +87,7 @@ class ApiTimer:
             from .database import record_api_call
             record_api_call(method=self.method, path=self.path, status_code=self.status_code,
                             client_ip=self.metadata.get('client_ip'), user_agent=self.metadata.get('user_agent'),
-                            user_id=self.metadata.get('user_id'), source=self.source, request_id=self.request_id,
+                            source=self.source, request_id=self.request_id,
                             parent_request_id=self.metadata.get('request_id'), requested_at=self.requested_at,
                             headers_ms=self.headers_ms, first_byte_ms=self.first_byte_ms,
                             duration_ms=duration_ms, finished_at=finished_at, outcome=outcome)
@@ -159,13 +153,7 @@ class TimedResponse:
 
 def timed_urlopen(opener: Any, request: Any, *args, **kwargs):
     method = request.get_method() if hasattr(request, 'get_method') else 'GET'
-    owner_id = None
-    if hasattr(request, 'get_header'):
-        try:
-            owner_id = UUID(request.get_header('X-owner-id'))
-        except (TypeError, ValueError, AttributeError):
-            pass
-    timer = ApiTimer(method, upstream_path(request), user_id=owner_id)
+    timer = ApiTimer(method, upstream_path(request))
     try:
         response = opener(request, *args, **kwargs)
         timer.headers(getattr(response, 'status', 200))
@@ -200,7 +188,6 @@ class ApiTimingMiddleware:
             return message
 
         async def timed_send(message):
-            timer.metadata['user_id'] = state.get('user_id')
             if message['type'] == 'http.response.start':
                 timer.live = any(key.lower() == b'content-type' and value.lower().startswith(b'text/event-stream') for key, value in message.get('headers', []))
                 timer.headers(message['status'])
@@ -218,7 +205,6 @@ class ApiTimingMiddleware:
                 timer.status_code = 500
             raise
         finally:
-            timer.metadata['user_id'] = state.get('user_id')
             if not timer.finished:
                 if disconnected:
                     outcome = 'disconnected'

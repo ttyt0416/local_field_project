@@ -6,9 +6,8 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from .auth import UserResponse, current_user
 from .danbooru import DanbooruTagPage, DanbooruTagResponse, _like_escape
 from .database import get_connection
 
@@ -42,7 +41,7 @@ def list_tags(search: str, category: int | None, sort: str, page: int) -> tuple[
 
 
 @router.get("", response_model=DanbooruTagPage)
-def browse_tags(search: str = Query(default="", max_length=120), category: int | None = Query(default=None, ge=0, le=6), sort: Literal["match", "usage"] = "match", page: int = Query(default=1, ge=1), _: UserResponse = Depends(current_user)) -> DanbooruTagPage:
+def browse_tags(search: str=Query(default='', max_length=120), category: int | None=Query(default=None, ge=0, le=6), sort: Literal['match', 'usage']='match', page: int=Query(default=1, ge=1)) -> DanbooruTagPage:
     items, count = list_tags(search, category, sort, page)
     return DanbooruTagPage(items=[DanbooruTagResponse(**item) for item in items], page=page, page_size=50, total_count=count, total_pages=(count + 49) // 50)
 

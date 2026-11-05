@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import SimpleNamespace
 
 import hashlib
 import io
@@ -17,7 +18,6 @@ from fastapi import HTTPException
 
 from app import hugging_face as hf
 from app import model_downloads as models
-from app.auth import UserResponse
 from app.configs.constants import settings
 
 
@@ -113,25 +113,25 @@ class HuggingFaceTest(unittest.TestCase):
         self.assertNotIn("secret", str(raised.exception))
 
     def test_lookup_file_and_folder_links_only_return_requested_models(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with patch("app.model_downloads.hf.fetch_repository", return_value=REPOSITORY):
             for source in ("https://huggingface.co/owner/repo/tree/main/nested", "https://huggingface.co/owner/repo/blob/main/nested/model.safetensors"):
-                response = models.lookup_hugging_face_model(source, "", user)
+                response = models.lookup_hugging_face_model(source, "")
                 self.assertEqual(response.selected_file_path, "nested/model.safetensors")
                 self.assertEqual(response.revision, COMMIT)
             with self.assertRaises(HTTPException) as missing:
-                models.lookup_hugging_face_model("https://huggingface.co/owner/repo/blob/main/missing.safetensors", "", user)
+                models.lookup_hugging_face_model("https://huggingface.co/owner/repo/blob/main/missing.safetensors", "")
             self.assertEqual(missing.exception.status_code, 404)
 
     def test_download_queues_pinned_metadata_without_secret_or_signed_url(self) -> None:
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with TemporaryDirectory() as temporary:
             target = Path(temporary) / "loras/nested/model.safetensors"
             target.parent.mkdir(parents=True)
             row = {"id": uuid.uuid4(), "version_id": 0, "provider": "hugging_face", "source_repo": "owner/repo", "source_revision": COMMIT, "source_filename": "nested/model.safetensors", "model_type": "lora", "filename": target.name, "target_path": str(target), "status": "queued", "downloaded_bytes": 0, "total_bytes": None, "error_message": None, "created_at": datetime.now(timezone.utc), "completed_at": None}
             with patch("app.model_downloads.settings", replace(settings, comfyui_models_path=temporary)), patch("app.model_downloads.get_effective_token", return_value="secret"), patch("app.model_downloads.hf.fetch_repository", return_value=REPOSITORY), patch("app.model_downloads.create_model_download", return_value=row) as create:
                 payload = models.HuggingFaceDownloadRequest(repo_id="owner/repo", revision=COMMIT, filename="nested/model.safetensors", model_type="lora", subfolder="nested")
-                response = models.download_hugging_face_model(payload, user)
+                response = models.download_hugging_face_model(payload)
                 self.assertEqual(create.call_args.kwargs["source_revision"], COMMIT)
                 self.assertEqual(create.call_args.kwargs["target_path"], str(target))
                 self.assertNotIn("secret", json.dumps(create.call_args.kwargs, default=str))
@@ -139,7 +139,7 @@ class HuggingFaceTest(unittest.TestCase):
                 self.assertIsNone(response.version_id)
                 target.write_bytes(b"existing")
                 with self.assertRaises(HTTPException) as duplicate:
-                    models.download_hugging_face_model(payload, user)
+                    models.download_hugging_face_model(payload)
                 self.assertEqual(duplicate.exception.status_code, 409)
                 self.assertEqual(create.call_count, 1)
 
@@ -210,9 +210,9 @@ class HuggingFaceWorkerTest(unittest.TestCase):
         first.write_bytes(b"first")
         second.write_bytes(b"second")
         row = {**self.job, "filename": self.target.name, "status": "cancelled", "downloaded_bytes": 0, "total_bytes": None, "error_message": None, "created_at": datetime.now(timezone.utc), "completed_at": None}
-        user = UserResponse(id=uuid.uuid4(), username="tester")
+
         with patch("app.model_downloads.cancel_model_download", return_value=row):
-            models.cancel_download(self.job["id"], user)
+            models.cancel_download(self.job["id"])
         self.assertFalse(first.exists())
         self.assertEqual(second.read_bytes(), b"second")
 

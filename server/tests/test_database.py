@@ -57,16 +57,15 @@ class VideoGenerationStatusTest(unittest.TestCase):
     def test_model_download_active_filter_is_explicit(self) -> None:
         connection = RowsConnection()
         with patch.object(database, "get_connection", return_value=connection):
-            database.list_model_downloads(uuid4(), active_only=True)
+            database.list_model_downloads( active_only=True)
 
         self.assertIn("status IN ('queued', 'downloading')", connection.calls[0][0])
 
     def test_shared_generation_storage_reference_excludes_snapshot_ids(self) -> None:
         connection = ReturningConnection((True,))
-        user_id = uuid4()
         generation_ids = [uuid4()]
         with patch.object(database, "get_connection", return_value=connection):
-            result = database.has_generation_storage_reference_outside("file-1", user_id, generation_ids)
+            result = database.has_generation_storage_reference_outside("file-1", generation_ids)
 
         self.assertTrue(result)
         self.assertIn("image_generations", connection.calls[0][0])
@@ -76,9 +75,9 @@ class VideoGenerationStatusTest(unittest.TestCase):
         self.assertEqual(parameters[0:2], ("file-1", "file-1"))
         self.assertIn("reference_images @>", connection.calls[0][0])
         self.assertEqual(json.loads(parameters[2]), [{"file_id": "file-1"}])
-        self.assertEqual(parameters[4], generation_ids)
-        self.assertEqual(parameters[7], generation_ids)
-        self.assertEqual(parameters[11], generation_ids)
+        self.assertEqual(parameters[3], generation_ids)
+        self.assertEqual(parameters[5], generation_ids)
+        self.assertEqual(parameters[8], generation_ids)
 
     def test_create_image_generation_reads_returning_cursor(self) -> None:
         generation_id = uuid4()
@@ -87,7 +86,6 @@ class VideoGenerationStatusTest(unittest.TestCase):
 
         with patch.object(database, "get_connection", return_value=connection):
             result = database.create_image_generation(
-                user_id=uuid4(),
                 prompt_id="image-prompt",
                 client_id="image-client",
                 prompt="prompt",
@@ -116,12 +114,10 @@ class VideoGenerationStatusTest(unittest.TestCase):
     def test_create_image_edit_copies_source_and_overrides_media_metadata(self) -> None:
         edited_id = uuid4()
         connection = ReturningConnection((edited_id,))
-        user_id = uuid4()
         source_id = uuid4()
 
         with patch.object(database, "get_connection", return_value=connection):
             result = database.create_image_edit(
-                user_id=user_id,
                 source_generation_id=source_id,
                 storage_file_id="edited-file",
                 filename="edited.png",
@@ -133,17 +129,15 @@ class VideoGenerationStatusTest(unittest.TestCase):
         query, parameters = connection.calls[0]
         self.assertEqual(result, edited_id)
         self.assertIn("source_generation_id, is_edited", query)
-        self.assertEqual(parameters[-2:], (source_id, user_id))
+        self.assertEqual(parameters[-1:], (source_id,))
 
     def test_create_video_edit_copies_source_and_overrides_media_metadata(self) -> None:
         edited_id = uuid4()
         connection = ReturningConnection((edited_id,))
-        user_id = uuid4()
         source_id = uuid4()
 
         with patch.object(database, "get_connection", return_value=connection):
             result = database.create_video_edit(
-                user_id=user_id,
                 source_generation_id=source_id,
                 storage_file_id="edited-file",
                 filename="edited.mp4",
@@ -156,7 +150,7 @@ class VideoGenerationStatusTest(unittest.TestCase):
         query, parameters = connection.calls[0]
         self.assertEqual(result, edited_id)
         self.assertIn("source_generation_id, is_edited", query)
-        self.assertEqual(parameters[-2:], (source_id, user_id))
+        self.assertEqual(parameters[-1:], (source_id,))
 
     def test_create_video_generation_reads_returning_cursor(self) -> None:
         generation_id = uuid4()
@@ -165,7 +159,6 @@ class VideoGenerationStatusTest(unittest.TestCase):
 
         with patch.object(database, "get_connection", return_value=connection):
             result = database.create_video_generation(
-                user_id=uuid4(),
                 prompt_id="video-prompt",
                 client_id="video-client",
                 mode="r2v",
@@ -201,29 +194,27 @@ class VideoGenerationStatusTest(unittest.TestCase):
         self.assertEqual(result, (generation_id, created_at))
         query, parameters = connection.calls[0]
         self.assertIn("input_segment_prompts, improved_segment_prompts", query)
-        self.assertEqual(parameters[6], "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors")
-        self.assertEqual(parameters[7:9], ("2:3", 0.2))
+        self.assertEqual(parameters[5], "MiniMaxH3/minimax_h3_ref2va_pruned_int8_convrot.safetensors")
+        self.assertEqual(parameters[6:8], ("2:3", 0.2))
         self.assertEqual(
-            parameters[9:18],
+            parameters[8:17],
             ("learned_3d", 0.2, 352, 528, 0.4, 512, 768, 512 / 352, "minimax_h3_latent_upscaler_3d_fp16.safetensors"),
         )
-        self.assertEqual(json.loads(str(parameters[18])), [])
-        self.assertEqual(parameters[19:22], (8, "euler", "normal"))
+        self.assertEqual(json.loads(str(parameters[17])), [])
+        self.assertEqual(parameters[18:21], (8, "euler", "normal"))
+        self.assertTrue(parameters[21])
         self.assertTrue(parameters[22])
-        self.assertTrue(parameters[23])
-        self.assertEqual(json.loads(str(parameters[32])), ["input 1", "input 2"])
-        self.assertEqual(json.loads(str(parameters[33])), ["improved 1", "improved 2"])
-        self.assertEqual(parameters[35], "i2v")
-        self.assertEqual(json.loads(str(parameters[36])), ["a" * 32])
+        self.assertEqual(json.loads(str(parameters[31])), ["input 1", "input 2"])
+        self.assertEqual(json.loads(str(parameters[32])), ["improved 1", "improved 2"])
+        self.assertEqual(parameters[34], "i2v")
+        self.assertEqual(json.loads(str(parameters[35])), ["a" * 32])
 
     def test_nullable_media_metadata_is_typed_and_preserved(self) -> None:
         connection = FakeConnection()
-        user_id = uuid4()
 
         with patch.object(database, "get_connection", return_value=connection):
             database.update_video_generation_status(
                 prompt_id="video-prompt",
-                user_id=user_id,
                 status="processing",
             )
 
@@ -235,12 +226,10 @@ class VideoGenerationStatusTest(unittest.TestCase):
 
     def test_completed_media_metadata_is_written(self) -> None:
         connection = FakeConnection()
-        user_id = uuid4()
 
         with patch.object(database, "get_connection", return_value=connection):
             database.update_video_generation_status(
                 prompt_id="video-prompt",
-                user_id=user_id,
                 status="completed",
                 filename="result.mp4",
                 subfolder="renders",

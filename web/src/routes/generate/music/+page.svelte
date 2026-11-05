@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { AudioLines, Download, Music, Sparkles, X } from '@lucide/svelte';
 	import Layout from '../../../../components/layouts/layout.svelte';
 	import LoadingSpinner from '../../../../components/loadings/loading-spinner.svelte';
@@ -8,7 +8,7 @@
 	import PrimaryButton from '../../../../components/buttons/primary-button.svelte';
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { apiJson } from '$lib/utils/api';
 	import { downloadMedia } from '$lib/utils/download';
@@ -118,11 +118,6 @@
 	});
 
 	async function initialize() {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await generationJobStore.initialize();
 		try {
 			const [options, latest] = await Promise.all([

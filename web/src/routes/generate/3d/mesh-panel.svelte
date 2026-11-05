@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+
 	import { Box, HardDrive, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../../../../components/media/image.svelte';
 	import ModelViewer from '../../../../components/media/model-viewer.svelte';
@@ -11,7 +11,7 @@
 	import Toast from '../../../../components/feedback/toast.svelte';
 	import Typography from '../../../../components/typography/typography.svelte';
 	import MeshSourceModal, { type MeshSourceSelection, type StoredMeshSource } from './mesh-source-modal.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore, type GenerationJobStatus } from '$lib/stores/generation-jobs.svelte';
 	import { apiForm, apiJson } from '$lib/utils/api';
 	import { formatElapsedSeconds } from '$lib/utils/generation';
@@ -117,11 +117,6 @@
 	});
 
 	async function initialize() {
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await generationJobStore.initialize();
 		const existing = generationJobStore.list.find((job) => job.kind === '3d' && job.generationMode !== 'rigging' && (job.status === 'queued' || job.status === 'processing'));
 		if (existing) { jobKey = existing.key; generating = true; }

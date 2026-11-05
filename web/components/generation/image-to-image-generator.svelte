@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import PromptLibrary from '../prompts/prompt-library.svelte';
-	import { goto } from '$app/navigation';
+
 	import { ArrowLeftRight, Check, ChevronLeft, ChevronRight, FolderOpen, HardDrive, ImagePlus, Save, Sparkles, X } from '@lucide/svelte';
 	import ImageMedia from '../media/image.svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
@@ -16,7 +16,7 @@
 	import Typography from '../typography/typography.svelte';
 	import SamplingSelectionModal from '../presets/sampling-selection-modal.svelte';
 	import ImagePresetModal from '../presets/image-preset-modal.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { imageGenerationStore, type ImageGenerationParameters } from '$lib/stores/image-generation.svelte';
 	import { apiBlob, apiForm, apiJson } from '$lib/utils/api';
@@ -232,12 +232,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	});
 
 	async function initialize() {
-
-		await authStore.initialize();
-		if (!authStore.isAuthenticated) {
-			await goto('/login');
-			return;
-		}
 		await generationJobStore.initialize();
 		if (!active) return;
 		regenerationParameters = imageGenerationStore.consume();

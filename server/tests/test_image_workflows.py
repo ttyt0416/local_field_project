@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -13,7 +14,6 @@ from pydantic import ValidationError
 from model_fixtures import model_object_info
 
 from app import comfyui
-from app.auth import UserResponse
 from app.configs.constants import settings
 
 
@@ -130,7 +130,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
             source=comfyui.ImageSource(file_id="a" * 32),
             references=[comfyui.ImageSource(file_id="b" * 32), comfyui.ImageSource(file_id="c" * 32)],
         )
-        async def resolve(source, files, user):
+        async def resolve(source, files):
             return source.file_id, source.file_id + ".png", b"image", "image/png"
         with (
             patch.object(comfyui, "_image_options"), patch.object(comfyui, "_validate_model_choice"),
@@ -138,7 +138,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
             patch.object(comfyui, "_upload_comfy_input", side_effect=lambda content, filename, media_type: filename),
             patch.object(comfyui, "_submit_image_generation") as submit,
         ):
-            asyncio.run(comfyui.create_image_to_image_generation(payload=request.model_dump_json(), files=[], user=UserResponse(id=uuid4(), username="tester")))
+            asyncio.run(comfyui.create_image_to_image_generation(payload=request.model_dump_json(), files=[]))
         self.assertEqual(submit.call_args.kwargs["input_references"], ["b" * 32 + ".png", "c" * 32 + ".png"])
         self.assertEqual([item["file_id"] for item in submit.call_args.kwargs["reference_images"]], ["b" * 32, "c" * 32])
 
@@ -244,7 +244,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
         payload.negative_prompt_prefix = "bad anatomy"
         payload.prompt_enhancement_enabled = True
         payload.improved_prompt = "improved portrait"
-        user = UserResponse(id=uuid4(), username="tester")
+
         created_at = datetime.now(timezone.utc)
         with (
             patch.object(comfyui, "_image_options"),
@@ -252,7 +252,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
             patch.object(comfyui, "_request_json", side_effect=lambda method, *args: model_object_info() if method == "GET" else {"prompt_id": "comfy-prompt"}),
             patch.object(comfyui, "create_image_generation_record", return_value=(uuid4(), created_at)) as create_record,
         ):
-            comfyui._submit_image_generation(payload, user)
+            comfyui._submit_image_generation(payload)
 
         self.assertEqual(create_record.call_args.kwargs["prompt"], "1girl, portrait")
         self.assertEqual(create_record.call_args.kwargs["improved_prompt"], "improved portrait")
@@ -293,7 +293,7 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
 
     def test_i2i_reuses_owner_checked_generated_image_without_upload(self) -> None:
         source_file_id = "f" * 32
-        user = UserResponse(id=uuid4(), username="tester")
+
         source = comfyui.ImageSource(file_id=source_file_id)
         generated = {
             "file_id": source_file_id,
@@ -309,14 +309,13 @@ class ImageWorkflowFamilyTest(unittest.TestCase):
             patch.object(comfyui, "storage_upload_file") as upload,
             patch.object(comfyui, "create_media_asset") as create_asset,
         ):
-            result = asyncio.run(comfyui._resolve_image_source(source, [], user))
+            result = asyncio.run(comfyui._resolve_image_source(source, []))
 
         self.assertEqual(result, (source_file_id, "generated-image.png", b"image-bytes", "image/png"))
-        get_media.assert_called_once_with(source_file_id, user.id)
-        download.assert_called_once_with(file_id=source_file_id, owner_id=str(user.id))
+        get_media.assert_called_once_with(source_file_id)
+        download.assert_called_once_with(file_id=source_file_id)
         upload.assert_not_called()
         create_asset.assert_called_once_with(
-            user_id=user.id,
             storage_file_id=source_file_id,
             filename="generated-image.png",
             content_type="image/png",

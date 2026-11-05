@@ -26,10 +26,10 @@ try {
 	assert(latest().target_context.dialog_label === '모델 폴더 선택', 'dialog heading distinguishes repeated buttons');
 	assert(latest().target_id && latest().target_path.includes('button'), 'missing ID receives exact DOM path');
 	assert(Boolean(latest().event_id && latest().client_occurred_at && latest().visitor_id && latest().session_id), 'event identity and precise client time');
-	assert((requests.at(-1)!.options.headers as Record<string, string>).Authorization === 'Bearer synthetic-audit-token', 'who is authenticated by server');
+	assert((requests.at(-1)!.options.headers as Record<string, string>).Authorization === undefined, 'legacy account token is never sent');
 	const visitor = latest().visitor_id;
 	const session = latest().session_id;
-	const pages = ['/', '/login', '/models', '/files', '/presets', '/prompts', '/tags', '/uploads', '/uploads/sample', '/vault', '/vault/images/sample', '/vault/videos/sample', '/vault/3d/sample', '/generate/image', '/generate/image-to-image', '/generate/video', '/generate/music', '/generate/3d'];
+	const pages = ['/', '/models', '/files', '/presets', '/prompts', '/tags', '/uploads', '/uploads/sample', '/vault', '/vault/images/sample', '/vault/videos/sample', '/vault/3d/sample', '/generate/image', '/generate/image-to-image', '/generate/video', '/generate/music', '/generate/3d'];
 	for (const page of pages) {
 		history.replaceState({}, '', page + '?test=1#position');
 		fixture.querySelector('p')!.click();
