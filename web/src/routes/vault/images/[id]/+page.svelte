@@ -198,7 +198,7 @@
 		});
 		try {
 			const route = generation.generation_mode === 'i2i' ? '/generate/image-to-image' : '/generate/image';
-			await goto(`${route}?family=${generation.model_family}`);
+			await goto(route);
 		} catch (reason) {
 			error = reason instanceof Error ? reason.message : '이미지 생성 페이지로 이동하지 못했습니다.';
 		}

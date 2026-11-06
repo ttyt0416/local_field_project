@@ -80,7 +80,7 @@
 			<span>즐겨찾기</span>
 		</a>
 		<a
-			href="/generate/image?family=anima"
+			href="/generate/image"
 			data-sveltekit-reload
 			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
 			onclick={close}
@@ -89,7 +89,7 @@
 			<span>T2I</span>
 		</a>
 		<a
-			href="/generate/image-to-image?family=anima"
+			href="/generate/image-to-image"
 			data-sveltekit-reload
 			class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
 			onclick={close}
