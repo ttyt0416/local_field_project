@@ -1,19 +1,10 @@
 import fs from 'node:fs';
-import ts from 'typescript';
 import { rolldown } from 'rolldown';
 
-const options = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 };
-const compile = (source) => ts.transpileModule(source, { compilerOptions: options }).outputText;
-const utility = compile(fs.readFileSync(new URL('../src/lib/utils/telemetry.ts', import.meta.url), 'utf8')
-	.replace(/^import .*$/m, "const SERVER_URL = 'http://api.example.test';")).replace(/^export /gm, '');
-const tests = compile(fs.readFileSync(new URL('./telemetry.test.ts', import.meta.url), 'utf8')
-	.replace(/^import .*$/m, '')).replace(/^export \{\};?$/gm, '');
 const template = fs.readFileSync(new URL('./telemetry.test.html', import.meta.url), 'utf8');
-const output = new URL('../static/audit-check.html', import.meta.url);
-fs.writeFileSync(output, template.replace('<script type="module" src="./telemetry.test.ts"></script>', () => `<script type="module">${utility}\n${tests}</script>`));
-console.log(`Prepared ${output.pathname}; remove this generated file after browser verification.`);
 
-for (const name of ['api-latency', 'image-timing']) {
+for (const name of ['telemetry', 'api-latency', 'image-timing']) {
+	const outputName = name === 'telemetry' ? 'audit' : name;
 	const bundle = await rolldown({
 		input: new URL(`./${name}.test.ts`, import.meta.url).pathname,
 		plugins: [{
@@ -28,7 +19,7 @@ for (const name of ['api-latency', 'image-timing']) {
 	try {
 		const generated = await bundle.generate({ format: 'esm' });
 		const code = generated.output.find((item) => item.type === 'chunk').code;
-		fs.writeFileSync(new URL(`../static/${name}-check.html`, import.meta.url), template.replace('<script type="module" src="./telemetry.test.ts"></script>', () => `<script type="module">${code}</script>`));
+		fs.writeFileSync(new URL(`../static/${outputName}-check.html`, import.meta.url), template.replace('<script type="module" src="./telemetry.test.ts"></script>', () => `<script type="module">${code}</script>`));
 	} finally { await bundle.close(); }
-	console.log(`Prepared ${name}-check.html; remove it after browser verification.`);
+	console.log(`Prepared ${outputName}-check.html; remove it after browser verification.`);
 }

@@ -16,6 +16,8 @@ fetch는 void로 호출하고 완료를 기다리지 않는다. 작은 본문은
 
 startApiTiming은 performance.now로 headers_ms/first_byte_ms/duration_ms를 구분하고 시작 페이지·UTC 시각·UUID·세션을 보존한다. 정상/HTTP 오류/연결 오류/타임아웃/취소를 기록하며 종료 기록은 한 번만 보낸다. /web/api-timings 전송은 기다리지 않고 기존 send를 재사용한다. 기록 요청 자체를 브라우저에서 재측정하지 않아 재귀 전송을 막으며 서버에서는 해당 요청도 측정한다.
 
+이미지 생성 요청과 완료 이벤트 SSE는 요청 직후 in_progress를 남기고 시작·현재 browser_focus 스냅샷을 timing_context에 포함한다. 생성 요청 전에 브라우저 밖으로 포커스가 갔다 온 이력을 보존하며, 같은 page_instance_id로 이미지 진단 단계들과 비교한다. API 요청·타임아웃·SSE 재연결 동작은 바꾸지 않는다.
+
 ## 공용 사용
 
 Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.

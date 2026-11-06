@@ -1,5 +1,6 @@
 import { SERVER_URL } from '$lib/configs/constants';
 import { recordImageTiming, reportApiError } from './telemetry';
+import { browserFocusContext, installBrowserFocusTracking } from './browser-focus';
 
 type ImageTiming = {
 	ready: (displayedSource: string, bytes?: number) => void;
@@ -7,6 +8,20 @@ type ImageTiming = {
 	fail: (error: unknown) => void;
 	dispose: () => void;
 };
+
+export function installImageFocusTracking() {
+	return installBrowserFocusTracking((focus, event) => {
+		try {
+			const at = new Date().toISOString();
+			recordImageTiming({
+				request_id: crypto.randomUUID(), api_path: 'browser.focus',
+				page_path: `${location.pathname}${location.search}${location.hash}`,
+				requested_at: at, finished_at: at, duration_ms: 0, status_code: 0, outcome: 'completed',
+				timing_context: { category: 'image', stage: 'browser_focus_change', focus_event: event, browser_focus: focus }
+			});
+		} catch {}
+	});
+}
 
 export function imageSourceContext(source: string) {
 	try {
@@ -31,7 +46,7 @@ export function recordImageCompletion(source: string | undefined, promptId: stri
 			page_path: `${location.pathname}${location.search}${location.hash}`,
 			requested_at: at, finished_at: at, duration_ms: 0, status_code: 0, outcome: 'completed',
 			timing_context: { ...context, category: 'image', stage: 'generation_result_received',
-				prompt_id: promptId, generation_id: generationId, has_image_url: Boolean(source) }
+				prompt_id: promptId, generation_id: generationId, has_image_url: Boolean(source), browser_focus: browserFocusContext() }
 		});
 	} catch {}
 }
@@ -68,8 +83,10 @@ function createImageTiming(source: string, sourceType: string, view: string): Im
 	const pagePath = `${location.pathname}${location.search}${location.hash}`;
 	const requestId = crypto.randomUUID();
 	const sourceContext = imageSourceContext(source);
+	const focusAtStart = browserFocusContext();
 	const context: Record<string, unknown> = {
 		...sourceContext, category: 'image', stage: 'image_load', source_type: sourceType, view,
+		browser_focus_at_start: focusAtStart,
 		visibility_at_start: document.visibilityState,
 		url_valid_for_ms: sourceContext.url_expires_at_ms === undefined ? undefined : sourceContext.url_expires_at_ms - Date.now()
 	};
@@ -94,6 +111,7 @@ function createImageTiming(source: string, sourceType: string, view: string): Im
 		try {
 			const now = performance.now();
 			const resource = resourceTiming(image?.currentSrc || displayedSource, assignedAt, now);
+			const focus = browserFocusContext();
 			recordImageTiming({
 				request_id: requestId, api_path: sourceContext.source_path, page_path: pagePath,
 				requested_at: requestedAt, finished_at: outcome === 'in_progress' ? undefined : new Date().toISOString(),
@@ -102,6 +120,9 @@ function createImageTiming(source: string, sourceType: string, view: string): Im
 				status_code: resource.response_status ?? 0, outcome,
 				timing_context: {
 					...context, ...resource, elapsed_ms: now - start, visibility: document.visibilityState,
+					browser_focus: focus,
+					unfocused_during_load_ms: focus.tracking_active && focusAtStart.tracking_active
+						? Math.max(0, (focus.unfocused_total_ms ?? 0) - (focusAtStart.unfocused_total_ms ?? 0)) : null,
 					hidden_ms: hiddenMs + (hiddenAt === undefined ? 0 : now - hiddenAt),
 					document_has_focus: document.hasFocus(), loading: image?.loading,
 					in_viewport: inViewport,

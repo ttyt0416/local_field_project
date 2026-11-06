@@ -1,4 +1,5 @@
 import { SERVER_URL } from '$lib/configs/constants';
+import { browserFocusContext } from './browser-focus';
 
 export type WebEvent = {
 	event_type: 'click' | 'route' | 'pointerdown' | 'change' | 'submit' | 'keyboard' | 'media';
@@ -188,6 +189,8 @@ export function startApiTiming(path: string, method: string, streaming = false) 
 	let firstByteMs: number | undefined;
 	let statusCode = 0;
 	let finished = false;
+	const imageGeneration = /^\/?generation\/image(?:\/[^/?]+\/events)?(?:\?|$)/.test(path);
+	const focusAtStart = imageGeneration ? browserFocusContext() : undefined;
 	try {
 		start = performance.now();
 		pagePath = `${location.pathname}${location.search}${location.hash}`;
@@ -204,11 +207,16 @@ export function startApiTiming(path: string, method: string, streaming = false) 
 				requested_at: requestedAt, finished_at: complete ? new Date().toISOString() : undefined,
 				headers_ms: headersMs, first_byte_ms: firstByteMs,
 				duration_ms: complete ? elapsed() : undefined, status_code: statusCode, outcome,
+				timing_context: imageGeneration ? {
+					category: 'image', stage: streaming ? 'generation_events' : 'generation_request',
+					browser_focus_at_start: focusAtStart, browser_focus: browserFocusContext()
+				} : undefined,
 				visitor_id: storedId('localStorage', 'local-field.audit-visitor-id'),
 				session_id: storedId('sessionStorage', 'local-field.audit-session-id')
 			});
 		} catch {}
 	};
+	if (imageGeneration) record('in_progress', false);
 	return {
 		headers(status: number) {
 			try {

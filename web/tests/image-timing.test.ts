@@ -1,9 +1,16 @@
-import { imageSourceContext, recordImageCompletion, startImageTiming } from '../src/lib/utils/image-timing';
+import { imageSourceContext, installImageFocusTracking, recordImageCompletion, startImageTiming } from '../src/lib/utils/image-timing';
+import { browserFocusContext, installBrowserFocusTracking } from '../src/lib/utils/browser-focus';
+import { startApiTiming } from '../src/lib/utils/telemetry';
 
 const result = document.querySelector<HTMLOutputElement>('#result')!;
 const originalFetch = window.fetch;
 const originalEntries = performance.getEntriesByName.bind(performance);
 const originalTimeout = window.setTimeout;
+const originalFocus = Object.getOwnPropertyDescriptor(document, 'hasFocus');
+const originalVisibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+let focused = true;
+let disposeFocus = () => {};
 const metrics: Record<string, any>[] = [];
 let checks = 0;
 const signed = 'https://storage.example/files/test-file?expires=2000000000&signature=never-log-this';
@@ -28,6 +35,64 @@ window.fetch = ((url: string | URL | Request, options: RequestInit) => {
 }) as typeof fetch;
 
 try {
+	Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => focused });
+	Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+	Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+	disposeFocus = installImageFocusTracking();
+	const pageId = browserFocusContext().page_instance_id;
+	assert(last().timing_context.focus_event === 'tracking_started' && Boolean(pageId), 'focus tracking starts before generation and has one page identity');
+	focused = false;
+	window.dispatchEvent(new Event('blur'));
+	await delay(15);
+	focused = true;
+	window.dispatchEvent(new Event('focus'));
+	const returned = browserFocusContext();
+	assert(returned.last_unfocused_ms! >= 10 && returned.visibility === 'visible', 'app focus interval measured even when tab stays visible');
+	assert(returned.last_blur_at && returned.last_focus_at && returned.focus_count === 1 && returned.blur_count === 1, 'focus return keeps prior blur and return times');
+	const generation = startApiTiming('generation/image', 'POST');
+	const submitted = metrics.at(-1)!;
+	assert(submitted.outcome === 'in_progress' && submitted.timing_context.stage === 'generation_request', 'generation request recorded before waiting for response');
+	assert(submitted.timing_context.browser_focus_at_start.page_instance_id === pageId && submitted.timing_context.browser_focus_at_start.last_unfocused_ms >= 10, 'generation after return retains app focus history');
+	generation.headers(202);
+	generation.finish();
+	const events = startApiTiming('generation/image/prompt-id/events?client_id=test', 'GET', true);
+	events.headers(200);
+	events.firstByte();
+	events.finish();
+	assert(metrics.at(-1)!.timing_context.stage === 'generation_events' && metrics.at(-1)!.timing_context.browser_focus.page_instance_id === pageId, 'generation SSE joins to same page focus history');
+	const afterReturn = startImageTiming(signed, 'external');
+	afterReturn.ready(pixel);
+	const returnedImage = imageFixture();
+	afterReturn.observe(returnedImage);
+	returnedImage.dispatchEvent(new Event('load'));
+	assert(last().timing_context.browser_focus_at_start.last_unfocused_ms >= 10 && last().timing_context.unfocused_during_load_ms === 0, 'prior app switch distinguished from a switch during image loading');
+	const duringLoad = startImageTiming(signed, 'external');
+	const duringId = last().request_id;
+	duringLoad.ready(pixel);
+	const waitingImage = imageFixture();
+	duringLoad.observe(waitingImage);
+	focused = false;
+	window.dispatchEvent(new Event('blur'));
+	await delay(15);
+	focused = true;
+	window.dispatchEvent(new Event('focus'));
+	waitingImage.dispatchEvent(new Event('load'));
+	const duringMetric = metrics.findLast((entry) => entry.request_id === duringId)!;
+	assert(duringMetric.timing_context.unfocused_during_load_ms >= 10 && duringMetric.timing_context.hidden_ms === 0, 'blur duration and hidden tab duration measured independently');
+	assert(duringMetric.timing_context.browser_focus_at_start.focus_count === 1 && duringMetric.timing_context.browser_focus.focus_count === 2, 'start focus snapshot stays immutable across load');
+	const sequence = browserFocusContext().transition_sequence;
+	document.createElement('input').dispatchEvent(new Event('blur', { bubbles: true }));
+	window.dispatchEvent(new Event('focus'));
+	assert(browserFocusContext().transition_sequence === sequence, 'element and duplicate focus events do not create fake app switches');
+	for (let index = 0; index < 8; index++) {
+		focused = false; window.dispatchEvent(new Event('blur'));
+		focused = true; window.dispatchEvent(new Event('focus'));
+	}
+	assert(browserFocusContext().recent_transitions?.length === 12 && browserFocusContext().transition_sequence! > 12, 'focus history is bounded while counters retain all transitions');
+	const sharedDispose = installBrowserFocusTracking();
+	sharedDispose();
+	sharedDispose();
+	assert(browserFocusContext().tracking_active && browserFocusContext().page_instance_id === pageId, 'shared install cleanup is idempotent and keeps root tracker active');
 	const context = imageSourceContext(signed);
 	assert(context.file_id === 'test-file' && context.source_path === 'https://storage.example/files/test-file', 'stable file ID and query-free source');
 	assert(context.url_expires_at_ms === 2000000000000, 'signed URL expiry recorded without signature');
@@ -104,6 +169,7 @@ try {
 
 	recordImageCompletion(signed, 'prompt-id', 'generation-id');
 	assert(last().timing_context.stage === 'generation_result_received' && last().timing_context.prompt_id === 'prompt-id', 'generation delivery joins to stable image file ID');
+	assert(last().timing_context.browser_focus.page_instance_id === pageId && last().timing_context.browser_focus.last_focus_at, 'generation result keeps focus history from before generation');
 	recordImageCompletion(undefined, 'missing-image', 'generation-id');
 	assert(last().timing_context.has_image_url === false, 'completion without image URL is visible');
 	assert(!JSON.stringify(metrics).includes('never-log-this') && !JSON.stringify(metrics).includes('<svg'), 'signed credentials and image bytes excluded from every log');
@@ -111,6 +177,12 @@ try {
 	const offline = startImageTiming(signed, 'external');
 	offline.dispose();
 	assert(true, 'logging failure cannot break image lifecycle');
+	disposeFocus();
+	disposeFocus();
+	assert(!browserFocusContext().tracking_active, 'root disposal removes focus tracking');
+	const disposedCount = metrics.length;
+	window.dispatchEvent(new Event('blur'));
+	assert(metrics.length === disposedCount, 'disposed global focus tracker sends no events');
 	result.textContent = `${checks} image timing checks passed`;
 	result.dataset.status = 'passed';
 } catch (error) {
@@ -118,6 +190,11 @@ try {
 	result.dataset.status = 'failed';
 	throw error;
 } finally {
+	disposeFocus();
+	for (const [name, descriptor] of [['hasFocus', originalFocus], ['visibilityState', originalVisibility], ['hidden', originalHidden]] as const) {
+		if (descriptor) Object.defineProperty(document, name, descriptor);
+		else Reflect.deleteProperty(document, name);
+	}
 	window.fetch = originalFetch;
 	window.setTimeout = originalTimeout;
 	performance.getEntriesByName = originalEntries;

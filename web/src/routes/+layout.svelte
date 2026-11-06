@@ -6,6 +6,7 @@
 	import { generationJobStore } from '$lib/stores/generation-jobs.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { installInteractionAudit, trackWebEvent } from '$lib/utils/telemetry';
+	import { installImageFocusTracking } from '$lib/utils/image-timing';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 
@@ -26,10 +27,12 @@
 	});
 
 	onMount(() => {
+		const disposeFocus = installImageFocusTracking();
 		try { localStorage.removeItem('local-field.access-token'); } catch {}
 		themeStore.initialize();
 		void generationJobStore.initialize();
-		return installInteractionAudit();
+		const disposeAudit = installInteractionAudit();
+		return () => { disposeAudit(); disposeFocus(); };
 	});
 </script>
 
