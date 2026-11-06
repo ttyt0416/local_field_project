@@ -19,3 +19,7 @@ startApiTiming은 performance.now로 headers_ms/first_byte_ms/duration_ms를 구
 ## 공용 사용
 
 Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.
+
+## 이미지 진단 전달
+
+recordImageTiming은 IMG 측정값과 timing_context를 기존 /web/api-timings에 비대기 전송하며 기존 방문자·세션 식별을 재사용한다. 이미지 소스의 서명 제거·단계 측정은 image-timing 유틸이 담당한다.

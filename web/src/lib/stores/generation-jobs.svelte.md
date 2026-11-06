@@ -14,3 +14,7 @@
 ## 동작·오류 기록
 
 SSE JSON 파싱 실패를 reportApiError로 기록한다. 연결 오류는 streamSse가 기록하며 의도적인 취소는 제외한다.
+
+## 이미지 완료 수신 진단
+
+이미지 작업의 최초 완료 이벤트에서 generation_result_received를 기록한다. prompt_id·generation_id·서명을 제거한 이미지 경로·file_id와 이미지 URL 누락 여부를 보존한다. 동일 terminal 작업의 중복 완료는 추가 기록하지 않는다.

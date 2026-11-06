@@ -11,7 +11,7 @@ from urllib.parse import urlunsplit
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from .latency import timed_urlopen
+from .latency import timed_urlopen, trace_stage
 from .database import get_storage_owner
 from .configs.constants import settings
 
@@ -53,31 +53,37 @@ def upload_file(*, content: bytes, media_type: str) -> str:
 def read_url(*, file_id: str, expires_in: int = 900) -> str:
     if not enabled():
         raise StorageError("스토리지 설정이 없습니다.")
-    owner_id = get_storage_owner(file_id)
-    cache_key = (file_id, owner_id, expires_in)
-    now = monotonic()
-    cached = _read_url_cache.get(cache_key)
-    if cached is not None:
-        cached_until, cached_url = cached
-        if cached_until > now:
-            return cached_url
-        _read_url_cache.pop(cache_key, None)
-    path = f"/files/{quote(file_id, safe='')}/url?{urlencode({'expires_in': expires_in})}"
-    response = _request_json(
-        "POST",
-        path,
-        headers={
-            "Authorization": f"Bearer {settings.storage_api_token}",
-            "X-Owner-ID": owner_id,
-        },
-    )
-    url = response.get("url")
-    if not isinstance(url, str) or not url:
-        raise StorageError("스토리지가 파일 읽기 URL을 반환하지 않았습니다.")
-    if len(_read_url_cache) >= _READ_URL_CACHE_MAX_ENTRIES:
-        _read_url_cache.pop(next(iter(_read_url_cache)))
-    _read_url_cache[cache_key] = (now + max(expires_in - _READ_URL_CACHE_MARGIN_SECONDS, 1), url)
-    return url
+    with trace_stage('storage.read_url', context={'stage': 'storage_read_url', 'file_id': file_id,
+                                                'expires_in': expires_in}) as trace:
+        lookup_started = monotonic()
+        owner_id = get_storage_owner(file_id)
+        trace.timing_context['owner_lookup_ms'] = round((monotonic() - lookup_started) * 1000, 3)
+        cache_key = (file_id, owner_id, expires_in)
+        now = monotonic()
+        cached = _read_url_cache.get(cache_key)
+        if cached is not None:
+            cached_until, cached_url = cached
+            if cached_until > now:
+                trace.timing_context.update(cache_hit=True, cache_reuse_for_ms=round((cached_until - now) * 1000, 3))
+                return cached_url
+            _read_url_cache.pop(cache_key, None)
+        trace.timing_context['cache_hit'] = False
+        path = f"/files/{quote(file_id, safe='')}/url?{urlencode({'expires_in': expires_in})}"
+        response = _request_json(
+            "POST",
+            path,
+            headers={
+                "Authorization": f"Bearer {settings.storage_api_token}",
+                "X-Owner-ID": owner_id,
+            },
+        )
+        url = response.get("url")
+        if not isinstance(url, str) or not url:
+            raise StorageError("스토리지가 파일 읽기 URL을 반환하지 않았습니다.")
+        if len(_read_url_cache) >= _READ_URL_CACHE_MAX_ENTRIES:
+            _read_url_cache.pop(next(iter(_read_url_cache)))
+        _read_url_cache[cache_key] = (now + max(expires_in - _READ_URL_CACHE_MARGIN_SECONDS, 1), url)
+        return url
 
 
 def download_file(*, file_id: str) -> tuple[bytes, str]:

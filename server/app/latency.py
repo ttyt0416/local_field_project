@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
 from time import perf_counter
@@ -33,11 +34,13 @@ class ApiTimer:
         *,
         source: str = 'upstream',
         metadata: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
     ):
         self.started = perf_counter()
         self.requested_at = datetime.now(timezone.utc)
         self.request_id = uuid4()
         self.metadata = dict(metadata if metadata is not None else request_context.get() or {})
+        self.timing_context = {**(self.metadata.get('timing_context') or {}), **(context or {})}
         self.method, self.path, self.source = method, path, source
         self.status_code = 0
         self.headers_ms: float | None = None
@@ -90,7 +93,8 @@ class ApiTimer:
                             source=self.source, request_id=self.request_id,
                             parent_request_id=self.metadata.get('request_id'), requested_at=self.requested_at,
                             headers_ms=self.headers_ms, first_byte_ms=self.first_byte_ms,
-                            duration_ms=duration_ms, finished_at=finished_at, outcome=outcome)
+                            duration_ms=duration_ms, finished_at=finished_at, outcome=outcome,
+                            timing_context=self.timing_context or None)
         except Exception:
             logger.warning('API latency record could not be prepared', exc_info=True)
 
@@ -100,6 +104,17 @@ class ApiTimer:
     def __exit__(self, kind, error, traceback):
         self.finish(error=error)
         return False
+
+
+@contextmanager
+def trace_stage(name: str, *, context: dict[str, Any]):
+    with ApiTimer('TRACE', name, source='server', context=context) as timer:
+        token = request_context.set({**(request_context.get() or {}),
+                                     'request_id': timer.request_id, 'timing_context': timer.timing_context})
+        try:
+            yield timer
+        finally:
+            request_context.reset(token)
 
 
 class TimedResponse:

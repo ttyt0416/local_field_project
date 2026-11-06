@@ -3,3 +3,7 @@
 ## 공용 사용
 
 계정 fixture와 소유자 인자를 제거하고 공용 데이터·API 계약으로 기존 회귀 검사를 유지한다.
+
+## 이미지 진단 검사
+
+중첩 TRACE와 외부 호출의 prompt_id·file_id·parent_request_id 연결, 타임아웃 시 context 복원, 브라우저 진단 context의 DB 전달과 page_path 우선순위를 검증한다.

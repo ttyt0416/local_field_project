@@ -23,7 +23,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from starlette.responses import RedirectResponse, StreamingResponse
 
-from .latency import ApiTimer, timed_urlopen, upstream_path
+from .latency import ApiTimer, timed_urlopen, trace_stage, upstream_path
 from .audit import audit_stream, record_exception, record_remote_error
 from .configs.constants import settings
 from .danbooru import DanbooruError, search_danbooru_tags, validate_danbooru_tags
@@ -770,15 +770,16 @@ def _history_generation_status(prompt_id: str) -> ImageGenerationStatus:
             **_image_timing(prompt_id),
         )
     if comfy_status.get("completed") is True:
-        raw_images = _raw_image_outputs(entry.get("outputs"))
-        _sync_generation_output(prompt_id, raw_images)
-        return ImageGenerationStatus(
-            prompt_id=prompt_id,
-            status="completed",
-            progress=100,
-            images=_image_outputs(prompt_id, entry.get("outputs")),
-            **_image_timing(prompt_id),
-        )
+        with trace_stage('image.finalize', context={'category': 'image', 'stage': 'finalize', 'prompt_id': prompt_id}):
+            raw_images = _raw_image_outputs(entry.get("outputs"))
+            _sync_generation_output(prompt_id, raw_images)
+            return ImageGenerationStatus(
+                prompt_id=prompt_id,
+                status="completed",
+                progress=100,
+                images=_image_outputs(prompt_id, entry.get("outputs")),
+                **_image_timing(prompt_id),
+            )
     update_image_generation_status(prompt_id=prompt_id, status="processing")
     return ImageGenerationStatus(
         prompt_id=prompt_id,
@@ -789,6 +790,11 @@ def _history_generation_status(prompt_id: str) -> ImageGenerationStatus:
 
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:
+    if event_name == 'completed' and isinstance(data.get('images'), list):
+        with trace_stage('image.result_delivery', context={'category': 'image', 'stage': 'result_delivery',
+                                                         'prompt_id': data.get('prompt_id'),
+                                                         'image_count': len(data['images'])}):
+            return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
     return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -832,16 +838,18 @@ def _sync_generation_output(prompt_id: str, images: list[dict[str, Any]]) -> Non
 
     path_parts = [image_type, subfolder, filename]
     file_path = "/".join(part for part in path_parts if part)
-    update_image_generation_status(
-        prompt_id=prompt_id,
-        status="completed",
-        file_path=file_path,
-        storage_file_id=storage_file_id if isinstance(storage_file_id, str) else None,
-        filename=filename,
-        subfolder=subfolder,
-        image_type=image_type,
-        size_bytes=size_bytes,
-    )
+    with trace_stage('image.persist', context={'stage': 'persist_result', 'prompt_id': prompt_id,
+                                             'file_id': storage_file_id}):
+        update_image_generation_status(
+            prompt_id=prompt_id,
+            status="completed",
+            file_path=file_path,
+            storage_file_id=storage_file_id if isinstance(storage_file_id, str) else None,
+            filename=filename,
+            subfolder=subfolder,
+            image_type=image_type,
+            size_bytes=size_bytes,
+        )
 
 
 @router.get("/{prompt_id}/view")

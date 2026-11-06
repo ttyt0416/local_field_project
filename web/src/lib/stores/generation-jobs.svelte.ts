@@ -2,6 +2,7 @@ import { browser } from '$app/environment';
 import { SERVER_URL } from '$lib/configs/constants';
 import { apiJson, streamSse } from '$lib/utils/api';
 import { reportApiError } from '$lib/utils/telemetry';
+import { recordImageCompletion } from '$lib/utils/image-timing';
 
 export type GenerationJobKind = 'image' | 'video' | '3d' | 'music';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -208,6 +209,8 @@ class GenerationJobStore {
 			const model = data.model as { url?: unknown; filename?: unknown; size_bytes?: unknown } | null | undefined;
 			const audio = data.audio as { url?: unknown; filename?: unknown; size_bytes?: unknown } | null | undefined;
 			if (typeof image?.url === 'string') changes.imageUrl = new URL(image.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
+			const job = this.jobs[key];
+			if (job?.kind === 'image' && !isTerminal(job.status)) recordImageCompletion(changes.imageUrl, job.promptId, job.generationId);
 			if (typeof video?.url === 'string') changes.videoUrl = new URL(video.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
 			if (typeof model?.url === 'string') changes.modelUrl = new URL(model.url, `${SERVER_URL.replace(/\/+$/, '')}/`).toString();
 			if (typeof model?.filename === 'string') changes.modelFilename = model.filename;

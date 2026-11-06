@@ -4,6 +4,7 @@
 	import LoadingShimmer from '../loadings/loading-shimmer.svelte';
 	import IconOutlinedButton from '../buttons/icon-outlined-button.svelte';
 	import { apiBlob } from '$lib/utils/api';
+	import { startImageTiming } from '$lib/utils/image-timing';
 
 	type MediaSource = string | Blob;
 	type GalleryItem = {
@@ -37,6 +38,9 @@
 	let activeLoaded = $state(false);
 	let zoom = $state(1);
 	let closeButton = $state<HTMLButtonElement>();
+	let imageElement = $state<HTMLImageElement>();
+	let galleryElement = $state<HTMLImageElement>();
+	let imageTiming = $state.raw<ReturnType<typeof startImageTiming>>();
 	let isExternalSource = $derived(sourceType === 'external');
 	let isServerSource = $derived(sourceType === 'server' || (!isExternalSource && typeof source === 'string' && /^(https?:)?\/\//.test(source)));
 	let isRemoteSource = $derived(isServerSource || isExternalSource);
@@ -49,9 +53,13 @@
 	$effect(() => {
 		loaded = false;
 		failed = false;
+		const timing = browser && typeof source === 'string' && source && isRemoteSource
+			? startImageTiming(source, isExternalSource ? 'external' : 'server') : undefined;
+		imageTiming = timing;
 		if (typeof source === 'string' && !isServerSource) {
 			sourceUrl = source;
-			return;
+			timing?.ready(source);
+			return () => timing?.dispose();
 		}
 		if (typeof source === 'string' && isServerSource) {
 			let cancelled = false;
@@ -62,15 +70,18 @@
 					if (cancelled) return;
 					objectUrl = URL.createObjectURL(blob);
 					sourceUrl = objectUrl;
+					timing?.ready(objectUrl, blob.size);
 				})
 				.catch((reason) => {
 					if (!cancelled) {
+						timing?.fail(reason);
 						failed = true;
 						onerror?.(reason instanceof Error ? reason.message : '이미지를 불러오지 못했습니다.');
 					}
 				});
 			return () => {
 				cancelled = true;
+				timing?.dispose();
 				if (objectUrl) URL.revokeObjectURL(objectUrl);
 			};
 		}
@@ -81,6 +92,19 @@
 		const objectUrl = URL.createObjectURL(source);
 		sourceUrl = objectUrl;
 		return () => URL.revokeObjectURL(objectUrl);
+	});
+
+	$effect(() => {
+		if (imageElement && imageTiming) return imageTiming.observe(imageElement);
+	});
+
+	$effect(() => {
+		if (!open || !galleryElement || !activeItem || !activeIsRemote) return;
+		const original = gallery.length === 0 && typeof source === 'string' ? source : activeItem.source;
+		const timing = startImageTiming(original, activeIsExternal ? 'external' : 'server', 'gallery');
+		timing.ready(activeItem.source);
+		const detach = timing.observe(galleryElement);
+		return () => { timing.dispose(); detach(); };
 	});
 
 	$effect(() => {
@@ -153,6 +177,7 @@
 			onclick={openGallery}
 		>
 			<img
+				bind:this={imageElement}
 				src={sourceUrl}
 				{alt}
 				loading={isRemoteSource ? 'lazy' : 'eager'}
@@ -215,6 +240,7 @@
 				</IconOutlinedButton>
 			</div>
 			<img
+				bind:this={galleryElement}
 				 src={activeItem.source}
 				alt={activeItem.alt ?? alt}
 				onload={() => (activeLoaded = true)}

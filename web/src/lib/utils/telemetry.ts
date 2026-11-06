@@ -158,6 +158,27 @@ export function reportApiError(error: unknown, path: string, method: string) {
 	} catch {}
 }
 
+export function recordImageTiming(payload: {
+	request_id: string;
+	api_path: string;
+	page_path: string;
+	requested_at: string;
+	finished_at?: string;
+	headers_ms?: number;
+	duration_ms?: number;
+	status_code: number;
+	outcome: 'in_progress' | 'completed' | 'error' | 'cancelled';
+	timing_context: Record<string, unknown>;
+}) {
+	try {
+		send('web/api-timings', {
+			...payload, method: 'IMG',
+			visitor_id: storedId('localStorage', 'local-field.audit-visitor-id'),
+			session_id: storedId('sessionStorage', 'local-field.audit-session-id')
+		});
+	} catch {}
+}
+
 export function startApiTiming(path: string, method: string, streaming = false) {
 	let start = 0;
 	let requestedAt = '';

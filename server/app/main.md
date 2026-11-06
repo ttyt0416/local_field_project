@@ -21,3 +21,7 @@ HTTP/검증 예외의 원인 체인을 보존하고 직접 반환한 오류 Resp
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+## 이미지 브라우저 진단 수신
+
+/web/api-timings는 timing_context 객체를 받아 이미지 로딩 단계·파일 ID·Resource Timing·문서 visibility 정보를 기존 API 감사 DB에 저장한다. page_path·visitor_id·session_id는 검증된 payload 필드로 덮어써 임의 context가 해당 값을 바꾸지 못한다.

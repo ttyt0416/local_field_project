@@ -41,3 +41,7 @@ api_audit_logs에 request_id/parent_request_id, source, headers_ms, first_byte_m
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+## 이미지 지연 context 갱신
+
+API 감사 UPSERT는 진행 중 timing_context를 JSONB 병합해 시작·지연·종료의 이미지 진단 값을 같은 request_id 행에 보존한다. 최종 기록 이후 늦게 도착한 진행 이벤트는 종료 상태·진단 context를 덮어쓰지 않는다. 새 테이블이나 컬럼은 추가하지 않는다.

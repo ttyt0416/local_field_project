@@ -13,3 +13,7 @@ Local Field 서버는 브라우저에 Storage 서비스 토큰을 전달하지 �
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+## 이미지 조회 진단
+
+`storage.read_url` TRACE는 파일 ID별 URL 발급 전체 시간, owner_lookup_ms, cache_hit, 캐시 재사용 가능 시간(cache_reuse_for_ms)을 기록한다. 캐시 hit에도 DB 소유자 조회가 포함된다. 생성 후처리 안에서 호출되면 prompt_id와 부모 단계가 함께 전파된다. 서비스 토큰·서명 URL·owner ID를 진단 context에 넣지 않는다.

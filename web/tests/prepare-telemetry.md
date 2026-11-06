@@ -3,3 +3,7 @@ Vite의 파일 허용 목록을 변경하지 않고 브라우저 검증 페이�
 ## API 레이턴시 기록
 
 추가로 실제 API 유틸과 ky를 기존 Rolldown으로 번들링해 임시 static/api-latency-check.html을 준비한다. /audit-check.html과 /api-latency-check.html 결과를 확인한 뒤 두 생성 파일 및 개발 캐시를 삭제한다. 프레임워크 환경·서버 주소만 테스트 값으로 대체하고 API/기록 로직은 실제 소스를 사용한다.
+
+## 이미지 지연 검사
+
+추가로 image-timing.test.ts를 번들링해 임시 static/image-timing-check.html을 생성한다. 실제 이미지·스토리지 요청 없이 진단 lifecycle과 Resource Timing 제한을 검사하고 나머지 임시 HTML과 함께 제거한다.

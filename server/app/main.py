@@ -139,6 +139,7 @@ class ClientApiTiming(BaseModel):
     duration_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     status_code: int = Field(default=0, ge=0, le=599)
     outcome: Literal["in_progress", "completed", "http_error", "error", "cancelled", "timeout"]
+    timing_context: dict[str, Any] = Field(default_factory=dict)
     visitor_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
 
@@ -154,7 +155,7 @@ def client_api_timing(
                     finished_at=payload.finished_at, headers_ms=payload.headers_ms,
                     first_byte_ms=payload.first_byte_ms, duration_ms=payload.duration_ms,
                     outcome=payload.outcome,
-                    timing_context={"page_path": payload.page_path, "visitor_id": payload.visitor_id,
+                    timing_context={**payload.timing_context, "page_path": payload.page_path, "visitor_id": payload.visitor_id,
                                     "session_id": payload.session_id})
 
 

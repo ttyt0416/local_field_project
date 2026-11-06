@@ -41,6 +41,9 @@ class _DownloadResponse:
 
 class StorageClientTest(unittest.TestCase):
     def setUp(self):
+        audit = patch('app.database.record_api_call')
+        self.record = audit.start()
+        self.addCleanup(audit.stop)
         owner = patch("app.storage.get_storage_owner", return_value="legacy-storage-owner")
         owner.start()
         self.addCleanup(owner.stop)
@@ -83,6 +86,10 @@ class StorageClientTest(unittest.TestCase):
         self.assertEqual(request.full_url, "https://storage.example/files/file%2Fid/url?expires_in=60")
         self.assertEqual(request.get_header("Authorization"), "Bearer service-token")
         self.assertEqual(request.get_header("X-owner-id"), "legacy-storage-owner")
+        traces = [call.kwargs for call in self.record.call_args_list if call.kwargs['path'] == 'storage.read_url']
+        self.assertEqual([item['timing_context']['cache_hit'] for item in traces], [False, True])
+        self.assertTrue(all(item['timing_context']['owner_lookup_ms'] >= 0 for item in traces))
+        self.assertTrue(all(item['timing_context']['file_id'] == 'file/id' for item in traces))
 
     def test_download_file_reads_signed_path_through_internal_storage_url(self) -> None:
         with (

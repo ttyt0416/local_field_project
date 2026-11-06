@@ -2349,7 +2349,10 @@ def record_api_call(
                 first_byte_ms = COALESCE(api_audit_logs.first_byte_ms, EXCLUDED.first_byte_ms),
                 duration_ms = COALESCE(EXCLUDED.duration_ms, api_audit_logs.duration_ms),
                 finished_at = COALESCE(EXCLUDED.finished_at, api_audit_logs.finished_at),
-                outcome = CASE WHEN api_audit_logs.finished_at IS NULL THEN EXCLUDED.outcome ELSE api_audit_logs.outcome END
+                outcome = CASE WHEN api_audit_logs.finished_at IS NULL THEN EXCLUDED.outcome ELSE api_audit_logs.outcome END,
+                timing_context = CASE WHEN api_audit_logs.finished_at IS NULL
+                    THEN COALESCE(api_audit_logs.timing_context, '{}'::jsonb) || COALESCE(EXCLUDED.timing_context, '{}'::jsonb)
+                    ELSE api_audit_logs.timing_context END
             """,
             (method, redact(path), status_code, client_ip, user_agent, request_id,
              parent_request_id, source, requested_at, headers_ms, first_byte_ms, duration_ms,

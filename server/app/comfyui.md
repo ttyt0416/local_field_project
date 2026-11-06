@@ -70,3 +70,9 @@ MOSS LoRA는 `loras/MOSS/` 및 하위폴더에서 파일명과 관계없이 선�
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+## 이미지 표시 진단
+
+ComfyUI 완료 확인 후 결과 다운로드·스토리지 업로드·DB 갱신·읽기 URL 준비를 image.finalize TRACE로 묶는다. 기존 외부 호출 시간에 prompt_id와 부모 request_id가 연결되어 /view, Storage POST /files, URL 발급을 구분할 수 있다. 완료 SSE 직렬화 시 image.result_delivery에 prompt_id·image_count를 기록한다. 이 시각은 직렬화 시점이며 브라우저 도착은 프런트 generation_result_received 로그로 확인한다. 생성·저장·실패 처리 동작은 유지한다.
+
+`image.persist`는 완료 데이터의 DB 갱신 시간만 prompt_id·file_id와 함께 기록해 스토리지 전송과 구분한다.

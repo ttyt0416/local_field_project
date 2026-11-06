@@ -16,6 +16,42 @@ class Response(BytesIO):
 
 
 class LatencyTest(unittest.TestCase):
+    def test_image_trace_correlates_nested_requests_and_restores_context_on_failure(self):
+        parent = {'request_id': uuid4(), 'path': '/feature'}
+        token = request_context.set(parent)
+        try:
+            with patch.object(database, 'record_api_call') as record:
+                with self.assertRaisesRegex(TimeoutError, 'signing stalled'):
+                    with latency.trace_stage('image.finalize', context={'prompt_id': 'prompt', 'stage': 'finalize'}) as outer:
+                        with latency.trace_stage('storage.read_url', context={'file_id': 'file', 'stage': 'storage_read_url'}) as inner:
+                            with latency.timed_urlopen(lambda *a: Response(b'ok'), Request('https://storage.test/files/file/url?signature=private')) as response:
+                                self.assertEqual(response.read(), b'ok')
+                            raise TimeoutError('signing stalled')
+            calls = [item.kwargs for item in record.call_args_list]
+            upstream = next(item for item in calls if item['source'] == 'upstream')
+            self.assertEqual(upstream['parent_request_id'], inner.request_id)
+            self.assertEqual(upstream['timing_context']['prompt_id'], 'prompt')
+            self.assertEqual(upstream['timing_context']['file_id'], 'file')
+            self.assertEqual(calls[-2]['parent_request_id'], outer.request_id)
+            self.assertEqual(calls[-2]['outcome'], 'timeout')
+            self.assertIs(request_context.get(), parent)
+        finally:
+            request_context.reset(token)
+
+    def test_browser_image_context_reaches_audit_with_trusted_page_and_identity(self):
+        from datetime import datetime, timezone
+        from starlette.requests import Request as StarletteRequest
+        from app import main
+        payload = main.ClientApiTiming(request_id=uuid4(), method='IMG', api_path='https://storage.test/files/file',
+                                       page_path='/generate/image', requested_at=datetime.now(timezone.utc),
+                                       outcome='completed', duration_ms=123,
+                                       timing_context={'stage': 'image_load', 'file_id': 'file', 'page_path': 'spoofed'})
+        request = StarletteRequest({'type': 'http', 'headers': []})
+        with patch.object(main, 'record_api_call') as record:
+            main.client_api_timing(payload, request)
+        self.assertEqual(record.call_args.kwargs['timing_context']['file_id'], 'file')
+        self.assertEqual(record.call_args.kwargs['timing_context']['page_path'], '/generate/image')
+
     def test_milliseconds_phases_and_idempotent_completion(self):
         with patch.object(latency, 'perf_counter', side_effect=[10, 10.02, 10.04, 10.25]), patch.object(database, 'record_api_call') as record:
             timer = latency.ApiTimer('GET', '/test')

@@ -26,3 +26,7 @@ ComfyUI JSON·바이트·이미지 업로드, vLLM, 영상 파일 업로드, 스
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+## 이미지 단계 연결
+
+`trace_stage`는 method=TRACE인 서버 단계 시간을 기록한다. TRACE의 status_code=0은 HTTP 응답을 뜻하지 않는다. prompt_id·file_id·stage를 timing_context에 담고, 내부 timed_urlopen의 parent_request_id와 context에 전파한다. 중첩 단계와 예외 종료 후 원래 context를 복원한다. 서명 URL의 query는 기존대로 저장하지 않는다.
