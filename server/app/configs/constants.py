@@ -17,8 +17,8 @@ DEFAULT_COMFYUI_URL = "http://host.docker.internal:8188"
 DEFAULT_STORAGE_URL = ""
 DEFAULT_STORAGE_API_TOKEN = ""
 DEFAULT_COMFYUI_MODELS_PATH = "/comfyui-models"
-DEFAULT_VLLM_URL = "http://host.docker.internal:30004"
-DEFAULT_VLLM_MODEL = "pekkAi/G4-MeroMero-26B-A4B-it-uncensored-heretic-NVFP4"
+DEFAULT_LLM_URL = "http://host.docker.internal:30004"
+DEFAULT_LLM_MODEL = "qwen3.8-27b-fable-nvfp4"
 DEFAULT_EMBEDDING_URL = "http://host.docker.internal:30005"
 DEFAULT_HARDWARE_MONITOR_URL = "http://127.0.0.1:8091"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
@@ -51,13 +51,14 @@ class Settings:
     storage_url: str
     storage_api_token: str
     comfyui_models_path: str
-    vllm_url: str
-    vllm_model: str
+    llm_url: str
+    llm_model: str
     embedding_url: str
     hardware_monitor_url: str
     embedding_model: str
     embedding_dimensions: int
     danbooru_tags_path: str
+    llm_vision_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -82,13 +83,14 @@ class Settings:
             storage_url=os.getenv("STORAGE_URL", DEFAULT_STORAGE_URL),
             storage_api_token=os.getenv("STORAGE_API_TOKEN", DEFAULT_STORAGE_API_TOKEN),
             comfyui_models_path=os.getenv("COMFYUI_MODELS_PATH", DEFAULT_COMFYUI_MODELS_PATH),
-            vllm_url=os.getenv("VLLM_URL", DEFAULT_VLLM_URL),
-            vllm_model=os.getenv("VLLM_MODEL", DEFAULT_VLLM_MODEL),
+            llm_url=os.getenv("LLM_URL", DEFAULT_LLM_URL),
+            llm_model=os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL),
             embedding_url=os.getenv("EMBEDDING_URL", DEFAULT_EMBEDDING_URL),
             hardware_monitor_url=os.getenv("HARDWARE_MONITOR_URL", DEFAULT_HARDWARE_MONITOR_URL),
             embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
             embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", str(DEFAULT_EMBEDDING_DIMENSIONS))),
             danbooru_tags_path=os.getenv("DANBOORU_TAGS_PATH", DEFAULT_DANBOORU_TAGS_PATH),
+            llm_vision_enabled=os.getenv("LLM_VISION_ENABLED", "true").lower() == "true",
         )
 
 

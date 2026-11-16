@@ -25,11 +25,13 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from starlette.responses import StreamingResponse
 
+from .configs.constants import settings
+from .video_prompt_grammar import FIELD_LIMITS, TASK_TYPES, field_pattern, source_literals, video_prompt_gbnf
 from .latency import timed_urlopen
 from .audit import audit_stream, record_exception, record_remote_error
 from .comfyui import (
     _ComfyUIError,
-    _VLLMError,
+    _LLMError,
     cancel_comfy_generation,
     _queue_position,
     _comfy_url,
@@ -82,29 +84,13 @@ _PDD_FILES = {
     "ref2va": "folder://MiniMaxH3/Ref2VA/",
 }
 _PDD_STEPS = {4, 6, 8}
-_VIDEO_PROMPT_COMMON_CHARS = r"\x20-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E\n"
-_VIDEO_PROMPT_NON_WHITESPACE_COMMON_CHARS = r"\x21-\x2F\x30-\x39\x3A-\x40\x5B-\x60\x7B-\x7E"
-_VIDEO_PROMPT_LANGUAGE_CHARS = {
-    "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
-    "en": r"A-Za-z",
-    "ja": r"\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
-}
-_VIDEO_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS = {
-    **_VIDEO_PROMPT_LANGUAGE_CHARS,
-    "ja": r"\u3001-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
-}
 _VIDEO_PROMPT_LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
 _VIDEO_PROMPT_SHOT_FIELDS = ("style", "timeline", "camera", "audio", "text")
 _VIDEO_PROMPT_OVERALL_FIELDS = ("overall_soundscape", "non_diegetic_music")
-_VIDEO_PROMPT_FIELD_LIMITS = {
-    "style": 768, "timeline": 1536, "camera": 384, "audio": 2048, "text": 1024,
-    "overall_soundscape": 768, "non_diegetic_music": 768,
-    "subject_definitions": 2048, "summary": 768, "retention_analysis": 2048,
-}
+_VIDEO_PROMPT_FIELD_LIMITS = FIELD_LIMITS
 _VIDEO_PROMPT_REFERENCE_FIELDS = ("subject_definitions", "summary", "retention_analysis")
 _VIDEO_PROMPT_MAX_TOKENS = 8192
 _VIDEO_PROMPT_TIMEOUT_SECONDS = 120
-_VIDEO_PROMPT_FIXED_TOKENS = "integrated_multimodal_description|overall_soundscape|non_diegetic_music|Shot|At|N/A|Picture|Video|Audio|Subject"
 VideoAspectRatio = Literal["2:3", "3:2", "1:1", "16:9", "9:16"]
 _VIDEO_ASPECT_RATIOS: dict[VideoAspectRatio, tuple[int, int]] = {
     "2:3": (2, 3),
@@ -301,7 +287,9 @@ class VideoPromptEnhancementRequest(BaseModel):
     segment_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
     scenes: list[str] | None = Field(default=None, min_length=1, max_length=360)
     mode: Literal["i2v", "fl2v", "r2v"]
-    duration: float = Field(default=5)
+    duration: float = Field(default=5, gt=0, allow_inf_nan=False)
+    fps: float = Field(default=24, ge=1, le=120, allow_inf_nan=False)
+    aspect_ratio: VideoAspectRatio = "1:1"
     segment_index: int = Field(default=0, ge=0, le=359)
     segment_count: int = Field(default=1, ge=1, le=360)
     previous_segment_prompt: str | None = None
@@ -446,7 +434,7 @@ def enhance_video_prompt(
 ) -> VideoPromptEnhancementResponse:
     try:
         return _enhance_video_prompt(payload)
-    except _VLLMError as exc:
+    except _LLMError as exc:
         request.state.provider_response = exc.provider_response
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -1051,24 +1039,17 @@ async def _resolve_assets(
     return resolved
 
 
-def _video_prompt_pattern(languages: Sequence[str]) -> str:
-    if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_CHARS for language in languages):
+def _video_prompt_pattern(languages: Sequence[str], *, field: str | None = None, labels: Sequence[str] | None = None) -> str:
+    if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_NAMES for language in languages):
         raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
-    language_chars = "".join(_VIDEO_PROMPT_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
-    non_whitespace_language_chars = "".join(
-        _VIDEO_PROMPT_NON_WHITESPACE_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages)
-    )
-    content = rf"(?:[{_VIDEO_PROMPT_COMMON_CHARS}{language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS})"
-    visible_content = rf"(?:[{_VIDEO_PROMPT_NON_WHITESPACE_COMMON_CHARS}{non_whitespace_language_chars}]|{_VIDEO_PROMPT_FIXED_TOKENS})"
-    return rf"^{visible_content}(?:{content}*{visible_content})?$"
+    return field_pattern(field or "audio", labels)
 
 
-def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode: str = "i2v", *, scene_count: int = 0) -> dict[str, Any]:
+def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode: str = "i2v", *, scene_count: int = 0, labels: Sequence[str] | None = None) -> dict[str, Any]:
     duration_ms = max(1, round(duration * 1000))
     shot_limit = scene_count or max(1, min(int(math.ceil(duration)), int(_SEGMENT_SECONDS)))
     def text_field(field: str) -> dict[str, Any]:
-        pattern = r"^\S(?:[\s\S]*\S)?$"
-        return {"type": "string", "minLength": 1, "maxLength": _VIDEO_PROMPT_FIELD_LIMITS[field], "pattern": pattern}
+        return {"type": "string", "minLength": 1, "maxLength": _VIDEO_PROMPT_FIELD_LIMITS[field], "pattern": _video_prompt_pattern(languages, field=field, labels=labels)}
 
     overall_fields = (*_VIDEO_PROMPT_REFERENCE_FIELDS, *_VIDEO_PROMPT_OVERALL_FIELDS) if mode == "r2v" else _VIDEO_PROMPT_OVERALL_FIELDS
     shot_properties = {
@@ -1079,6 +1060,19 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode:
             for field in _VIDEO_PROMPT_SHOT_FIELDS
         },
     }
+    prefix_items = [
+        {
+            "type": "object",
+            "properties": {
+                **shot_properties,
+                "start_ms": {"const": 0} if index == 0 else {"type": "integer", "minimum": index, "maximum": duration_ms - 1},
+                **({"scene_id": {"const": index + 1}} if scene_count else {}),
+            },
+            "required": list(shot_properties),
+            "additionalProperties": False,
+        }
+        for index in range(scene_count or 1)
+    ]
     return {
         "type": "object",
         "properties": {
@@ -1086,6 +1080,7 @@ def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode:
                 "type": "array",
                 "minItems": scene_count or 1,
                 "maxItems": shot_limit,
+                "prefixItems": prefix_items,
                 "items": {
                     "type": "object",
                     "properties": shot_properties,
@@ -1122,7 +1117,7 @@ def _assemble_video_prompt(fields: dict[str, Any], mode: str = "i2v", duration: 
         integrated_description = f"{fields['shots'][0]['style']}\n{integrated_description}"
     elif has_images:
         if mode == "fl2v":
-            sections.append(f"Frame alignment: <Picture 1> is the opening frame of [Shot 1] at 0.00 seconds; <Picture 2> is the ending frame of [Shot {len(fields['shots'])}] at {duration:.2f} seconds.")
+            sections.append(f"How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot {len(fields['shots'])}) aligns with the {duration:.2f}-second mark of the target video.")
         else:
             sections.append("For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.")
     contents = "\n\n".join(
@@ -1135,23 +1130,47 @@ def _assemble_video_prompt(fields: dict[str, Any], mode: str = "i2v", duration: 
     return _normalize_video_reference_markers(contents)
 
 
-def _validate_video_prompt_fields(fields: dict[str, Any], mode: str = "i2v", *, scene_count: int = 0, duration: float | None = None) -> dict[str, Any]:
+def _validate_video_prompt_fields(fields: dict[str, Any], mode: str = "i2v", *, scene_count: int = 0, duration: float | None = None, languages: Sequence[str] | None = None, labels: Sequence[str] | None = None) -> dict[str, Any]:
     try:
         model = _VideoReferencePromptFields if mode == "r2v" else _VideoPromptFields
         validated = model.model_validate(fields).model_dump(exclude_none=True)
     except ValidationError as exc:
-        raise _VLLMError("vLLM 구조화 동영상 프롬프트의 필수 shot field가 없거나 유효하지 않습니다.", provider_response=fields) from exc
+        raise _LLMError("LLM 구조화 동영상 프롬프트의 필수 shot field가 없거나 유효하지 않습니다.", provider_response=fields) from exc
     shots = validated["shots"]
+    for shot in shots:
+        for field in _VIDEO_PROMPT_SHOT_FIELDS:
+            shot[field] = _normalize_video_reference_markers(shot[field])
+    overall_fields = (*_VIDEO_PROMPT_REFERENCE_FIELDS, *_VIDEO_PROMPT_OVERALL_FIELDS) if mode == "r2v" else _VIDEO_PROMPT_OVERALL_FIELDS
+    for field in overall_fields:
+        validated[field] = _normalize_video_reference_markers(validated[field])
+    values = [(field, shot[field]) for shot in shots for field in _VIDEO_PROMPT_SHOT_FIELDS]
+    values.extend((field, validated[field]) for field in overall_fields)
+    if any(re.fullmatch(_video_prompt_pattern(["en"], field=field, labels=labels), value) is None for field, value in values):
+        raise _LLMError("LLM 동영상 프롬프트의 영어 설명·원문 대사·화면 글자 형식이 올바르지 않습니다.", provider_response=fields)
     if scene_count:
         if len(shots) != scene_count:
-            raise _VLLMError(f"vLLM 샷 수가 입력 장면 수({scene_count}개)와 일치하지 않습니다.", provider_response=fields)
+            raise _LLMError(f"LLM 샷 수가 입력 장면 수({scene_count}개)와 일치하지 않습니다.", provider_response=fields)
         if [shot.get("scene_id") for shot in shots] != list(range(1, scene_count + 1)):
-            raise _VLLMError("vLLM 샷의 장면 번호가 누락·중복되었거나 입력 순서와 다릅니다.", provider_response=fields)
+            raise _LLMError("LLM 샷의 장면 번호가 누락·중복되었거나 입력 순서와 다릅니다.", provider_response=fields)
+    if any(value != value.strip() or not value.strip() for _, value in values):
+        raise _LLMError("LLM 동영상 프롬프트 field는 앞뒤 공백 없이 작성해야 합니다.", provider_response=fields)
+    if mode == "r2v":
+        task_prefix = validated["summary"].split("]", 1)[0][1:].split(" + ")
+        if len(task_prefix) != len(set(task_prefix)) or any(task not in TASK_TYPES for task in task_prefix):
+            raise _LLMError("R2V 작업 유형은 중복 없이 지정해야 합니다.", provider_response=fields)
+        definitions = validated["subject_definitions"]
+        defined = set(re.findall(r"(?m)^\s*(<Subject [1-9][0-9]*>)", definitions))
+        all_text = "\n".join(value for _, value in values)
+        used = set(re.findall(r"<Subject [1-9][0-9]*>", all_text))
+        if used - defined:
+            raise _LLMError("R2V에서 정의되지 않은 Subject label을 사용했습니다.", provider_response=fields)
+        if re.search(r"\(S[1-9][0-9]*(?:,S[1-9][0-9]*)*\)", validated["retention_analysis"]):
+            raise _LLMError("R2V 보존 분석에는 화자 ID를 넣을 수 없습니다.", provider_response=fields)
     starts = [shot["start_ms"] for shot in shots]
     if starts[0] != 0 or any(current <= previous for previous, current in zip(starts, starts[1:])):
-        raise _VLLMError("vLLM 샷은 0초부터 시작하고 시간 순서대로 이어져야 합니다.", provider_response=fields)
+        raise _LLMError("LLM 샷은 0초부터 시작하고 시간 순서대로 이어져야 합니다.", provider_response=fields)
     if duration is not None and starts[-1] >= max(1, round(duration * 1000)):
-        raise _VLLMError("vLLM 샷 시작 시각이 현재 구간 길이를 벗어났습니다.", provider_response=fields)
+        raise _LLMError("LLM 샷 시작 시각이 현재 구간 길이를 벗어났습니다.", provider_response=fields)
     return validated
 
 
@@ -1178,9 +1197,20 @@ def _video_prompt_token_budget(payload: VideoPromptEnhancementRequest) -> int:
 
 
 def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPromptEnhancementResponse:
-    languages = payload.prompt_output_languages
+    languages = ["en"]
+    effective_duration = _frame_length(payload.duration, payload.fps) / payload.fps
+    labels = [reference.label for reference in payload.references]
+    source = "\n".join([payload.prompt, *(payload.scenes or [payload.segment_prompt or ""])])
+    literals = source_literals(source)
+    language_contract = (
+        "All descriptive prose must be English. Preserve the exact original words and language of dialogue, lyrics, "
+        "and visible text. Non-English text is allowed only inside <d>[Language] ...</d> in audio or inside "
+        "double-quoted visible text in text. Do not translate, transliterate, omit, or paraphrase original literals. "
+        "Only Picture, Video and Audio asset labels are restricted to the reference manifest. "
+        "In R2V, create new Subject labels in subject_definitions, then reuse those definitions consistently."
+    )
     scenes = _video_prompt_scenes(payload)
-    if scenes and (any(not scene for scene in scenes) or len(scenes) > min(360, max(1, round(payload.duration * 1000)))):
+    if scenes and (any(not scene for scene in scenes) or len(scenes) > min(360, max(1, round(effective_duration * 1000)))):
         raise HTTPException(status_code=422, detail="각 장면의 내용을 입력하고 구간 길이 안에 배치할 수 있는 장면 수를 사용하세요.")
     scene_contract = (
         f"Return exactly {len(scenes)} shots, one per scene_manifest entry in its given order. "
@@ -1189,19 +1219,32 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
         "This explicit scene contract overrides every single-shot or continuous-motion recommendation."
         if scenes else "No explicit scene boundaries were supplied. Choose cuts only when needed."
     )
+    image_inputs = [(reference.label, reference.image_data_url) for reference in payload.references if reference.image_data_url and settings.llm_vision_enabled]
     references = "\n".join(json.dumps({
         "label": reference.label, "role": reference.role, "filename": reference.filename,
-        "preview": "attached" if reference.image_data_url else "unavailable",
+        "preview": "attached" if reference.image_data_url and settings.llm_vision_enabled else "unavailable",
     }, ensure_ascii=False) for reference in payload.references) or "No reference assets or previews were supplied. Do not invent their contents or reference labels."
+    schema = _video_prompt_fields_schema(languages, effective_duration, payload.mode, scene_count=len(scenes), labels=labels)
     fields = _validate_video_prompt_fields(_request_structured_object(
-        system_prompt=f"{VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT}\n\n{VIDEO_PROMPT_ENHANCEMENT_MODE_PROMPTS[payload.mode]}",
+        system_prompt=(
+            f"{VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT}\n\n{VIDEO_PROMPT_ENHANCEMENT_MODE_PROMPTS[payload.mode]}\n\n"
+            + ("Inspect only the attached labeled image previews. Video and audio contents are unavailable. "
+             "Use the supplied descriptions for references without previews. Never invent unseen or unheard details."
+             if image_inputs else "No image previews are available. Use only the supplied descriptions and reference labels. Never invent unseen visual details.")
+            + f"\n\n{language_contract}"
+        ),
         user_prompt=VIDEO_PROMPT_ENHANCEMENT_USER_PROMPT.format(
             prompt=payload.prompt.strip(),
             segment_prompt=(payload.segment_prompt or ("\n\n".join(f"[Scene {index}]\n{scene}" for index, scene in enumerate(scenes, start=1))) or payload.prompt).strip(),
             scene_contract=scene_contract,
             scenes=json.dumps([{"scene_id": index, "instruction": scene} for index, scene in enumerate(scenes, start=1)], ensure_ascii=False),
             mode=payload.mode,
-            duration=f"{payload.duration:g}",
+            duration=f"{effective_duration:.6f}".rstrip("0").rstrip("."),
+            requested_duration=f"{payload.duration:g}",
+            fps=f"{payload.fps:g}",
+            frame_count=_frame_length(payload.duration, payload.fps),
+            aspect_ratio=payload.aspect_ratio,
+            original_literals=json.dumps(literals, ensure_ascii=False),
             segment_number=payload.segment_index + 1,
             segment_count=payload.segment_count,
             previous_segment_prompt=(payload.previous_segment_prompt or "none").strip() or "none",
@@ -1211,11 +1254,15 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
         max_tokens=_video_prompt_token_budget(payload),
         temperature=0.6,
         timeout_seconds=_VIDEO_PROMPT_TIMEOUT_SECONDS,
-        schema=_video_prompt_fields_schema(languages, payload.duration, payload.mode, scene_count=len(scenes)),
+        schema=schema,
+        grammar=video_prompt_gbnf(schema, labels=labels, literals=literals),
+        image_inputs=image_inputs,
         name="video_prompt_shots",
-        image_inputs=[(reference.label, reference.image_data_url) for reference in payload.references if reference.image_data_url],
-    ), payload.mode, scene_count=len(scenes), duration=payload.duration)
-    contents = _assemble_video_prompt(fields, payload.mode, payload.duration, has_images=any(reference.role in {"first_frame", "continuation_frame"} for reference in payload.references))
+    ), payload.mode, scene_count=len(scenes), duration=effective_duration, languages=languages, labels=labels)
+    produced = "\n".join([*(shot[field] for shot in fields["shots"] for field in _VIDEO_PROMPT_SHOT_FIELDS), *(fields[field] for field in (*_VIDEO_PROMPT_REFERENCE_FIELDS, *_VIDEO_PROMPT_OVERALL_FIELDS) if field in fields)])
+    if any(literal not in produced for literal in literals):
+        raise _LLMError("원문 대사·가사·화면 글자가 누락되거나 변경되었습니다.", provider_response=fields)
+    contents = _assemble_video_prompt(fields, payload.mode, effective_duration, has_images=any(reference.role in {"first_frame", "continuation_frame"} for reference in payload.references))
     return VideoPromptEnhancementResponse(improved_prompt=VideoPromptEnhancementContent(contents=contents))
 
 
@@ -1370,7 +1417,7 @@ def _effective_video_prompts(mode: str, request: VideoGenerationRequest) -> list
     result: list[str] = []
     for index, improved_prompt in enumerate(improved_prompts):
         reference_prompt = _video_reference_prompt(mode, request) if index == 0 else _continuation_prompt(request)
-        if improved_prompt.startswith(("For the target video, at 0.00 seconds", "Frame alignment:", "subject_definitions:")):
+        if improved_prompt.startswith(("For the target video, at 0.00 seconds", "Frame alignment:", "How the reference pictures align with the target video", "subject_definitions:", "integrated_multimodal_description:")):
             result.append(improved_prompt)
         else:
             result.append(f"{reference_prompt}\n\n{improved_prompt}")

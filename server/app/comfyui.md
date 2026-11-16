@@ -12,29 +12,29 @@ lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하
 
 공통 Comfy progress state는 현재 실행 node ID도 보존한다. image/video caller는 기존 progress 계약을 그대로 사용하고, TRELLIS.2 router는 node ID를 background cleanup·structure·shape·texture·mesh stage로 매핑한다.
 
-`GET /generation/image/options?family=anima|illustrious|moss|qwen_image_2_1`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima/` split model과 `vae/Anima/`를 사용하고 Illustrious는 full checkpoint를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·Illustrious·MOSS를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima·MOSS prompt enhancement는 Danbooru tags와 자연어를, Illustrious는 검증된 tags만 사용한다. Anima·Illustrious I2I도 T2I와 같은 vLLM 개선 API를 사용한다.
+`GET /generation/image/options?family=anima|illustrious|moss|qwen_image_2_1`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima/` split model과 `vae/Anima/`를 사용하고 Illustrious는 full checkpoint를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·Illustrious·MOSS를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima·MOSS prompt enhancement는 Danbooru tags와 자연어를, Illustrious는 검증된 tags만 사용한다. Anima·Illustrious I2I도 T2I와 같은 LLM 개선 API를 사용한다.
 
 `POST /generation/image/i2i`는 multipart payload와 소스 이미지 한 개를 받는다. local file은 submit 시에만 Storage·media_assets에 저장하고 기존 file ID는 ownership을 확인해 재사용한다. Anima·Illustrious는 `LoadImage → ImageScale → VAEEncode → KSampler`와 0~1 denoise를 유지한다.
 
 
 
-Structured vLLM response가 `finish_reason=length`로 끝나면 server는 raw output and user prompt 없이 response schema name, configured token cap, completion token count, raw character count, JSON completion, trailing whitespace count, last schema field, parsed shot count를 warning log 한 줄로 남긴다. `_VLLMError`는 decoded provider response를 caller에 전달하며 VIDEO prompt route는 이를 Error DB에 저장한다.
+Structured LLM response가 `finish_reason=length`로 끝나면 server는 raw output and user prompt 없이 response schema name, configured token cap, completion token count, raw character count, JSON completion, trailing whitespace count, last schema field, parsed shot count를 warning log 한 줄로 남긴다. `_LLMError`는 decoded provider response를 caller에 전달하며 VIDEO prompt route는 이를 Error DB에 저장한다.
 
 
 
 ## MOSS
 
-MOSS는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함한다. `text_encoders/MOSS/`의 인코더(type `moss_image`)와 `vae/MOSS/`의 VAE를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 선택된 원문 또는 vLLM 개선 프롬프트를 중앙 기준 JSON으로 변환하며 박스·표시할 텍스트는 그대로 보존한다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
+MOSS는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함한다. `text_encoders/MOSS/`의 인코더(type `moss_image`)와 `vae/MOSS/`의 VAE를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 선택된 원문 또는 LLM 개선 프롬프트를 중앙 기준 JSON으로 변환하며 박스·표시할 텍스트는 그대로 보존한다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
 
 참조 패처 출처는 https://github.com/silveroxides/ComfyUI-UtilsCollection 이며 설치 revision은 `52524719f934c7cc09382e2560f27f6967636255`이다. 누락된 의존성 `unifiedefficientloader==0.5.4`를 ComfyUI 환경에 추가했다.
 
 가중치 출처: https://huggingface.co/Comfy-Org/MOSS-Image 의 SFT BF16·INT8 텍스트 인코더·small VAE와 https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd 의 lora_latest.safetensors를 사용한다. Base 본체와 폐기된 DMD 전용 transformer 파일은 받지 않는다.
 
-Qwen Image 2.1 Turbo는 qwen_image_2_1 family로 I2I·다중 참조 생성을 제공한다. 본체는 `diffusion_models/Qwen/`에서 파일명과 관계없이 선택하며 생성 그래프에 선택 경로를 그대로 전달한다. 공식 BF16 Turbo 본체, qwen3vl_8b_int8_convrot 인코더(type qwen_image), 전용 Qwen 2.1 VAE를 사용한다. TextEncodeQwenImage21에 원본을 image_1, 추가 참조를 image_2~image_10 순으로 전달한다. 원본은 선택한 출력 크기로 맞추고 추가 참조는 비율을 유지해 약 1MP·32배수로 줄인다. resolution 0으로 인코더 latent와 출력 캔버스를 일치시킨다. QwenImage21Cache auto/default와 공식 ManualSigmas [1,.978453,.95418,.926626,.89508,.845148,.704534,.414568,0], Euler·CFG 1·8 steps·Denoise 1을 사용하며 다른 조합은 업로드 전에 거부한다. 일반 KSampler 스케줄러로 대체하지 않는다. 프롬프트 개선은 공통 vLLM API에서 자연어 수정 지시를 만들고 생성 그래프는 선택된 결과를 사용한다.
+Qwen Image 2.1 Turbo는 qwen_image_2_1 family로 I2I·다중 참조 생성을 제공한다. 본체는 `diffusion_models/Qwen/`에서 파일명과 관계없이 선택하며 생성 그래프에 선택 경로를 그대로 전달한다. 공식 BF16 Turbo 본체, qwen3vl_8b_int8_convrot 인코더(type qwen_image), 전용 Qwen 2.1 VAE를 사용한다. TextEncodeQwenImage21에 원본을 image_1, 추가 참조를 image_2~image_10 순으로 전달한다. 원본은 선택한 출력 크기로 맞추고 추가 참조는 비율을 유지해 약 1MP·32배수로 줄인다. resolution 0으로 인코더 latent와 출력 캔버스를 일치시킨다. QwenImage21Cache auto/default와 공식 ManualSigmas [1,.978453,.95418,.926626,.89508,.845148,.704534,.414568,0], Euler·CFG 1·8 steps·Denoise 1을 사용하며 다른 조합은 업로드 전에 거부한다. 일반 KSampler 스케줄러로 대체하지 않는다. 프롬프트 개선은 공통 LLM API에서 자연어 수정 지시를 만들고 생성 그래프는 선택된 결과를 사용한다.
 
 출처: https://huggingface.co/Comfy-Org/Qwen-Image-2.1 / https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo / https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_2_1_turbo_image_edit.json . 모델 배포 revision은 a8342359c61979b06a8dafb1a47991fe1f30e994이다.
 
-Qwen은 다른 이미지 모델과 같이 프롬프트 개선을 기본 끈다. 사용자가 켜고 공통 enhance-prompt API로 자연어 지시를 생성·편집하면 improved_prompt를 TextEncodeQwenImage21에 직접 전달한다. ComfyUI TextGenerate·참조 배치·조건부 스위치와 별도 PromptEnhancer 가중치를 사용하지 않는다. 원본·추가 참조는 이미지 인코더에 기존대로 전달한다. 모든 family에서 활성화 시 개선된 본문이 필수이며 I2I 소스 업로드 전에 검증한다. 비활성화 시 원문을 사용하고 Prefix는 선택된 본문 앞에 한 번만 붙인다. 활성 상태·원문·개선 본문은 생성 기록·프리셋·재생성에 따로 보존한다. options의 prompt_enhancer_available은 공통 개선 기능 지원을 뜻하며 vLLM 실시간 건강 검사는 아니다. 요청 유효성 오류는 직렬화 가능한 context 제외 형식으로 반환한다.
+Qwen은 다른 이미지 모델과 같이 프롬프트 개선을 기본 끈다. 사용자가 켜고 공통 enhance-prompt API로 자연어 지시를 생성·편집하면 improved_prompt를 TextEncodeQwenImage21에 직접 전달한다. ComfyUI TextGenerate·참조 배치·조건부 스위치와 별도 PromptEnhancer 가중치를 사용하지 않는다. 원본·추가 참조는 이미지 인코더에 기존대로 전달한다. 모든 family에서 활성화 시 개선된 본문이 필수이며 I2I 소스 업로드 전에 검증한다. 비활성화 시 원문을 사용하고 Prefix는 선택된 본문 앞에 한 번만 붙인다. 활성 상태·원문·개선 본문은 생성 기록·프리셋·재생성에 따로 보존한다. options의 prompt_enhancer_available은 공통 개선 기능 지원을 뜻하며 LLM 실시간 건강 검사는 아니다. 요청 유효성 오류는 직렬화 가능한 context 제외 형식으로 반환한다.
 
 
 Illustrious 체크포인트가 설치되지 않은 경우 옵션 API는 빈 checkpoints와 빈 default_checkpoint를 반환한다. 프리셋 조회·편집은 유지하고 실제 생성 요청은 기존 모델 검증에서 422로 차단한다. ComfyUI 연결 장애는 기존 오류로 처리한다.
@@ -63,9 +63,8 @@ MOSS LoRA는 `loras/MOSS/` 및 하위폴더에서 파일명과 관계없이 선�
 
 ## API 레이턴시 기록
 
-각 HTTP JSON/바이트/이미지 업로드 및 vLLM 요청에 timed_urlopen을 적용한다. WebSocket은 핸드셰이크·첫 메시지·전체 연결 시간을 따로 기록한다.
+각 HTTP JSON/바이트/이미지 업로드 및 LLM 요청에 timed_urlopen을 적용한다. WebSocket은 핸드셰이크·첫 메시지·전체 연결 시간을 따로 기록한다.
 
-공통 `_request_structured_object`는 optional `image_inputs`의 label·image data URL을 user message의 text·image_url parts로 전송한다. 이미지가 없는 이미지·음악 개선 호출은 기존 단일 text content를 유지한다.
 
 ## 공용 사용
 
@@ -76,3 +75,17 @@ Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘�
 ComfyUI 완료 확인 후 결과 다운로드·스토리지 업로드·DB 갱신·읽기 URL 준비를 image.finalize TRACE로 묶는다. 기존 외부 호출 시간에 prompt_id와 부모 request_id가 연결되어 /view, Storage POST /files, URL 발급을 구분할 수 있다. 완료 SSE 직렬화 시 image.result_delivery에 prompt_id·image_count를 기록한다. 이 시각은 직렬화 시점이며 브라우저 도착은 프런트 generation_result_received 로그로 확인한다. 생성·저장·실패 처리 동작은 유지한다.
 
 `image.persist`는 완료 데이터의 DB 갱신 시간만 prompt_id·file_id와 함께 기록해 스토리지 전송과 구분한다.
+
+## 프롬프트 강화 출력 문자
+
+기본 구조화 출력은 문장 마침표와 Danbooru 태그의 밑줄·괄호를 허용한다. 마침표가 차단되어 Gemma가 문장을 계속 이어 쓰거나 태그 이름을 표현하지 못하는 문제를 방지하며, 기존 비어 있는 응답·허용 문자·JSON·출력 길이 검증을 유지한다.
+
+
+
+## vLLM 생성 모델 전환
+
+공통 생성 클라이언트는 schema를 `structured_outputs.json`, 명시적 영상 GBNF를 `structured_outputs.grammar`로 전송한다. 실제 schema의 패턴·길이는 생략하지 않으며 모델에 보여주는 구조 힌트만 간결하게 유지한다. `enable_thinking=false`, `reasoning_effort=none`, 길이 중단·JSON 파싱·provider_response 감사 기록을 유지한다.
+
+선택적 image_inputs의 (label, data URL) 목록을 같은 user message의 text·image_url parts로 묶는다. 일반 이미지·음악 강화는 기존 문자열 메시지를 사용한다. 영상 강화만 실제 참조 이미지의 label을 붙여 전달한다.
+
+서빙 backend는 LLGuidance 기반 guidance로 명시 고정한다. auto 또는 XGrammar로 자동 선택하지 않는다.

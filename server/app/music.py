@@ -18,7 +18,7 @@ from starlette.responses import StreamingResponse
 from .audit import audit_stream, record_exception, record_remote_error
 from .comfyui import (
     _ComfyUIError,
-    _VLLMError,
+    _LLMError,
     _queue_position,
     _missing_model_folders,
     _resolve_model_inputs,
@@ -199,7 +199,7 @@ def enhance_music_prompt(
 ) -> MusicPromptEnhancementResponse:
     try:
         return _enhance_music_prompt(payload)
-    except _VLLMError as exc:
+    except _LLMError as exc:
         request.state.provider_response = exc.provider_response
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -406,7 +406,7 @@ def _enhance_music_prompt(payload: MusicPromptEnhancementRequest) -> MusicPrompt
             contents = "\n\n".join(sections)
         return MusicPromptEnhancementResponse(contents=contents)
     except (ValidationError, ValueError) as exc:
-        raise _VLLMError("vLLM 음악 필드가 요청한 구조·언어·길이와 일치하지 않습니다.", provider_response=result) from exc
+        raise _LLMError("LLM 음악 필드가 요청한 구조·언어·길이와 일치하지 않습니다.", provider_response=result) from exc
 
 
 def _build_prompt(request: MusicGenerationRequest) -> tuple[dict[str, Any], int]:

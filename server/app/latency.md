@@ -17,7 +17,7 @@
 
 `timed_urlopen`은 원래 opener에 원래 인자를 전달한다. `TimedResponse`는 응답 속성과 read/close/context 동작을 보존한다. 전체 read 또는 EOF/close에서 종료를 기록하고 연결·본문 읽기 실패 및 HTTP 오류도 측정한 뒤 원래 예외를 전파한다. 다운로드 전송 시간에는 소비자가 청크를 읽는 간격과 backpressure가 포함된다. 진단용 HTTP 오류 본문을 나중에 읽는 오류 기록 스레드 시간은 포함하지 않는다. 수동 리디렉션은 각 홉을 개별 기록하며 자동 리디렉션은 opener 전체 응답 시간으로 기록한다.
 
-ComfyUI JSON·바이트·이미지 업로드, vLLM, 영상 파일 업로드, 스토리지 업로드/읽기/URL/HEAD/Range/삭제, Civitai 메타데이터·다운로드, Hugging Face 메타데이터·다운로드, 임베딩, 하드웨어, SkinTokens, AnimaDex 일반 요청·재사용 HTTPS 연결 각각에 적용한다. WebSocket은 핸드셰이크 101까지의 시간, 첫 메시지 시간, 전체 연결 시간을 구분한다.
+ComfyUI JSON·바이트·이미지 업로드, LLM, 영상 파일 업로드, 스토리지 업로드/읽기/URL/HEAD/Range/삭제, Civitai 메타데이터·다운로드, Hugging Face 메타데이터·다운로드, 임베딩, 하드웨어, SkinTokens, AnimaDex 일반 요청·재사용 HTTPS 연결 각각에 적용한다. WebSocket은 핸드셰이크 101까지의 시간, 첫 메시지 시간, 전체 연결 시간을 구분한다.
 
 `api_user`는 다운로드·생성 워커의 사용자 정보를 to_thread 호출에 전달하고 원래 context를 복원한다. 스토리지 요청은 독립 스레드에서도 X-Owner-ID로 사용자 정보를 보존한다. 외부 URL에는 query, fragment, 사용자명·비밀번호를 저장하지 않는다.
 

@@ -40,7 +40,6 @@
 	};
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
-	type VideoPromptLanguage = 'ko' | 'en' | 'ja';
 	type ContinuationMode = 'r2v' | 'i2v';
 	type VideoAspectRatio = '2:3' | '3:2' | '1:1' | '16:9' | '9:16';
 	type VideoDimensions = { width: number; height: number; megapixels: number };
@@ -61,11 +60,6 @@
 		{ value: 'r2v', label: 'R2V', description: '참조 콘텐츠 기반 생성' }
 ];
 	const modeTabs: { value: VideoMode; label: string }[] = modes.map(({ value, label }) => ({ value, label }));
-	const promptLanguageOptions: { value: VideoPromptLanguage; label: string }[] = [
-		{ value: 'ko', label: '한글' },
-		{ value: 'en', label: '영어' },
-		{ value: 'ja', label: '일어' }
-	];
 	const continuationModeTabs: { value: ContinuationMode; label: string }[] = [
 		{ value: 'r2v', label: 'R2V' },
 		{ value: 'i2v', label: 'I2V' }
@@ -96,7 +90,7 @@
 	let segmentScenes = $state<string[][]>([['']]);
 	let promptEnhancementEnabled = $state(false);
 	let improvedSegmentPrompts = $state<string[]>(['']);
-	let promptOutputLanguages = $state<VideoPromptLanguage[]>(['en']);
+	const promptOutputLanguages = ['en'];
 	let enhancingPrompt = $state(false);
 	let enhancingSegmentIndex = $state<number | null>(null);
 	let aspectRatio = $state<VideoAspectRatio>('1:1');
@@ -317,19 +311,6 @@
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1 }];
 	}
 
-	function togglePromptLanguage(language: VideoPromptLanguage, checked: boolean) {
-		if (checked) {
-			if (!promptOutputLanguages.includes(language)) promptOutputLanguages = [...promptOutputLanguages, language];
-			resetImprovedPrompts();
-			return;
-		}
-		if (promptOutputLanguages.length === 1) {
-			error = '출력 언어를 하나 이상 선택해 주세요.';
-			return;
-		}
-		promptOutputLanguages = promptOutputLanguages.filter((value) => value !== language);
-		resetImprovedPrompts();
-	}
 
 
 	function assetRef(kind: 'image' | 'audio' | 'video', file: File | null, selected: VideoLibraryAsset | null, files: File[], form: FormData): AssetRef {
@@ -731,10 +712,6 @@
 	async function enhancePrompt() {
 		error = '';
 		const activeSegmentScenes = segmentScenes.slice(0, segmentCount);
-		if (!promptOutputLanguages.length) {
-			error = '출력 언어를 하나 이상 선택해 주세요.';
-			return;
-		}
 		if (hasEmptyScene(activeSegmentScenes)) {
 			error = '구간별 장면 프롬프트를 모두 입력해 주세요.';
 			return;
@@ -757,10 +734,6 @@
 		error = '';
 		if (!segmentScenes[index] || hasEmptyScene([segmentScenes[index]])) {
 			error = '개선할 프롬프트를 입력해 주세요.';
-			return;
-		}
-		if (!promptOutputLanguages.length) {
-			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
 		}
 		enhancingSegmentIndex = index;
@@ -786,10 +759,6 @@
 		const activeImprovedSegmentPrompts = improvedSegmentPrompts.slice(0, segmentCount);
 		if (!prompt.trim()) {
 			error = '생성할 프롬프트를 입력해 주세요.';
-			return;
-		}
-		if (!promptOutputLanguages.length) {
-			error = '출력 언어를 하나 이상 선택해 주세요.';
 			return;
 		}
 		if (hasEmptyScene(activeSegmentScenes)) {
@@ -1159,7 +1128,7 @@
 									<OutlinedButton
 										type="button"
 										loading={enhancingPrompt}
-										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || !promptOutputLanguages.length || hasEmptyScene(segmentScenes.slice(0, segmentCount))}
+										disabled={generating || isPromptEnhancing || !promptEnhancementEnabled || hasEmptyScene(segmentScenes.slice(0, segmentCount))}
 										class="min-h-9 px-3 text-xs"
 										onclick={() => void enhancePrompt()}
 									>
@@ -1169,17 +1138,7 @@
 								</div>
 							</div>
 							{#if promptEnhancementEnabled}
-								<div class="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
-									<div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">출력 언어</span><span class="text-xs text-muted-foreground">복수 선택 가능</span></div>
-									<div class="grid gap-2 sm:grid-cols-3">
-										{#each promptLanguageOptions as language}
-											<label class="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm transition hover:bg-muted">
-												<input type="checkbox" checked={promptOutputLanguages.includes(language.value)} onchange={(event) => togglePromptLanguage(language.value, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" />
-												<span>{language.label}</span>
-											</label>
-										{/each}
-									</div>
-								</div>
+								<p class="text-xs text-muted-foreground">설명은 영어로 작성하며, 대사·가사·화면 글자는 원문을 유지합니다.</p>
 							{/if}
 							<div class="space-y-4">
 								<label class="block" for="video-prompt"><span class="sr-only">스타일·전체 배경</span><textarea id="video-prompt" bind:value={prompt} oninput={(event) => setPrompt((event.currentTarget as HTMLTextAreaElement).value)} rows="5" required disabled={isPromptEnhancing || generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>
@@ -1365,7 +1324,7 @@
 						{/if}
 
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="video-aspect-ratio"><span class="text-sm font-medium">영상 비율</span><select id="video-aspect-ratio" bind:value={aspectRatio} class={inputClass}>{#each videoAspectRatioOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
+							<label class="block space-y-2" for="video-aspect-ratio"><span class="text-sm font-medium">영상 비율</span><select id="video-aspect-ratio" bind:value={aspectRatio} onchange={resetImprovedPrompts} class={inputClass}>{#each videoAspectRatioOptions as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
 							<label class="block space-y-2" for="video-megapixels"><span class="text-sm font-medium">Base 메가픽셀</span><input id="video-megapixels" type="number" min="0.1" step="0.1" bind:value={megapixels} class={inputClass} /></label>
 						</div>
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted" for="video-learned-upscale">
@@ -1377,7 +1336,7 @@
 						{/if}
 						{#if calculatedDimensions}<p class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">계산된 Base: {calculatedDimensions.width} × {calculatedDimensions.height} · {calculatedDimensions.megapixels.toFixed(1)} MP</p>{/if}
 						{#if calculatedTargetDimensions}<p class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">계산된 Target: {calculatedTargetDimensions.width} × {calculatedTargetDimensions.height} · {calculatedTargetDimensions.megapixels.toFixed(1)} MP</p>{/if}
-						<div class="grid gap-4 sm:grid-cols-3"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} class={inputClass} /></label><label class="block space-y-2" for="video-steps"><span class="text-sm font-medium">Steps</span><input id="video-steps" type="number" min={usePdd ? 4 : 1} max={usePdd ? 8 : 100} step={usePdd ? 2 : 1} bind:value={steps} class={inputClass} /></label></div>
+						<div class="grid gap-4 sm:grid-cols-3"><label class="block space-y-2" for="video-duration"><span class="text-sm font-medium">길이(초)</span><input id="video-duration" type="number" step="0.1" bind:value={duration} onchange={resetImprovedPrompts} class={inputClass} /></label><label class="block space-y-2" for="video-fps"><span class="text-sm font-medium">FPS</span><input id="video-fps" type="number" min="1" max="120" step="1" bind:value={fps} onchange={resetImprovedPrompts} class={inputClass} /></label><label class="block space-y-2" for="video-steps"><span class="text-sm font-medium">Steps</span><input id="video-steps" type="number" min={usePdd ? 4 : 1} max={usePdd ? 8 : 100} step={usePdd ? 2 : 1} bind:value={steps} class={inputClass} /></label></div>
 
 						<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="video-seed"><span class="text-sm font-medium">Seed</span><input id="video-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} required={!randomSeed} class={inputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition" for="random-video-seed"><input id="random-video-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>
 

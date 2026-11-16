@@ -32,7 +32,7 @@
 | media_editing | _run | 비정상 종료 stderr/stdout/returncode를 cause에 보존 |
 | hugging_face | open_download | 실패 HTTP 본문을 닫지 않고 기록 경계로 전달 |
 
-storage의 upload_file/download_file/file_size/delete_file/_request_json, hardware의 조회/파싱, danbooru의 외부 요청, comfyui/video의 HTTP 및 vLLM 요청, 업로드·보관함·프리셋·저장 프롬프트·태그 조회의 전파 예외는 공통 HTTP 경계 또는 생성 워커에서 보존한다. 일반 UI 문구로 감싸도 원래 cause/context를 읽는다.
+storage의 upload_file/download_file/file_size/delete_file/_request_json, hardware의 조회/파싱, danbooru의 외부 요청, comfyui/video의 HTTP 및 LLM 요청, 업로드·보관함·프리셋·저장 프롬프트·태그 조회의 전파 예외는 공통 HTTP 경계 또는 생성 워커에서 보존한다. 일반 UI 문구로 감싸도 원래 cause/context를 읽는다.
 
 정상 제어 흐름인 폴링/heartbeat 타임아웃, 사용자 취소, 리디렉션, 이미 없는 객체 삭제, HEAD 미지원 후 Range 조회, 중복 다운로드 충돌, 선택 불가 버전/경로 거르기, 숫자·날짜 선택값 기본 처리, 선택적 토큰 검증 실패는 장애로 중복 기록하지 않는다. 최종 API 실패는 HTTP 경계에서 기록한다.
 

@@ -83,7 +83,7 @@ def list_danbooru_tags(
         parameters.append(category)
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     if sort == "similarity" and term:
-        vector = _vector_literal(_request_embeddings([search.strip()])[0])
+        vector = _vector_literal(_request_embeddings([search.strip()], is_query=True)[0])
         order_clause = "ORDER BY embedding <=> %s::vector, post_count DESC, tag ASC"
         order_parameters: list[Any] = [vector]
     elif sort == "match" and term:
@@ -129,7 +129,7 @@ def _like_escape(value: str) -> str:
 
 
 def search_danbooru_tags(text: str, limit: int = 48) -> list[str]:
-    embedding = _request_embeddings([text])[0]
+    embedding = _request_embeddings([text], is_query=True)[0]
     vector = _vector_literal(embedding)
     vector_limit = max(1, limit - 32)
     tokens = _search_tokens(text)
@@ -274,12 +274,21 @@ def _embedding_text(row: dict[str, Any]) -> str:
     return f"Danbooru tag: {row['tag']}. Aliases: {aliases}. Category: {row['category']}."
 
 
-def _request_embeddings(texts: Sequence[str]) -> list[list[float]]:
+def _request_embeddings(texts: Sequence[str], *, is_query: bool = False) -> list[list[float]]:
+    qwen_embedding = settings.embedding_model.casefold().startswith("qwen/qwen3-embedding-")
+    inputs = list(texts)
+    if qwen_embedding and is_query:
+        inputs = [
+            "Instruct: Given a description of an image, retrieve relevant Danbooru tags.\nQuery: " + text
+            for text in inputs
+        ]
     payload = {
         "model": settings.embedding_model,
-        "input": list(texts),
+        "input": inputs,
         "encoding_format": "float",
     }
+    if qwen_embedding:
+        payload["dimensions"] = settings.embedding_dimensions
     request = UrlRequest(
         f"{settings.embedding_url.rstrip('/')}/v1/embeddings",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

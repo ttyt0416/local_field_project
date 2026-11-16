@@ -9,7 +9,7 @@ import re
 import secrets
 import threading
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/generation/image", tags=["image generation"])
 _COMFYUI_TIMEOUT_SECONDS = 30
-_VLLM_TIMEOUT_SECONDS = 600
+_LLM_TIMEOUT_SECONDS = 600
 _SSE_HEARTBEAT_SECONDS = 15
 _MAX_SEED = 2**63 - 1
 _MAX_IMAGE_INPUT_SIZE = 50 * 1024 * 1024
@@ -381,7 +381,7 @@ def enhance_prompt(
 ) -> PromptEnhancementResponse:
     try:
         return _enhance_prompt(payload.prompt, payload.model_family)
-    except (DanbooruError, _VLLMError) as exc:
+    except (DanbooruError, _LLMError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
@@ -1432,6 +1432,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
         ),
         max_tokens=256,
         temperature=0.6,
+        max_characters=512,
     )
     valid_tags = validate_danbooru_tags(raw_tags)
     if not valid_tags:
@@ -1450,7 +1451,8 @@ def _request_structured_content(
     user_prompt: str,
     max_tokens: int,
     temperature: float,
-    pattern: str = r"^[A-Za-z0-9 ,'-]+$",
+    pattern: str = r"^[A-Za-z0-9 ,.'()_-]+$",
+    max_characters: int = 5000,
 ) -> str:
     parsed = _request_structured_object(
         system_prompt=system_prompt,
@@ -1463,7 +1465,7 @@ def _request_structured_content(
                 "contents": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 5000,
+                    "maxLength": max_characters,
                     "pattern": pattern,
                 }
             },
@@ -1474,11 +1476,23 @@ def _request_structured_content(
     )
     contents = parsed.get("contents")
     if not isinstance(contents, str) or not contents.strip():
-        raise _VLLMError("vLLM 구조화 응답의 contents가 비어 있습니다.")
+        raise _LLMError("LLM 구조화 응답의 contents가 비어 있습니다.")
     contents = contents.strip()
     if not re.fullmatch(pattern, contents):
-        raise _VLLMError("vLLM 프롬프트 결과에 허용되지 않은 문자가 포함되어 있습니다.")
-    return contents[:5000]
+        raise _LLMError("LLM 프롬프트 결과에 허용되지 않은 문자가 포함되어 있습니다.")
+    return contents[:max_characters]
+
+
+def _structured_schema_prompt(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        return {
+            key: _structured_schema_prompt(value)
+            for key, value in schema.items()
+            if key not in {"prefixItems", "pattern", "minLength", "maxLength", "title"}
+        }
+    if isinstance(schema, list):
+        return [_structured_schema_prompt(value) for value in schema]
+    return schema
 
 
 def _request_structured_object(
@@ -1489,42 +1503,44 @@ def _request_structured_object(
     temperature: float,
     schema: dict[str, Any],
     name: str,
-    timeout_seconds: int = _VLLM_TIMEOUT_SECONDS,
-    image_inputs: list[tuple[str, str]] | None = None,
+    timeout_seconds: int = _LLM_TIMEOUT_SECONDS,
+    grammar: str | None = None,
+    image_inputs: Sequence[tuple[str, str]] = (),
 ) -> dict[str, Any]:
+    structured = {"structured_outputs": {"grammar": grammar} if grammar is not None else {"json": schema}}
     user_content: str | list[dict[str, Any]] = user_prompt
     if image_inputs:
         user_content = [{"type": "text", "text": user_prompt}]
-        for label, image_url in image_inputs:
-            user_content.extend([
-                {"type": "text", "text": label},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ])
-    response = _request_vllm_json(
+        for label, url in image_inputs:
+            user_content.extend(({"type": "text", "text": f"Reference preview {label}:"}, {"type": "image_url", "image_url": {"url": url}}))
+    response = _request_llm_json(
         {
-            "model": settings.vllm_model,
+            "model": settings.llm_model,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {
+                    "role": "system",
+                    "content": (
+                        f"{system_prompt}\n\n"
+                        "Return only one JSON object with the following structure. "
+                        "Instructions to return prose or tags apply to the contents string, not to the outer JSON object. "
+                        "Use concise, meaningful values in the requested language. Never substitute repeated punctuation for words.\n"
+                        f"Output schema: {json.dumps(_structured_schema_prompt(schema), ensure_ascii=False)}"
+                    ),
+                },
                 {"role": "user", "content": user_content},
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": name,
-                    "schema": schema,
-                    "strict": True,
-                },
-            },
+            **structured,
             "chat_template_kwargs": {"enable_thinking": False},
+            "reasoning_effort": "none",
         },
         timeout_seconds=timeout_seconds,
     )
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise _VLLMError("vLLM이 구조화된 프롬프트 결과를 반환하지 않았습니다.", provider_response=response)
+        raise _LLMError("LLM이 구조화된 프롬프트 결과를 반환하지 않았습니다.", provider_response=response)
     choice = choices[0]
     if choice.get("finish_reason") == "length":
         message = choice.get("message")
@@ -1546,7 +1562,7 @@ def _request_structured_object(
         completion_tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
         shot_count = len(parsed_content.get("shots", [])) if isinstance(parsed_content, dict) and isinstance(parsed_content.get("shots"), list) else None
         logger.warning(
-            "vllm_structured_length name=%s max_tokens=%s completion_tokens=%s raw_characters=%s json_complete=%s trailing_whitespace_characters=%s last_field=%s shot_count=%s",
+            "llm_structured_length name=%s max_tokens=%s completion_tokens=%s raw_characters=%s json_complete=%s trailing_whitespace_characters=%s last_field=%s shot_count=%s",
             name,
             max_tokens,
             completion_tokens,
@@ -1556,24 +1572,24 @@ def _request_structured_object(
             last_field,
             shot_count,
         )
-        raise _VLLMError("vLLM 프롬프트 결과가 길이 제한으로 중단되었습니다.", provider_response=response)
+        raise _LLMError("LLM 프롬프트 결과가 길이 제한으로 중단되었습니다.", provider_response=response)
     message = choice.get("message")
     raw_content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(raw_content, str):
-        raise _VLLMError("vLLM 구조화 응답 형식이 올바르지 않습니다.", provider_response=response)
+        raise _LLMError("LLM 구조화 응답 형식이 올바르지 않습니다.", provider_response=response)
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content.strip(), flags=re.IGNORECASE)
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise _VLLMError("vLLM 구조화 응답을 JSON으로 읽을 수 없습니다.", provider_response=response) from exc
+        raise _LLMError("LLM 구조화 응답을 JSON으로 읽을 수 없습니다.", provider_response=response) from exc
     if not isinstance(parsed, dict):
-        raise _VLLMError("vLLM 구조화 응답이 JSON 객체가 아닙니다.", provider_response=response)
+        raise _LLMError("LLM 구조화 응답이 JSON 객체가 아닙니다.", provider_response=response)
     return parsed
 
 
-def _request_vllm_json(payload: dict[str, Any], *, timeout_seconds: int = _VLLM_TIMEOUT_SECONDS) -> dict[str, Any]:
+def _request_llm_json(payload: dict[str, Any], *, timeout_seconds: int = _LLM_TIMEOUT_SECONDS) -> dict[str, Any]:
     request = UrlRequest(
-        _vllm_url("/v1/chat/completions"),
+        _llm_url("/v1/chat/completions"),
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -1582,11 +1598,11 @@ def _request_vllm_json(payload: dict[str, Any], *, timeout_seconds: int = _VLLM_
         with timed_urlopen(urlopen, request, timeout=timeout_seconds) as response:
             decoded = json.loads(response.read())
     except UrlHTTPError as exc:
-        raise _VLLMError(f"vLLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc
+        raise _LLMError(f"LLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise _VLLMError("vLLM에 연결할 수 없습니다.") from exc
+        raise _LLMError("llama.cpp 생성 서버에 연결할 수 없습니다.") from exc
     if not isinstance(decoded, dict):
-        raise _VLLMError("vLLM 응답 형식이 올바르지 않습니다.")
+        raise _LLMError("LLM 응답 형식이 올바르지 않습니다.")
     return decoded
 
 
@@ -1594,15 +1610,15 @@ def _comfy_url(path: str) -> str:
     return f"{settings.comfyui_url.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _vllm_url(path: str) -> str:
-    return f"{settings.vllm_url.rstrip('/')}/{path.lstrip('/')}"
+def _llm_url(path: str) -> str:
+    return f"{settings.llm_url.rstrip('/')}/{path.lstrip('/')}"
 
 
 class _ComfyUIError(RuntimeError):
     pass
 
 
-class _VLLMError(RuntimeError):
+class _LLMError(RuntimeError):
     def __init__(self, message: str, *, provider_response: dict[str, Any] | None = None):
         super().__init__(message)
         self.provider_response = provider_response
