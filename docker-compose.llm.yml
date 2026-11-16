@@ -7,6 +7,9 @@ services:
     network_mode: host
     ipc: host
     environment:
+      LLM_HEALTH_URL: http://127.0.0.1:30004/health
+      LLM_MIN_START_AVAILABLE_GIB: "70"
+      LLM_MIN_RUNNING_AVAILABLE_GIB: "12"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       HF_HOME: /cache/huggingface
@@ -14,8 +17,10 @@ services:
       TORCHINDUCTOR_CACHE_DIR: /cache/torchinductor
       TRITON_CACHE_DIR: /cache/triton
     volumes:
+      - ./serve_llm.py:/opt/local-field/serve_llm.py:ro
       - /home/yoon/dev/models/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NM-DAU-NVFP4:/model:ro
       - ./.runtime/vllm:/cache
+    entrypoint: [python3, /opt/local-field/serve_llm.py]
     command:
       - /model
       - --host

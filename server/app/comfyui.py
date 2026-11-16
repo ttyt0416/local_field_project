@@ -1600,7 +1600,7 @@ def _request_llm_json(payload: dict[str, Any], *, timeout_seconds: int = _LLM_TI
     except UrlHTTPError as exc:
         raise _LLMError(f"LLM 프롬프트 강화 요청이 실패했습니다. (HTTP {exc.code})") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise _LLMError("llama.cpp 생성 서버에 연결할 수 없습니다.") from exc
+        raise _LLMError("vLLM 생성 서버에 연결할 수 없습니다.") from exc
     if not isinstance(decoded, dict):
         raise _LLMError("LLM 응답 형식이 올바르지 않습니다.")
     return decoded

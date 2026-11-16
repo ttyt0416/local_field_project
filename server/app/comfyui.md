@@ -89,3 +89,5 @@ ComfyUI 완료 확인 후 결과 다운로드·스토리지 업로드·DB 갱신
 선택적 image_inputs의 (label, data URL) 목록을 같은 user message의 text·image_url parts로 묶는다. 일반 이미지·음악 강화는 기존 문자열 메시지를 사용한다. 영상 강화만 실제 참조 이미지의 label을 붙여 전달한다.
 
 서빙 backend는 LLGuidance 기반 guidance로 명시 고정한다. auto 또는 XGrammar로 자동 선택하지 않는다.
+
+연결 실패 안내도 vLLM 생성 서버 명칭을 사용한다.
