@@ -18,7 +18,7 @@ DEFAULT_STORAGE_URL = ""
 DEFAULT_STORAGE_API_TOKEN = ""
 DEFAULT_COMFYUI_MODELS_PATH = "/comfyui-models"
 DEFAULT_LLM_URL = "http://host.docker.internal:30004"
-DEFAULT_LLM_MODEL = "qwen3.8-27b-fable-nvfp4"
+DEFAULT_LLM_MODEL = "erebus-rp-engine-26b-a4b-nvfp4"
 DEFAULT_EMBEDDING_URL = "http://host.docker.internal:30005"
 DEFAULT_HARDWARE_MONITOR_URL = "http://127.0.0.1:8091"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
@@ -58,7 +58,7 @@ class Settings:
     embedding_model: str
     embedding_dimensions: int
     danbooru_tags_path: str
-    llm_vision_enabled: bool = True
+    llm_vision_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -90,7 +90,7 @@ class Settings:
             embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
             embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", str(DEFAULT_EMBEDDING_DIMENSIONS))),
             danbooru_tags_path=os.getenv("DANBOORU_TAGS_PATH", DEFAULT_DANBOORU_TAGS_PATH),
-            llm_vision_enabled=os.getenv("LLM_VISION_ENABLED", "true").lower() == "true",
+            llm_vision_enabled=os.getenv("LLM_VISION_ENABLED", "false").lower() == "true",
         )
 
 

@@ -18,7 +18,7 @@ services:
       TRITON_CACHE_DIR: /cache/triton
     volumes:
       - ./serve_llm.py:/opt/local-field/serve_llm.py:ro
-      - /home/yoon/dev/models/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NM-DAU-NVFP4:/model:ro
+      - /home/yoon/dev/models/Erebus-RP-Engine-26B-A4B-NVFP4:/model:ro
       - ./.runtime/vllm:/cache
     entrypoint: [python3, /opt/local-field/serve_llm.py]
     command:
@@ -28,7 +28,7 @@ services:
       - --port
       - "30004"
       - --served-model-name
-      - qwen3.8-27b-fable-nvfp4
+      - erebus-rp-engine-26b-a4b-nvfp4
       - --dtype
       - bfloat16
       - --max-model-len
@@ -42,12 +42,9 @@ services:
       - --kv-cache-memory-bytes
       - "4294967296"
       - --enforce-eager
-      - --limit-mm-per-prompt
-      - '{"image":9,"video":0}'
-      - --mm-processor-kwargs
-      - '{"max_pixels":589824}'
+      - --language-model-only
       - --reasoning-parser
-      - qwen3
+      - gemma4
       - --default-chat-template-kwargs
       - '{"enable_thinking":false}'
       - --structured-outputs-config

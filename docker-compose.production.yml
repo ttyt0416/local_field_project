@@ -58,8 +58,8 @@ services:
     env_file:
       - ./server/.env.production
     environment:
-      LLM_MODEL: qwen3.8-27b-fable-nvfp4
-      LLM_VISION_ENABLED: "true"
+      LLM_MODEL: erebus-rp-engine-26b-a4b-nvfp4
+      LLM_VISION_ENABLED: "false"
       EMBEDDING_URL: http://embedding:30005
       EMBEDDING_MODEL: Qwen/Qwen3-Embedding-4B
       EMBEDDING_DIMENSIONS: "1024"

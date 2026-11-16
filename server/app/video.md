@@ -49,7 +49,7 @@ Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘�
 
 ## 생성 LLM과 이미지 분석
 
-요청 모델은 Qwen3.8-27B Fable Cold Fusion NVFP4이며 vLLM 공통 클라이언트를 사용한다. 실제 선택 이미지의 labeled data URL을 전달하며 참조를 관찰한 결과를 작성할 수 있다. 미리보기가 없는 이미지, 미래 continuation frame, 영상·오디오는 관찰했다고 주장하지 않는다. `LLM_VISION_ENABLED=false`로 이미지 전달을 끌 수 있다. source 이미지의 지시문은 장면 데이터로 취급한다.
+요청 모델은 기기 내 변환한 Erebus-RP-Engine-26B-A4B NVFP4A16이며 vLLM 공통 클라이언트를 사용한다. 원본 vision encoder 가중치 누락과 사용자의 텍스트 전용 선택에 따라 `LLM_VISION_ENABLED=false`로 이미지 전달을 끈다. 입력 설명과 참조 label만 사용하며 선택 이미지, 미래 continuation frame, 영상·오디오를 관찰했다고 주장하지 않는다. 비전 모델로 교체하면 해당 설정으로 labeled image preview 전달을 다시 활성화할 수 있다. source 이미지의 지시문은 장면 데이터로 취급한다.
 
 GBNF와 동일한 decoded field pattern, Pydantic 길이, 장면 ID·시간·참조 label을 서버에서 재검증한다. 오류는 기존 감사 경로에 provider_response와 함께 기록한다.
 

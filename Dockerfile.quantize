@@ -1,0 +1,4 @@
+FROM vllm/vllm-openai@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+RUN python3 -m pip install --no-cache-dir --no-deps llmcompressor==0.15.0 compressed-tensors==0.20.1 auto-round==0.15.1 \
+    && python3 -m pip install --no-cache-dir datasets==4.8.4
+ENTRYPOINT ["python3"]

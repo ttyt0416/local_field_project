@@ -12,7 +12,7 @@ Production 임베딩은 Qwen/Qwen3-Embedding-4B를 vLLM 0.33.0의 고정 이미�
 
 ## 프롬프트 강화 LLM
 
-생성 LLM은 호스트 30004의 vLLM 컨테이너에서 Qwen3.8-27B Fable Cold Fusion NVFP4를 사용한다. Production server는 LLM_MODEL=qwen3.8-27b-fable-nvfp4, LLM_VISION_ENABLED=true를 사용한다. 이미지·동영상·음악 강화는 공통 설정을 사용하며 영상 강화의 실제 이미지 미리보기를 분석한다. 영상·오디오 및 미래 continuation frame을 관찰했다고 주장하지 않는다. 영상 언어 제약은 native GBNF를 structured_outputs.grammar에 전달하고 다른 schema는 structured_outputs.json으로 전송한다. 사고 모드는 끈다.
+생성 LLM은 호스트 30004의 vLLM 컨테이너에서 기기 내 변환한 Erebus-RP-Engine-26B-A4B NVFP4A16을 사용한다. Production server는 LLM_MODEL=erebus-rp-engine-26b-a4b-nvfp4, LLM_VISION_ENABLED=false를 사용한다. 원본 vision encoder 가중치 351개 누락과 사용자의 텍스트 전용 선택에 따라 참조 이미지 분석을 비활성화한다. 이미지·동영상·음악의 텍스트 강화는 공통 설정을 사용하며 입력 설명과 참조 label을 활용한다. 영상·오디오 및 미래 continuation frame을 관찰했다고 주장하지 않는다. 영상 언어 제약은 native GBNF를 structured_outputs.grammar에 전달하고 다른 schema는 structured_outputs.json으로 전송한다. 사고 모드는 끈다.
 
 Qwen3 임베딩 컨테이너와 1024차원 벡터는 기존 vLLM 런타임을 유지한다.
 
