@@ -1042,7 +1042,7 @@ async def _resolve_assets(
 def _video_prompt_pattern(languages: Sequence[str], *, field: str | None = None, labels: Sequence[str] | None = None) -> str:
     if not languages or any(language not in _VIDEO_PROMPT_LANGUAGE_NAMES for language in languages):
         raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
-    return field_pattern(field or "audio", labels)
+    return field_pattern(field or "audio", labels, languages=languages)
 
 
 def _video_prompt_fields_schema(languages: Sequence[str], duration: float, mode: str = "i2v", *, scene_count: int = 0, labels: Sequence[str] | None = None) -> dict[str, Any]:
@@ -1145,8 +1145,8 @@ def _validate_video_prompt_fields(fields: dict[str, Any], mode: str = "i2v", *, 
         validated[field] = _normalize_video_reference_markers(validated[field])
     values = [(field, shot[field]) for shot in shots for field in _VIDEO_PROMPT_SHOT_FIELDS]
     values.extend((field, validated[field]) for field in overall_fields)
-    if any(re.fullmatch(_video_prompt_pattern(["en"], field=field, labels=labels), value) is None for field, value in values):
-        raise _LLMError("LLM 동영상 프롬프트의 영어 설명·원문 대사·화면 글자 형식이 올바르지 않습니다.", provider_response=fields)
+    if any(re.fullmatch(_video_prompt_pattern(languages or ["en"], field=field, labels=labels), value) is None for field, value in values):
+        raise _LLMError("LLM 동영상 프롬프트의 선택한 설명 언어·원문 대사·화면 글자 형식이 올바르지 않습니다.", provider_response=fields)
     if scene_count:
         if len(shots) != scene_count:
             raise _LLMError(f"LLM 샷 수가 입력 장면 수({scene_count}개)와 일치하지 않습니다.", provider_response=fields)
@@ -1197,15 +1197,18 @@ def _video_prompt_token_budget(payload: VideoPromptEnhancementRequest) -> int:
 
 
 def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPromptEnhancementResponse:
-    languages = ["en"]
+    languages = payload.prompt_output_languages
     effective_duration = _frame_length(payload.duration, payload.fps) / payload.fps
     labels = [reference.label for reference in payload.references]
     source = "\n".join([payload.prompt, *(payload.scenes or [payload.segment_prompt or ""])])
     literals = source_literals(source)
     language_contract = (
-        "All descriptive prose must be English. Preserve the exact original words and language of dialogue, lyrics, "
-        "and visible text. Non-English text is allowed only inside <d>[Language] ...</d> in audio or inside "
-        "double-quoted visible text in text. Do not translate, transliterate, omit, or paraphrase original literals. "
+        "Write descriptive prose only in the selected output languages: "
+        + ", ".join(_VIDEO_PROMPT_LANGUAGE_NAMES[language] for language in languages) + ". "
+        "Translate prose outside those languages into a selected language. Preserve the exact original words "
+        "and language of dialogue, lyrics, and visible text, even outside the selected description languages. "
+        "Put original dialogue and lyrics inside <d>[Language] ...</d> in audio and original visible text inside "
+        "double quotation marks in text. Do not translate, transliterate, omit, or paraphrase original literals. "
         "Only Picture, Video and Audio asset labels are restricted to the reference manifest. "
         "In R2V, create new Subject labels in subject_definitions, then reuse those definitions consistently."
     )
@@ -1255,7 +1258,7 @@ def _enhance_video_prompt(payload: VideoPromptEnhancementRequest) -> VideoPrompt
         temperature=0.6,
         timeout_seconds=_VIDEO_PROMPT_TIMEOUT_SECONDS,
         schema=schema,
-        grammar=video_prompt_gbnf(schema, labels=labels, literals=literals),
+        grammar=video_prompt_gbnf(schema, labels=labels, literals=literals, languages=languages),
         image_inputs=image_inputs,
         name="video_prompt_shots",
     ), payload.mode, scene_count=len(scenes), duration=effective_duration, languages=languages, labels=labels)

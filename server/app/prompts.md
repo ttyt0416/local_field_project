@@ -1,14 +1,14 @@
 # Prompt enhancement
 
-Image prompt enhancement는 기존 structured output contract와 10분 제한을 유지한다. Video는 같은 helper에 optional labeled image_url parts를 전달한다. 기본 2048, 최대 8192 tokens의 동적 budget과 필드별 길이 제한은 video.md를 따른다. Video 설명문은 공식 H3 지침대로 영어로 작성하고 대사·가사·화면 문구는 원문을 보존한다. 고정 태그·참조 표식·화자 ID·참조 강도 코드는 유지한다.
+Image prompt enhancement는 기존 structured output contract와 10분 제한을 유지한다. Video는 같은 helper에 optional labeled image_url parts를 전달한다. 기본 2048, 최대 8192 tokens의 동적 budget과 필드별 길이 제한은 video.md를 따른다. Video 설명문은 선택한 한국어·영어·일본어로 작성하고 대사·가사·화면 문구는 원문을 보존한다. 고정 태그·참조 표식·화자 ID·참조 강도 코드는 유지한다.
 
 Music prompt enhancement는 YuE2 Style·Lyrics에 맞춰 description과 lyrics를 target별 separate LLM request로 처리한다. 최종 `{contents}`는 서버가 조립하며 `ko`, `en`, `ja` 중 selected output language를 1개 이상 사용한다. description target은 lyrics를 context로만 사용한다. lyrics target은 기존 lyrics가 있으면 section order, tag, line break를 유지하며 개선하고, 비어 있으면 description과 duration을 기준으로 새 가사를 생성한다. 둘 다 `temperature=0.6`, `max_tokens=4096`, `timeout_seconds=300`을 사용한다.
 
-Video는 공통 사용자 의도·물리적 연속성·화자·영어 설명·원문 보존 규칙과 I2V·FL2V·R2V 전용 지시문을 결합한다. I2V는 첫 프레임에서 행동과 반응을 전개하고, FL2V는 첫·마지막 프레임 사이의 관찰 가능한 변화에 집중한다. R2V는 참조 주체 정의·요약·보존 분석과 구체적인 샷 묘사를 반환한다. 서버가 section·shot·timestamp를 조립하며 첫 샷의 timeline도 유지한다. 예시는 구조만 보여 주고 실제 사용자 장면에 복사하지 않도록 지시한다. 각 구간의 clock은 0초부터 시작하며 후속 구간의 mode는 선택된 continuation mode를 따른다.
+Video는 공통 사용자 의도·물리적 연속성·화자·선택 언어 설명·원문 보존 규칙과 I2V·FL2V·R2V 전용 지시문을 결합한다. I2V는 첫 프레임에서 행동과 반응을 전개하고, FL2V는 첫·마지막 프레임 사이의 관찰 가능한 변화에 집중한다. R2V는 참조 주체 정의·요약·보존 분석과 구체적인 샷 묘사를 반환한다. 서버가 section·shot·timestamp를 조립하며 첫 샷의 timeline도 유지한다. 예시는 구조만 보여 주고 실제 사용자 장면에 복사하지 않도록 지시한다. 각 구간의 clock은 0초부터 시작하며 후속 구간의 mode는 선택된 continuation mode를 따른다.
 
 명시한 장면은 `scene_manifest`의 scene_id·instruction 목록과 `scene_contract`로 전달한다. 목록의 각 장면을 정확히 한 shot으로 같은 순서에 대응시키고 scene_id를 복사하도록 요구한다. 이 계약은 모든 모드의 연속 동작·단일 샷 권고보다 우선한다. I2V·FL2V의 단일 샷 권고는 명시적 장면 경계가 없을 때만 적용하며, FL2V 다중 샷은 첫 샷의 시작과 마지막 샷의 끝을 참조 프레임에 정렬한다.
 
-실제 선택 목록에서 생성한 reference manifest가 Picture·Video·Audio 번호와 역할의 기준이다. 이미지는 labeled preview를 보고 묘사하고, preview가 없는 참조는 보거나 들었다고 가정하지 않는다. 후속 구간의 Picture 1은 생성 전인 마지막 프레임이므로 실제로 관찰했다고 주장하지 않는다. 대사·가사는 audio의 d block, 화면 글자는 text의 큰따옴표 내부에서 원문을 유지한다. 이외 설명문은 영어다.
+실제 선택 목록에서 생성한 reference manifest가 Picture·Video·Audio 번호와 역할의 기준이다. 이미지는 labeled preview를 보고 묘사하고, preview가 없는 참조는 보거나 들었다고 가정하지 않는다. 후속 구간의 Picture 1은 생성 전인 마지막 프레임이므로 실제로 관찰했다고 주장하지 않는다. 대사·가사는 audio의 d block, 화면 글자는 text의 큰따옴표 내부에서 원문을 유지한다. 이외 설명문은 선택한 언어 집합을 따른다.
 
 사용자가 제공한 `MiniMax_H3_Video_Prompt_Assistant_1.rtf`에서 카메라 일관성, 참조별 유지·변경 조건, 행동의 중간 과정 규칙을 선별했다. 각 shot은 시작 상태에서 접촉·자세·위치·물체 상태의 관찰 가능한 변화를 거쳐 요청된 결과에 도달하도록 묘사한다. 이 단계를 나누기 위해 불필요한 동작이나 cut을 추가하지 않는다. 카메라의 위치·방향·초점거리를 구분하고 같은 요소의 상반된 동작은 시간 순서로 표현한다. 이동 뒤 정지, tracking과 pan, dolly zoom처럼 가능한 조합은 유지한다. 참조는 사용자와 manifest가 지정한 역할에 해당하는 속성을 보존하고 요청된 의상·배경·동작 변경을 구분한다. R2V retention_analysis에는 구체적인 유지 속성·요청된 변경·참조 강도를 명시하며 역할 밖의 변경을 정체성 손실로 취급하지 않는다.
 
@@ -34,6 +34,9 @@ Qwen Image 2.1의 LLM 개선은 IMAGE_EDIT_PROMPT_ENHANCEMENT_SYSTEM_PROMPT를 �
 
 ## 공식 H3 지침 대조 수정
 
-공식 MiniMax-AI/MiniMax-H3의 base-en.txt·ref-en.txt를 기준으로 영어 설명문·원문 대사/가사/화면 글자, voiceover 정확 문구와 닫힌 입, 복합 화자 ID, cut/cutoff 태그를 명시한다. R2V summary 작업 유형은 keyframe completion, reference generation, video editing, video continuation, audio reuse, audio reference이며, Subject 정의와 실제 asset label을 구분한다. R2V 상세 묘사는 일반적으로 350~500 English words를 권장하되 불필요한 내용을 채우는 최소 제한으로 쓰지 않는다. 사용자 지정 장면 수·순서 계약은 유지한다.
+공식 MiniMax-AI/MiniMax-H3의 base-en.txt·ref-en.txt를 기준으로 선택 언어 설명문·원문 대사/가사/화면 글자, voiceover 정확 문구와 닫힌 입, 복합 화자 ID, cut/cutoff 태그를 명시한다. R2V summary 작업 유형은 keyframe completion, reference generation, video editing, video continuation, audio reuse, audio reference이며, Subject 정의와 실제 asset label을 구분한다. R2V 상세 묘사는 일반적으로 영어 350~500단어에 해당하는 상세도를 권장하되 불필요한 내용을 채우는 최소 제한으로 쓰지 않는다. 사용자 지정 장면 수·순서 계약은 유지한다.
 
 사용자 템플릿은 요청 길이와 실제 frame_count/fps 길이, aspect_ratio, 보존할 원문 literal 목록을 구분한다. 이미지가 첨부된 경우 실제 내용을 분석하며 영상·음원과 미래 continuation frame에 대한 추측은 금지한다.
+
+
+영상 설명의 영어 강제를 제거하고 요청한 한국어·영어·일본어 선택 집합을 따르도록 복구했다. 원문 대사·가사·화면 글자 보존과 고정 H3 protocol을 유지한다.

@@ -12,20 +12,34 @@ FIELD_LIMITS = {
     "overall_soundscape": 768, "non_diegetic_music": 768,
     "subject_definitions": 3072, "summary": 1024, "retention_analysis": 3072,
 }
-_PROSE = r'[\x20-\x21\x23-\x3B\x3D\x3F-\x7E\n]'
+_LANGUAGE_CHARS = {
+    "en": r"A-Za-z",
+    "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
+    "ja": r"\u3001-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
+}
+_PUNCTUATION = r"\x20-\x21\x23-\x3B\x3D\x3F-\x40\x5B\x5D-\x60\x7B-\x7E"
+_PROTOCOL_LITERALS = ("N/A", "fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference", "fully_copy", "partially_copy", "reference", "says in an off-screen voiceover")
+
+
 _SPEAKER = r'\(S[1-9][0-9]*(?:,S[1-9][0-9]*)*\)'
 _DIALOGUE = r'<d>\[[A-Za-z][A-Za-z -]{0,39}\][^<>]+(?:<(?:scenetrans|cutoff)>[^<>]*)*</d>'
 _QUOTED = r'"[^"\n]+"'
 _SOURCE_QUOTES = re.compile(r'<d>\[[^\]]+\](.*?)</d>|"([^"\n]+)"|“([^”\n]+)”|「([^」\n]+)」|『([^』\n]+)』|(?<!\w)\x27([^\x27\n]+)\x27(?!\w)', re.DOTALL)
 
 
+def _prose_characters(languages: Sequence[str]) -> str:
+    if not languages or any(language not in _LANGUAGE_CHARS for language in languages):
+        raise ValueError("지원하지 않는 동영상 프롬프트 출력 언어입니다.")
+    return _PUNCTUATION + ''.join(_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
+
+
 def source_literals(source: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(re.sub(r'</?(?:scenetrans|cutoff)>', '', next(value for value in match.groups() if value is not None)) for match in _SOURCE_QUOTES.finditer(source)))
 
 
-def field_pattern(field: str, labels: Sequence[str] | None = None) -> str:
+def field_pattern(field: str, labels: Sequence[str] | None = None, *, languages: Sequence[str] = ("en",)) -> str:
     assets = r'<(?:Picture|Video|Audio) [1-9][0-9]*>' if labels is None else '|'.join(map(re.escape, labels))
-    markers = [r'<Subject [1-9][0-9]*>']
+    markers = [r'<Subject [1-9][0-9]*>', *map(re.escape, _PROTOCOL_LITERALS)]
     if assets:
         markers.append(assets)
     if field != "retention_analysis":
@@ -34,7 +48,8 @@ def field_pattern(field: str, labels: Sequence[str] | None = None) -> str:
         markers.extend((_DIALOGUE, r'<(?:scenetrans|cutoff)>'))
     if field == "text":
         markers.append(_QUOTED)
-    atom = '(?:' + '|'.join((_PROSE, *markers)) + ')'
+    prose = '[' + _prose_characters(languages) + r'\x5C\n]'
+    atom = '(?:' + '|'.join((prose, *markers)) + ')'
     body = atom + '+'
     if field == "summary":
         task = '(?:' + '|'.join(map(re.escape, TASK_TYPES)) + ')'
@@ -79,16 +94,21 @@ def _number_range(low: int, high: int) -> str:
     return '(' + ' | '.join(choices) + ')'
 
 
-def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), literals: Sequence[str] = ()) -> str:
+def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), literals: Sequence[str] = (), languages: Sequence[str] = ("en",)) -> str:
     rules = [
         'ws ::= [ \\t\\n\\r]{0,4}',
-        r'prose-char ::= [\x20-\x21\x23-\x3B\x3D\x3F-\x5B\x5D-\x7E] | "\\\\" | "\\n"',
-        r'prose-visible ::= [\x21\x23-\x3B\x3D\x3F-\x5B\x5D-\x7E] | "\\\\"',
         r'unicode-char ::= [^"\\\x00-\x1F<>] | "\\\\" | "\\\""',
         'speaker ::= "(S" [1-9] [0-9]{0,2} (",S" [1-9] [0-9]{0,2}){0,15} ")"',
         'subject ::= "<Subject " [1-9] [0-9]{0,2} ">"',
         'cut-tag ::= "<scenetrans>" | "<cutoff>"',
     ]
+    characters = _prose_characters(languages)
+    visible_characters = characters.replace(r"\x20-\x21", r"\x21")
+    rules.extend((
+        'prose-char ::= [' + characters + r'] | "\\\\" | "\\n"',
+        'prose-visible ::= [' + visible_characters + r'] | "\\\\"',
+        'protocol ::= ' + ' | '.join(_terminal(value) for value in _PROTOCOL_LITERALS),
+    ))
     if labels:
         rules.append('asset ::= ' + ' | '.join(_terminal(label) for label in dict.fromkeys(labels)))
     if literals:
@@ -110,7 +130,7 @@ def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), lit
     string_fields = {key: value for key, value in sample.items() if value.get('type') == 'string'}
     string_fields.update({key: properties[key] for key in top_fields})
     for name, field in string_fields.items():
-        alternatives = ['prose-char', 'subject']
+        alternatives = ['prose-char', 'subject', 'protocol']
         if labels:
             alternatives.append('asset')
         if name != 'retention_analysis':
