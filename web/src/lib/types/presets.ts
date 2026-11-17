@@ -1,14 +1,15 @@
 import type { MossSettings } from './moss';
 
 export type ImageGenerationMode = 't2i' | 'i2i';
-export type ImageModelFamily = 'anima' | 'krea2' | 'moss';
-export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_krea2' | 'i2i_krea2' | 't2i_moss';
+export type ImageModelFamily = 'anima' | 'krea2' | 'moss' | 'minimax_h3_image';
+export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_krea2' | 'i2i_krea2' | 't2i_moss' | 't2i_minimax_h3_image' | 'i2i_minimax_h3_image';
 export const imageModelFamilyTabs: { value: ImageModelFamily; label: string }[] = [
 	{ value: 'anima', label: 'ANIMA' },
 	{ value: 'moss', label: 'MOSS' },
+	{ value: 'minimax_h3_image', label: 'MINIMAX H3 IMAGE' },
 ];
 export const imageGenerationFamilyTabs = imageModelFamilyTabs;
-export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', krea2: 'Krea2', moss: 'MOSS' };
+export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', krea2: 'Krea2', moss: 'MOSS', minimax_h3_image: 'MiniMax H3-Image' };
 export const imageGenerationModeTabs: { value: ImageGenerationMode; label: string }[] = [
 	{ value: 't2i', label: 'T2I' },
 	{ value: 'i2i', label: 'I2I' }
@@ -17,6 +18,8 @@ export const imagePresetCategories: { value: ImagePresetType; label: string; gen
 	{ value: 't2i_anima', label: 'T2I (Anima)', generationMode: 't2i', modelFamily: 'anima' },
 	{ value: 'i2i_anima', label: 'I2I (Anima)', generationMode: 'i2i', modelFamily: 'anima' },
 	{ value: 't2i_moss', label: 'T2I (MOSS)', generationMode: 't2i', modelFamily: 'moss' },
+	{ value: 't2i_minimax_h3_image', label: 'T2I (MiniMax H3-Image)', generationMode: 't2i', modelFamily: 'minimax_h3_image' },
+	{ value: 'i2i_minimax_h3_image', label: 'I2I (MiniMax H3-Image)', generationMode: 'i2i', modelFamily: 'minimax_h3_image' },
 	{ value: 't2i_krea2', label: 'T2I (Krea2)', generationMode: 't2i', modelFamily: 'krea2' },
 	{ value: 'i2i_krea2', label: 'I2I (Krea2)', generationMode: 'i2i', modelFamily: 'krea2' },
 ];

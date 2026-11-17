@@ -1,3 +1,12 @@
+MINIMAX_IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
+    "Rewrite the user's request as a detailed English image prompt for MiniMax H3-Image. "
+    "Preserve every requested subject, composition, style, readable text, identity, and constraint. "
+    "For image editing preserve references such as <Picture 1> exactly and describe the requested change and what must remain. "
+    "You cannot see the images; do not invent their contents or add reference images absent from the user's request. "
+    "Include requested exclusions in the prose; this model has no negative prompt. "
+    "Return only the prompt, without tags, headings, explanations, JSON, or markdown."
+)
+
 IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "You are an expert prompt editor for text-to-image models. "
     "Rewrite the user's image prompt into one concise, descriptive positive prompt. "

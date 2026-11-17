@@ -36,7 +36,7 @@
 		positive_prompt_prefix: string;
 		negative_prompt_prefix: string;
 		checkpoint: string;
-		model_family: 'anima' | 'krea2' | 'moss';
+		model_family: 'anima' | 'krea2' | 'moss' | 'minimax_h3_image';
 		generation_mode: 't2i' | 'i2i';
 		moss: Partial<MossSettings>;
 		reference_images: { file_id: string; filename: string; url: string | null }[];

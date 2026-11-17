@@ -15,3 +15,5 @@ MOSS 재생성은 moss 설정을 함께 전달한다. 화면에서 기본값과 
 prompt_enhancement_enabled를 원본·다중 참조와 함께 재생성 파라미터로 전달한다.
 
 improved_prompt를 선택 필드로 전달해 T2I·I2I 모두 개선 활성 상태와 본문을 함께 복원한다.
+
+MiniMax H3-Image의 family와 기존 source·reference_images·샘플링 설정을 재생성 상태로 전달한다.

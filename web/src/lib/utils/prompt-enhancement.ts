@@ -1,6 +1,6 @@
 import { apiJson } from './api';
 
-type ImagePromptFamily = 'anima' | 'moss';
+type ImagePromptFamily = 'anima' | 'moss' | 'minimax_h3_image';
 
 export async function enhanceImagePrompt(modelFamily: ImagePromptFamily, prompt: string): Promise<string> {
 	const result = await apiJson<{ improved_prompt: { contents: string } }>('generation/image/enhance-prompt', {

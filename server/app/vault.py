@@ -66,7 +66,7 @@ from .video import (
 router = APIRouter(prefix="/vault", tags=["vault"])
 VAULT_PAGE_SIZE = 10
 ImageGenerationMode = Literal["t2i", "i2i"]
-ImageModelFamily = Literal["anima", "krea2", "moss"]
+ImageModelFamily = Literal["anima", "krea2", "moss", "minimax_h3_image"]
 
 
 class VaultImageSummary(BaseModel):

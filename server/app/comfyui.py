@@ -39,6 +39,7 @@ from .generation_events import generation_event_broker, generation_key
 from .moss import MossSettings, layout_prompt as moss_layout_prompt
 from .prompts import (
     IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+    MINIMAX_IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_TAG_SYSTEM_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_TAG_USER_PROMPT,
     IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT,
@@ -73,14 +74,14 @@ class LoraSelection(BaseModel):
     strength: float = Field(default=1.0)
 
 
-ModelFamily = Literal["anima", "moss"]
+ModelFamily = Literal["anima", "moss", "minimax_h3_image"]
 _MOSS_ENCODER = "folder://MOSS/"
 _MOSS_VAE = "folder://MOSS/"
 
 
 class ImageSource(BaseModel):
     file_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
-    file_index: int | None = Field(default=None, ge=0, le=9)
+    file_index: int | None = Field(default=None, ge=0, le=15)
 
     @model_validator(mode="after")
     def exactly_one_source(self) -> "ImageSource":
@@ -111,6 +112,11 @@ class ImageGenerationRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def family_defaults(cls, values: Any) -> Any:
+        if isinstance(values, dict) and values.get("model_family") == "minimax_h3_image":
+            values = dict(values)
+            for key, value in {"cfg": 1.0, "steps": 6, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0, "width": 2048, "height": 2048}.items():
+                values.setdefault(key, value)
+            return values
         if isinstance(values, dict) and values.get("model_family") == "moss":
             values = dict(values)
             values.setdefault("cfg", 3.0)
@@ -123,12 +129,15 @@ class ImageGenerationRequest(BaseModel):
 
 class ImageToImageGenerationRequest(ImageGenerationRequest):
     source: ImageSource
+    references: list[ImageSource] = Field(default_factory=list, max_length=15)
     denoise: float = Field(default=0.65, ge=0, le=1)
 
     @model_validator(mode="after")
     def require_supported_i2i_family(self) -> "ImageToImageGenerationRequest":
         if self.model_family == "moss":
             raise ValueError("MOSS는 T2I에서만 사용할 수 있습니다.")
+        if self.references and self.model_family != "minimax_h3_image":
+            raise ValueError("추가 참조 이미지는 MiniMax H3-Image에서만 사용할 수 있습니다.")
         return self
 
 
@@ -383,14 +392,17 @@ async def create_image_to_image_generation(
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     _validate_image_sources(request, files)
-    source_file_id, source_filename, content, media_type = await _resolve_image_source(request.source, files)
+    resolved = [await _resolve_image_source(source, files) for source in [request.source, *request.references]]
+    source_file_id, source_filename, _, _ = resolved[0]
     try:
-        input_name = _upload_comfy_input(content, source_filename, media_type)
+        input_names = [_upload_comfy_input(content, filename, media_type) for _, filename, content, media_type in resolved]
     except _ComfyUIError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return _submit_image_generation(
         request,
-        input_image=input_name,
+        input_image=input_names[0],
+        input_references=input_names[1:],
+        reference_images=[{"file_id": item[0], "filename": item[1]} for item in resolved[1:]],
         source_file_id=source_file_id,
         source_filename=source_filename,
         generation_mode="i2i",
@@ -404,13 +416,15 @@ def _submit_image_generation(
     input_image: str | None = None,
     source_file_id: str | None = None,
     source_filename: str | None = None,
+    input_references: list[str] | None = None,
+    reference_images: list[dict[str, str]] | None = None,
     generation_mode: Literal['t2i', 'i2i'] = 't2i',
     denoise: float = 1.0,
 ) -> ImageGenerationAccepted:
     try:
         options = _image_options(payload.model_family)
         _validate_model_choice(payload, options)
-        prompt, seed = _build_prompt(payload, input_image=input_image, denoise=denoise)
+        prompt, seed = _build_prompt(payload, input_image=input_image, denoise=denoise, input_references=input_references)
         client_id = str(uuid.uuid4())
         response = _request_json(
             "POST",
@@ -444,6 +458,7 @@ def _submit_image_generation(
         generation_mode=generation_mode,
         source_file_id=source_file_id,
         source_filename=source_filename,
+        reference_images=reference_images or [],
         denoise=denoise,
         moss=payload.moss.model_dump() if payload.model_family == "moss" and payload.moss else {},
         prompt_enhancement_enabled=payload.prompt_enhancement_enabled,
@@ -460,7 +475,7 @@ def _submit_image_generation(
 
 
 def _validate_image_sources(request: ImageToImageGenerationRequest, files: list[UploadFile]) -> None:
-    indices = [request.source.file_index] if request.source.file_index is not None else []
+    indices = [source.file_index for source in [request.source, *request.references] if source.file_index is not None]
     if sorted(indices) != list(range(len(files))):
         raise HTTPException(status_code=422, detail="입력 이미지와 업로드 파일의 순서가 일치하지 않습니다.")
 
@@ -877,7 +892,7 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
         default_steps = 30
         preferred_sampler = _DEFAULT_SAMPLER
         preferred_scheduler = _DEFAULT_SCHEDULER
-    else:
+    elif model_family == "moss":
         checkpoints = _family_choices(data, "UNETLoader", "unet_name", "MOSS/")
         loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "MOSS/")
         default_cfg, default_steps = 3.0, 50
@@ -886,8 +901,20 @@ def _image_options(model_family: ModelFamily = "anima") -> ImageGenerationOption
             raise _ComfyUIError("MOSS 텍스트 인코더 또는 VAE가 아직 설치되지 않았습니다.")
         if "moss_image" not in _node_choices(data, "CLIPLoader", "type") or "EmptyFlux2LatentImage" not in data:
             raise _ComfyUIError("MOSS 지원 ComfyUI 업데이트와 재시작이 필요합니다.")
+    else:
+        checkpoints = _family_choices(data, "UNETLoader", "unet_name", "MiniMaxH3Image/")
+        loras = _family_choices(data, "LoraLoaderModelOnly", "lora_name", "MiniMaxH3Image/")
+        default_cfg, default_steps = 1.0, 6
+        preferred_sampler, preferred_scheduler = "euler", "simple"
+        if "MiniMaxH3ImageConditioning" not in data:
+            raise _ComfyUIError("MiniMax H3-Image에는 ComfyUI 0.45.0 이상의 이미지 모델 지원이 필요합니다.")
+        if not _folder_choices(data, "CLIPLoader", "clip_name", "folder://MiniMaxH3/") or not _folder_choices(data, "VAELoader", "vae_name", "folder://MiniMaxH3Image/"):
+            raise _ComfyUIError("MiniMax H3-Image 텍스트 인코더 또는 이미지 VAE가 설치되지 않았습니다.")
     samplers = _node_choices(data, "KSampler", "sampler_name")
     schedulers = _node_choices(data, "KSampler", "scheduler")
+    if model_family == "minimax_h3_image":
+        samplers = [value for value in samplers if value == "euler"]
+        schedulers = [value for value in schedulers if value == "simple"]
     embeddings = _installed_family_files("embeddings", f"{model_family.title()}/")
     if not checkpoints:
         raise _ComfyUIError(f"ComfyUI에서 {model_family.title()} 체크포인트를 찾을 수 없습니다.")
@@ -985,7 +1012,7 @@ def _node_choices(data: dict[str, Any], node_name: str, input_name: str) -> list
 def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenerationOptions) -> None:
     if payload.prompt_enhancement_enabled:
         _effective_positive_prompt(payload)
-    family_name = {"anima": "Anima", "moss": "MOSS"}[payload.model_family]
+    family_name = {"anima": "Anima", "moss": "MOSS", "minimax_h3_image": "MiniMax H3-Image"}[payload.model_family]
     if options.model_family != payload.model_family or payload.checkpoint not in options.checkpoints:
         raise HTTPException(status_code=422, detail=f"선택한 {family_name} 체크포인트를 찾을 수 없습니다.")
     lora_names = [lora.name for lora in payload.loras]
@@ -1007,6 +1034,15 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
                 moss_layout_prompt(_effective_positive_prompt(payload), payload.moss, payload.width, payload.height)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if payload.model_family == "minimax_h3_image":
+        if payload.width % 32 or payload.height % 32:
+            raise HTTPException(status_code=422, detail="MiniMax H3-Image 가로·세로 크기는 32의 배수여야 합니다.")
+        if (payload.cfg, payload.steps, payload.sampler_name, payload.scheduler) != (1, 6, "euler", "simple"):
+            raise HTTPException(status_code=422, detail="MiniMax H3-Image는 CFG 1·6스텝·Euler·Simple 설정을 사용합니다.")
+        if payload.negative_prompt.strip() or payload.negative_prompt_prefix.strip():
+            raise HTTPException(status_code=422, detail="MiniMax H3-Image의 제외 지시는 긍정 프롬프트에 작성해 주세요.")
+        if isinstance(payload, ImageToImageGenerationRequest) and payload.denoise != 1:
+            raise HTTPException(status_code=422, detail="MiniMax H3-Image 편집은 Denoise 1을 사용합니다.")
     if payload.width % 8 or payload.height % 8:
         raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
 
@@ -1037,8 +1073,9 @@ def _build_prompt(
     *,
     input_image: str | None = None,
     denoise: float = 1.0,
+    input_references: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
-    prompt, seed = _build_unresolved_prompt(payload, input_image=input_image, denoise=denoise)
+    prompt, seed = _build_unresolved_prompt(payload, input_image=input_image, denoise=denoise, input_references=input_references)
     if _model_folder_inputs(prompt):
         _resolve_model_inputs(prompt, _request_json("GET", "/object_info"))
     return prompt, seed
@@ -1049,7 +1086,10 @@ def _build_unresolved_prompt(
     *,
     input_image: str | None = None,
     denoise: float = 1.0,
+    input_references: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
+    if payload.model_family == "minimax_h3_image":
+        return _build_minimax_image_prompt(payload, [name for name in [input_image, *(input_references or [])] if name])
     if payload.model_family == "moss":
         if input_image or isinstance(payload, ImageToImageGenerationRequest):
             raise HTTPException(status_code=422, detail="MOSS는 T2I에서만 사용할 수 있습니다.")
@@ -1190,6 +1230,28 @@ def _build_moss_prompt(payload: ImageGenerationRequest) -> tuple[dict[str, dict[
 
 
 
+def _build_minimax_image_prompt(payload: ImageGenerationRequest, images: list[str]) -> tuple[dict[str, dict[str, Any]], int]:
+    seed = payload.seed if payload.seed is not None else secrets.randbelow(_MAX_SEED + 1)
+    graph = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": payload.checkpoint, "weight_dtype": "default"}},
+        "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "folder://MiniMaxH3/", "type": "minimax", "device": "default"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "folder://MiniMaxH3Image/"}},
+        "5": {"class_type": "MiniMaxH3ImageConditioning", "inputs": {"clip": ["3", 0], "vae": ["4", 0], "prompt": _effective_positive_prompt(payload), "width": payload.width, "height": payload.height}},
+        "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},
+        "8": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "seed": seed, "steps": payload.steps, "cfg": payload.cfg, "sampler_name": payload.sampler_name, "scheduler": payload.scheduler, "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["5", 1], "denoise": 1.0}},
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["4", 0]}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "LocalField_MiniMaxH3Image_I2I" if images else "LocalField_MiniMaxH3Image_T2I"}},
+    }
+    for index, lora in enumerate(payload.loras, start=20):
+        graph[str(index)] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": graph["8"]["inputs"]["model"], "lora_name": lora.name, "strength_model": lora.strength}}
+        graph["8"]["inputs"]["model"] = [str(index), 0]
+    for index, filename in enumerate(images, start=1):
+        node_id = str(100 + index)
+        graph[node_id] = {"class_type": "LoadImage", "inputs": {"image": filename}}
+        graph["5"]["inputs"][f"images.image_{index}"] = [node_id, 0]
+    return graph, seed
+
+
 def _stored_image_outputs(generation: dict[str, Any]) -> list[ImageOutput]:
     filename = generation.get("filename")
     if not isinstance(filename, str) or not filename:
@@ -1287,6 +1349,14 @@ def _request_bytes(path: str) -> tuple[bytes, str | None]:
 
 def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptEnhancementResponse:
     prompt = prompt.strip()
+    if model_family == "minimax_h3_image":
+        contents = _request_structured_content(
+            system_prompt=MINIMAX_IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT,
+            user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
+            max_tokens=1536,
+            temperature=0.6,
+        )
+        return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
     candidate_tags = search_danbooru_tags(prompt, limit=96)
     natural_language = (
         _request_structured_content(

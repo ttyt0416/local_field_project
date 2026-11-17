@@ -24,4 +24,6 @@ Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용
 재생성 이동 주소에는 `family` 쿼리를 붙이지 않는다. T2I·I2I 생성 페이지가 `imageGenerationStore`에 저장된 `model_family`를 읽어 해당 모델을 선택한 뒤 나머지 생성 설정을 복원한다.
 
 
-현재 이미지 생성 모델은 Anima·MOSS이며 I2I는 Anima를 사용한다.
+현재 이미지 생성 모델은 Anima·MOSS·MiniMax H3-Image이며 I2I는 Anima·MiniMax H3-Image를 사용한다.
+
+MiniMax H3-Image 결과의 family·원본·추가 참조를 기존 공통 프리셋·재생성 동작으로 복원한다.

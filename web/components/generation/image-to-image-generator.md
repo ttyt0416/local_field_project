@@ -26,3 +26,5 @@ Anima I2I는 T2I와 같은 enhanceImagePrompt 유틸과 vLLM 개선 API를 사�
 ## 공용 사용
 
 Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.
+
+MiniMax H3-Image I2I 탭은 소스를 Picture 1로, 추가 참조 최대 15장을 Picture 2부터 전달한다. 기기·업로드·생성 콘텐츠 선택과 참조 순서 변경·제거를 지원하며 재생성 시 참조도 복원한다. multipart 파일 순서와 file_index를 함께 구성한다. CFG 1·6스텝·Denoise 1을 사용하고 부정 입력과 Denoise 조절을 숨긴다.

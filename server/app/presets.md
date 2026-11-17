@@ -15,4 +15,6 @@ MOSS는 T2I 전용 t2i_moss 네임스페이스를 사용한다. moss 값은 공�
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
 
 
-현재 이미지 생성 모델은 Anima·MOSS이며 I2I는 Anima를 사용한다.
+현재 이미지 생성 모델은 Anima·MOSS·MiniMax H3-Image이며 I2I는 Anima·MiniMax H3-Image를 사용한다.
+
+MiniMax H3-Image 프리셋은 t2i_minimax_h3_image와 i2i_minimax_h3_image로 분리한다. 기존 공통 설정 저장 계약을 사용한다.

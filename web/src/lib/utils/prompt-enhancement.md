@@ -4,3 +4,5 @@ T2I·I2I가 동일한 POST generation/image/enhance-prompt 경로를 사용하�
 
 
 이미지 모델 선택과 생성·프리셋·저장소 경로는 현재 지원하는 Anima·MOSS 범주만 사용한다.
+
+minimax_h3_image도 공통 이미지 프롬프트 개선 API와 오류 처리·텔레메트리를 사용한다.

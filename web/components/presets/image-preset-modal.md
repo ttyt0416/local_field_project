@@ -13,3 +13,5 @@ width와 height는 기존 64~2048 product cap 없이 Comfy native 16~16384 range
 
 
 MOSS 편집은 레이아웃 버튼과 영역 편집만 제공한다. 별도 MOSS 설정 제목과 DMD 바로가기 버튼은 제거했다. 긴 체크포인트명은 버튼 안에서 말줄임한다.
+
+MiniMax H3-Image의 T2I·I2I 프리셋은 32배수 크기와 공식 샘플링 설정을 사용한다. 부정 입력·Denoise 저장 항목은 표시하지 않고 CFG 1·6스텝을 유지한다.

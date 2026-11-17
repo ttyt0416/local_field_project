@@ -25,7 +25,7 @@
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 	import { imageGenerationModeTabs, imageGenerationFamilyTabs as imageModelFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
-	type ImageFamily = 'anima';
+	type ImageFamily = 'anima' | 'minimax_h3_image';
 	type ImageFamilyTab = ImageFamily;
 	type ImageDimensions = { width: number; height: number };
 	type ImageOptions = {
@@ -69,6 +69,7 @@
 		page: number;
 		total_pages: number;
 	};
+	type ReferenceImage = { file?: File; file_id?: string; filename: string; url?: string | null };
 	type SelectionSource = 'device' | 'stored';
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
@@ -97,13 +98,14 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	{ value: 'generated', label: '생성' }
 ];
 	const modelFamilyTabs: { value: ImageFamilyTab; label: string }[] = imageModelFamilyTabs.filter(
-		(tab): tab is { value: ImageFamilyTab; label: string } => tab.value === 'anima'
+		(tab): tab is { value: ImageFamilyTab; label: string } => tab.value === 'anima' || tab.value === 'minimax_h3_image'
 	);
 
 	let { family, onselect }: { family: ImageFamily; onselect: (family: ImageFamily) => void } = $props();
 
 	let familyLabel = $derived(imageModelFamilyLabels[family]);
-	const imageDimensionStep = 8;
+	let isMinimax = $derived(family === 'minimax_h3_image');
+	let imageDimensionStep = $derived(isMinimax ? 32 : 8);
 	const routeTitle = 'I2I';
 	let presetType = $derived<ImagePresetType>(`i2i_${family}`);
 	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
@@ -173,6 +175,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	let sourceImageUrl = $state('');
 	let sourceInput = $state<HTMLInputElement>();
 	let sourceSelectionOpen = $state(false);
+	let selectionTarget = $state<'source' | 'reference'>('source');
+	let referenceImages = $state<ReferenceImage[]>([]);
 	let selectionSource = $state<SelectionSource>('device');
 	let storedAssetSource = $state<StoredSource>('uploaded');
 	let storedAssets = $state<StoredImageAsset[]>([]);
@@ -263,7 +267,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			scheduler = loaded.default_scheduler;
 			cfg = loaded.default_cfg;
 			steps = loaded.default_steps;
-			denoise = 0.65;
+			denoise = isMinimax ? 1 : 0.65;
+			if (isMinimax) { width = 2048; height = 2048; }
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 				regenerationParameters = null;
@@ -288,15 +293,16 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
 		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
-		cfg = parameters.cfg;
-		steps = parameters.steps;
+		cfg = isMinimax ? 1 : parameters.cfg;
+		steps = isMinimax ? 6 : parameters.steps;
 		samplerName = options.samplers.includes(parameters.sampler_name) ? parameters.sampler_name : options.default_sampler;
 		scheduler = options.schedulers.includes(parameters.scheduler) ? parameters.scheduler : options.default_scheduler;
 		width = parameters.width;
 		height = parameters.height;
 		seed = parameters.seed;
 		randomSeed = !parameters.seed.trim();
-		denoise = parameters.denoise ?? 0.65;
+		denoise = isMinimax ? 1 : parameters.denoise ?? 0.65;
+		referenceImages = isMinimax ? (parameters.reference_images ?? []).map((image) => ({ ...image })) : [];
 		sourceFileId = parameters.source_file_id ?? '';
 		sourceImageUrl = parameters.source_image_url ?? '';
 		sourceStoredAsset = null;
@@ -310,14 +316,14 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			...(improvedPrompt.trim() ? { improved_prompt: improvedPrompt.trim() } : {}),
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
-			negative_prompt_prefix: negativePromptPrefix.trim(),
-			negative_prompt: negativePrompt.trim(),
+			negative_prompt_prefix: isMinimax ? '' : negativePromptPrefix.trim(),
+			negative_prompt: isMinimax ? '' : negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
 			aspect_ratio: 'custom',
 			width: Number(width),
 			height: Number(height),
-			denoise: Number(denoise),
+			denoise: isMinimax ? 1 : Number(denoise),
 			cfg: Number(cfg),
 			steps: Number(steps),
 			sampler_name: samplerName,
@@ -361,9 +367,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		if (values.loras !== undefined) loras = values.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
-		if (values.denoise !== undefined) denoise = values.denoise;
-		if (values.cfg !== undefined) cfg = values.cfg;
-		if (values.steps !== undefined) steps = values.steps;
+		if (values.denoise !== undefined) denoise = isMinimax ? 1 : values.denoise;
+		if (values.cfg !== undefined) cfg = isMinimax ? 1 : values.cfg;
+		if (values.steps !== undefined) steps = isMinimax ? 6 : values.steps;
 		if (values.sampler_name !== undefined && options.samplers.includes(values.sampler_name)) samplerName = values.sampler_name;
 		if (values.scheduler !== undefined && options.schedulers.includes(values.scheduler)) scheduler = values.scheduler;
 		if (values.random_seed !== undefined) randomSeed = values.random_seed;
@@ -388,8 +394,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		return false;
 	}
 
-	function openSourceSelection() {
-		if (generating) return;
+	function openSourceSelection(target: 'source' | 'reference' = 'source') {
+		if (generating || (target === 'reference' && referenceImages.length >= 15)) return;
+		selectionTarget = target;
 		selectionSource = 'stored';
 		storedAssetSource = 'generated';
 		storedImagePresetType = 't2i_anima';
@@ -472,6 +479,13 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	}
 
 	function selectStoredImage(asset: StoredImageAsset) {
+        if (selectionTarget === 'reference') {
+            if (referenceImages.length >= 15) return;
+            referenceImages = [...referenceImages, { file_id: asset.file_id, filename: asset.filename, url: asset.url }];
+            improvedPrompt = '';
+            sourceSelectionOpen = false;
+            return;
+        }
 		sourceMetadataRequestId += 1;
 		sourceError = '';
 		sourceFile = null;
@@ -489,6 +503,22 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		if (!(event.currentTarget instanceof HTMLInputElement) || generating) return;
 		const files = event.currentTarget.files;
 		if (!files || files.length === 0) return;
+        if (selectionTarget === 'reference') {
+            const selected = Array.from(files);
+            if (referenceImages.length + selected.length > 15) {
+                sourceError = '소스 이미지를 포함해 참조 이미지는 최대 16장입니다.';
+                return;
+            }
+            if (selected.some((file) => !file.type.startsWith('image/') || file.size <= 0 || file.size > 50 * 1024 * 1024)) {
+                sourceError = '각 참조 이미지는 50MB 이하의 비어 있지 않은 이미지여야 합니다.';
+                return;
+            }
+            referenceImages = [...referenceImages, ...selected.map((file) => ({ file, filename: file.name }))];
+            improvedPrompt = '';
+            event.currentTarget.value = '';
+            sourceSelectionOpen = false;
+            return;
+        }
 		if (files.length !== 1) {
 			sourceError = '소스 이미지는 정확히 한 장만 선택해 주세요.';
 			return;
@@ -513,6 +543,15 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		void inspectSourceImage(file);
 	}
 
+
+	function moveReference(index: number, direction: number) {
+        const next = index + direction;
+        if (generating || next < 0 || next >= referenceImages.length) return;
+        const images = [...referenceImages];
+        [images[index], images[next]] = [images[next], images[index]];
+        referenceImages = images;
+        improvedPrompt = '';
+    }
 
 	async function inspectSourceImage(source: File | string, expectedFileId = '') {
 		const requestId = ++sourceMetadataRequestId;
@@ -677,16 +716,24 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 		const requestFamily = family;
 		const form = new FormData();
-		const source = sourceFile ? { file_index: 0 } : { file_id: sourceFileId };
+		const uploadedFiles = sourceFile ? [sourceFile] : [];
+        const source = sourceFile ? { file_index: 0 } : { file_id: sourceFileId };
+        const references = isMinimax ? referenceImages.map((image) => {
+            if (!image.file) return { file_id: image.file_id };
+            const file_index = uploadedFiles.length;
+            uploadedFiles.push(image.file);
+            return { file_index };
+        }) : [];
 		form.append('payload' , JSON.stringify({
 			model_family: requestFamily,
 			prompt_enhancement_enabled: promptEnhancementEnabled,
 			improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
 			source,
+			references,
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
-			negative_prompt_prefix: negativePromptPrefix.trim(),
-			negative_prompt: negativePrompt.trim(),
+			negative_prompt_prefix: isMinimax ? '' : negativePromptPrefix.trim(),
+			negative_prompt: isMinimax ? '' : negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength: Number(strength) })),
 			cfg: Number(cfg),
@@ -696,9 +743,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			width: Number(width),
 			height: Number(height),
 			seed: randomSeed ? null : seed.trim(),
-			denoise: Number(denoise)
+			denoise: isMinimax ? 1 : Number(denoise)
 		}));
-		if (sourceFile) form.append('files', sourceFile, sourceFile.name);
+		for (const file of uploadedFiles) form.append('files', file, file.name);
 
 		generating = true;
 		uploading = true;
@@ -917,7 +964,21 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 
 
-						<div class="space-y-2">
+						{#if isMinimax}
+                        <div class="space-y-3 rounded-xl border border-border p-3">
+                            <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">추가 참조 이미지 ({referenceImages.length}/15)</span><OutlinedButton disabled={generating || referenceImages.length >= 15} onclick={() => openSourceSelection('reference')}>참조 추가</OutlinedButton></div>
+                            <p class="text-xs text-muted-foreground">소스는 {'<Picture 1>'}, 추가 참조는 {'<Picture 2>'}부터 순서대로 프롬프트에서 지정합니다.</p>
+                            {#each referenceImages as reference, index}
+                                <div class="flex items-center gap-2 rounded-lg border border-border p-2">
+                                    <span class="min-w-0 flex-1 truncate text-xs">{'<Picture ' + (index + 2) + '>'} {reference.filename}</span>
+                                    <IconOutlinedButton ariaLabel="참조 순서 앞으로" disabled={generating || index === 0} onclick={() => moveReference(index, -1)}><ChevronLeft size={16} /></IconOutlinedButton>
+                                    <IconOutlinedButton ariaLabel="참조 순서 뒤로" disabled={generating || index === referenceImages.length - 1} onclick={() => moveReference(index, 1)}><ChevronRight size={16} /></IconOutlinedButton>
+                                    <IconOutlinedButton ariaLabel="참조 이미지 제거" disabled={generating} onclick={() => { referenceImages = referenceImages.filter((_, current) => current !== index); improvedPrompt = ''; }}><X size={16} /></IconOutlinedButton>
+                                </div>
+                            {/each}
+                        </div>
+                        {/if}
+                        <div class="space-y-2">
 							<label class="block space-y-2" for="i2i-positive-prompt-prefix">
 								<span class="text-sm font-medium">긍정 프롬프트 Prefix</span>
 								<textarea id="i2i-positive-prompt-prefix" bind:value={positivePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
@@ -946,20 +1007,22 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 							{/if}
 						</div>
 
-						<div class="space-y-2">
+						{#if !isMinimax}
+							<div class="space-y-2">
 
-							<label class="block space-y-2" for="i2i-negative-prompt-prefix">
-								<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
-								<textarea id="i2i-negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
-							</label>
-							<div class="flex items-center justify-between gap-3">
-								<label for="i2i-negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
+								<label class="block space-y-2" for="i2i-negative-prompt-prefix">
+									<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
+									<textarea id="i2i-negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+								</label>
+								<div class="flex items-center justify-between gap-3">
+									<label for="i2i-negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
+
+								</div>
+								<textarea id="i2i-negative-prompt" bind:value={negativePrompt} rows="3" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+								<PromptLibrary kind="image" value={negativePrompt} disabled={generating} onchange={(value) => (negativePrompt = value)} />
 
 							</div>
-							<textarea id="i2i-negative-prompt" bind:value={negativePrompt} rows="3" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
-							<PromptLibrary kind="image" value={negativePrompt} disabled={generating} onchange={(value) => (negativePrompt = value)} />
-
-						</div>
+						{/if}
 
 						<div class="space-y-2">
 							<span class="text-sm font-medium">체크포인트</span>
@@ -1007,16 +1070,16 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 						</div>
 
 
-						<label class="block space-y-2" for="i2i-denoise">
+						{#if !isMinimax}<label class="block space-y-2" for="i2i-denoise">
 							<span class="text-sm font-medium">Denoise</span>
 							<input id="i2i-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} disabled={generating} class={numberInputClass} />
 							<span class="block text-xs text-muted-foreground">0.0은 원본을 강하게 유지하고, 1.0은 프롬프트에 따라 크게 변경합니다.</span>
-						</label>
+						</label>{/if}
 
 
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="i2i-cfg"><span class="text-sm font-medium">CFG</span><input id="i2i-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={generating} class={numberInputClass} /></label>
-							<label class="block space-y-2" for="i2i-steps"><span class="text-sm font-medium">Steps</span><input id="i2i-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-cfg"><span class="text-sm font-medium">CFG</span><input id="i2i-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={generating || isMinimax} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-steps"><span class="text-sm font-medium">Steps</span><input id="i2i-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={generating || isMinimax} class={numberInputClass} /></label>
 						</div>
 
 						<div class="grid gap-4 sm:grid-cols-2">
@@ -1083,11 +1146,11 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 
 
-	<Modal bind:open={sourceSelectionOpen} title="소스 이미지 선택" description="기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.">
+	<Modal bind:open={sourceSelectionOpen} title={selectionTarget === 'reference' ? '참조 이미지 선택' : '소스 이미지 선택'} description={selectionTarget === 'reference' ? '기기 저장소 또는 저장된 콘텐츠에서 참조 이미지를 선택해 주세요.' : '기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.'}>
 		<div class="space-y-5">
 			<Tab items={selectionSourceTabs} bind:value={selectionSource} ariaLabel="소스 이미지 선택 위치" onselect={selectSelectionSource} />
 			{#if selectionSource === 'device'}
-				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" class={fileInputClass} onchange={handleSourceFile} /></label>
+				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" multiple={selectionTarget === 'reference'} class={fileInputClass} onchange={handleSourceFile} /></label>
 			{:else}
 				<div class="space-y-4">
 					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 이미지 종류" onselect={selectStoredAssetSource} />

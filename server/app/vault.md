@@ -35,4 +35,6 @@ MOSS 생성 기록을 family 필터에서 조회한다. 상세 응답의 moss �
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
 
 
-현재 이미지 생성 모델은 Anima·MOSS이며 I2I는 Anima를 사용한다.
+현재 이미지 생성 모델은 Anima·MOSS·MiniMax H3-Image이며 I2I는 Anima·MiniMax H3-Image를 사용한다.
+
+minimax_h3_image의 목록·상세·참조 이미지를 조회하고 T2I·I2I 재생성과 프리셋 저장에 전달한다.

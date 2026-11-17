@@ -12,7 +12,7 @@ lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하
 
 공통 Comfy progress state는 현재 실행 node ID도 보존한다. image/video caller는 기존 progress 계약을 그대로 사용하고, TRELLIS.2 router는 node ID를 background cleanup·structure·shape·texture·mesh stage로 매핑한다.
 
-`GET /generation/image/options?family=anima|moss`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima/` split model과 `vae/Anima/`를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·MOSS를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima·MOSS prompt enhancement는 Danbooru tags와 자연어를 사용한다. Anima I2I도 T2I와 같은 LLM 개선 API를 사용한다.
+`GET /generation/image/options?family=anima|moss|minimax_h3_image`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima/` split model과 `vae/Anima/`를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·MOSS·MiniMax H3-Image를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima·MOSS prompt enhancement는 Danbooru tags와 자연어를 사용한다. Anima I2I도 T2I와 같은 LLM 개선 API를 사용한다.
 
 `POST /generation/image/i2i`는 multipart payload와 소스 이미지 한 개를 받는다. local file은 submit 시에만 Storage·media_assets에 저장하고 기존 file ID는 ownership을 확인해 재사용한다. Anima는 `LoadImage → ImageScale → VAEEncode → KSampler`와 0~1 denoise를 유지한다.
 
@@ -86,3 +86,10 @@ ComfyUI 완료 확인 후 결과 다운로드·스토리지 업로드·DB 갱신
 서빙 backend는 LLGuidance 기반 guidance로 명시 고정한다. auto 또는 XGrammar로 자동 선택하지 않는다.
 
 연결 실패 안내도 vLLM 생성 서버 명칭을 사용한다.
+
+MiniMax H3-Image는 minimax_h3_image family로 T2I·I2I를 제공한다. diffusion_models/MiniMaxH3Image와 vae/MiniMaxH3Image를 사용하며 text_encoders/MiniMaxH3의 기존 Qwen3-VL NVFP4 인코더를 공유한다. MiniMaxH3ImageConditioning을 사용하는 ComfyUI 0.45.0 이상이 필요하다. Euler·Simple·6 steps·CFG 1·Denoise 1, 32배수 캔버스를 사용하고 기본 크기는 2048×2048이다. 부정 지시는 긍정 프롬프트에 작성한다. I2I는 소스와 추가 참조 15장까지 순서대로 Picture 1~16에 연결하고 기존 reference_images 열·Storage 참조 검사로 보존한다. 프롬프트 개선은 공통 vLLM에서 자연어만 반환하며 별도 PE 가중치를 설치하지 않는다.
+
+가중치 출처: https://huggingface.co/Comfy-Org/MiniMax-H3-Image revision 0bb149f51e3156ed4b90dd45d5620346bfe1df8f.
+- minimax_h3_image_pruned_int8_convrot.safetensors: 20,979,314,802 bytes, SHA-256 83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622.
+- minimax_h3_image_vae_fp16.safetensors: 1,168,505,312 bytes, SHA-256 d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af.
+- 기존 공유 인코더 qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors: SHA-256 35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6. 공식 저장소 파일과 동일함을 검증하고 재사용한다.

@@ -26,7 +26,7 @@
 
 	import MossControls from '../media/moss-controls.svelte';
 	import { mossSettings, type MossSettings } from '$lib/types/moss';
-	type ModelFamily = 'anima' | 'moss';
+	type ModelFamily = 'anima' | 'moss' | 'minimax_h3_image';
 	type ModelFamilyTab = ModelFamily;
 	type ImageOptions = {
 		model_family: ModelFamily;
@@ -83,7 +83,7 @@
 	};
 	type Preset = {
 		id: string;
-		type: 't2i_anima' | 't2i_moss';
+		type: 't2i_anima' | 't2i_moss' | 't2i_minimax_h3_image';
 		name: string;
 		values: PresetValues;
 		is_default: boolean;
@@ -98,12 +98,14 @@
 
 	let { modelFamily, onselect }: { modelFamily: ModelFamily; onselect: (family: ModelFamily) => void } = $props();
 	let presetType = $derived<Preset['type']>(`t2i_${modelFamily}`);
-	let familyLabel = $derived(modelFamily === 'moss' ? 'MOSS' : 'Anima');
-	let dimensionStep = $derived(modelFamily === 'moss' ? 16 : 8);
+	let isMinimax = $derived(modelFamily === 'minimax_h3_image');
+	let familyLabel = $derived(isMinimax ? 'MiniMax H3-Image' : modelFamily === 'moss' ? 'MOSS' : 'Anima');
+	let dimensionStep = $derived(isMinimax ? 32 : modelFamily === 'moss' ? 16 : 8);
 	const pageTitle = 'T2I';
 	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
 		{ value: 'anima', label: 'ANIMA' },
-		{ value: 'moss', label: 'MOSS' }
+		{ value: 'moss', label: 'MOSS' },
+		{ value: 'minimax_h3_image', label: 'MINIMAX H3 IMAGE' }
 	];
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
@@ -137,6 +139,7 @@
 		{ key: 'prompt_enhancement', label: '프롬프트 개선 설정' },
 		{ key: 'moss', label: 'MOSS 레이아웃' }
 	];
+	let visiblePresetFieldOptions = $derived(presetFieldOptions.filter(({ key }) => (key !== 'moss' || modelFamily === 'moss') && (!isMinimax || !['negative_prompt_prefix', 'negative_prompt'].includes(key))));
 	const defaultPresetFieldSelection: Record<PresetField, boolean> = {
 		positive_prompt_prefix: true,
 		prompt: true,
@@ -255,7 +258,7 @@
 
 
 	function selectedPresetFieldCount() {
-		return presetFieldOptions.filter(({ key }) => (key === 'moss' ? modelFamily === 'moss' : true) && selectedPresetFields[key]).length;
+		return visiblePresetFieldOptions.filter(({ key }) => selectedPresetFields[key]).length;
 	}
 
 	function setPresetField(key: PresetField, checked: boolean) {
@@ -265,7 +268,7 @@
 	async function openSavePreset() {
 		presetName = '';
 		presetError = '';
-		selectedPresetFields = { ...defaultPresetFieldSelection };
+		selectedPresetFields = { ...defaultPresetFieldSelection, negative_prompt_prefix: !isMinimax, negative_prompt: !isMinimax };
 		presetSaveMode = 'new';
 		overwritePresetId = '';
 		savePresetModalOpen = true;
@@ -395,8 +398,8 @@
 		if (values.width !== undefined || values.height !== undefined) {
 			explicitAspectSize = { width, height };
 		}
-		if (values.cfg !== undefined) cfg = values.cfg;
-		if (values.steps !== undefined) steps = values.steps;
+		if (values.cfg !== undefined) cfg = isMinimax ? 1 : values.cfg;
+		if (values.steps !== undefined) steps = isMinimax ? 6 : values.steps;
 		if (values.sampler_name !== undefined) samplerName = values.sampler_name;
 		if (values.scheduler !== undefined) scheduler = values.scheduler;
 		if (values.random_seed !== undefined) randomSeed = values.random_seed;
@@ -424,8 +427,8 @@
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
 		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
-		cfg = parameters.cfg;
-		steps = parameters.steps;
+		cfg = isMinimax ? 1 : parameters.cfg;
+		steps = isMinimax ? 6 : parameters.steps;
 		samplerName = parameters.sampler_name;
 		scheduler = parameters.scheduler;
 		width = parameters.width;
@@ -506,6 +509,7 @@
 			scheduler = options.default_scheduler;
 			cfg = options.default_cfg;
 			steps = options.default_steps;
+			if (isMinimax) { width = 2048; height = 2048; }
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 			} else {
@@ -563,8 +567,8 @@
 					prompt: prompt.trim(),
 					prompt_enhancement_enabled: promptEnhancementEnabled,
 					improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
-					negative_prompt_prefix: negativePromptPrefix.trim(),
-					negative_prompt: negativePrompt.trim(),
+					negative_prompt_prefix: isMinimax ? '' : negativePromptPrefix.trim(),
+					negative_prompt: isMinimax ? '' : negativePrompt.trim(),
 					checkpoint,
 					loras: loras.filter(({ name }) => name).map(({ name, strength }) => ({ name, strength })),
 					cfg,
@@ -804,18 +808,20 @@
 							{/if}
 						</div>
 
-							<div class="space-y-2">
-								<label class="block space-y-2" for="negative-prompt-prefix">
-									<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
-									<textarea id="negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
-								</label>
-								<div class="flex items-center justify-between gap-3">
-									<label for="negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
+							{#if !isMinimax}
+								<div class="space-y-2">
+									<label class="block space-y-2" for="negative-prompt-prefix">
+										<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
+										<textarea id="negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+									</label>
+									<div class="flex items-center justify-between gap-3">
+										<label for="negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
 
+									</div>
+									<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
+									<PromptLibrary kind="image" value={negativePrompt} disabled={generating || enhancingPrompt} onchange={(value) => (negativePrompt = value)} />
 								</div>
-								<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
-								<PromptLibrary kind="image" value={negativePrompt} disabled={generating || enhancingPrompt} onchange={(value) => (negativePrompt = value)} />
-							</div>
+							{/if}
 
 
 						<div class="space-y-2">
@@ -877,11 +883,11 @@
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="cfg">
 								<span class="text-sm font-medium">CFG</span>
-								<input id="cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} />
+								<input id="cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={isMinimax} class={numberInputClass} />
 							</label>
 							<label class="block space-y-2" for="steps">
 								<span class="text-sm font-medium">Steps</span>
-								<input id="steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} />
+								<input id="steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={isMinimax} class={numberInputClass} />
 							</label>
 							</div>
 
@@ -990,7 +996,7 @@
 					<span class="text-xs text-muted-foreground">{selectedPresetFieldCount()}개 선택</span>
 				</div>
 				<div class="grid gap-2 sm:grid-cols-2">
-					{#each presetFieldOptions.filter(({ key }) => key === 'moss' ? modelFamily === 'moss' : true) as field}
+					{#each visiblePresetFieldOptions as field}
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted">
 							<input type="checkbox" checked={selectedPresetFields[field.key]} onchange={(event) => setPresetField(field.key, (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" />
 							<span>{field.label}</span>

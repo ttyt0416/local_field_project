@@ -11,3 +11,5 @@
 
 
 imageGenerationFamilyTabs는 프리셋·이미지 생성에 사용하는 현행 모델 목록이다.
+
+minimax_h3_image family와 t2i_minimax_h3_image·i2i_minimax_h3_image 분류를 공통 모델 탭·프리셋·이미지 선택창에서 재사용한다.

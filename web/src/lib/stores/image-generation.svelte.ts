@@ -1,7 +1,7 @@
 import type { MossSettings } from '$lib/types/moss';
 
 export type ImageGenerationParameters = {
-	model_family?: 'anima' | 'krea2' | 'moss';
+	model_family?: 'anima' | 'krea2' | 'moss' | 'minimax_h3_image';
 	moss?: Partial<MossSettings>;
 	prompt_enhancement_enabled?: boolean;
 	improved_prompt?: string;

@@ -811,9 +811,11 @@ def _detected_model_type(version: CivitaiVersion) -> ModelType | None:
 
 
 def _suggested_subfolder(model_type: ModelType, base_model: str | None) -> str:
-    family = next((name for name in ("anima", "minimax", "moss") if name in _normalized_label(base_model or "")), None)
+    family = next((name for name in ("minimaxh3image", "anima", "minimax", "moss") if name in _normalized_label(base_model or "")), None)
     if family is None:
         return ""
+    if family == "minimaxh3image":
+        return "MiniMaxH3" if model_type == "text_encoder" else "MiniMaxH3Image"
     if family == "moss" and model_type in {"diffusion_model", "lora"}:
         return "MOSS"
     try:

@@ -39,3 +39,5 @@ Music LLM structured output: Style is `{language, genre, vocals, tempo_bpm, inst
 
 
 영상 출력 전체는 요청한 한국어·영어·일본어 선택 집합을 따른다. 한 번의 요청에서 선택 문자 범위를 동적으로 합쳐 공통 적용하며 대사·가사·화면 글자에도 언어 예외를 두지 않는다. H3 구조 표식은 유지한다.
+
+MiniMax H3-Image 강화는 상세한 영어 자연어와 원문 화면 문구·Picture label을 유지하며 태그 검색을 사용하지 않는다. 보지 않은 참조 이미지의 내용을 추측하지 않고 제외 지시도 긍정 본문에 포함한다.

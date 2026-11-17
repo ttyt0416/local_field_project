@@ -12,7 +12,7 @@ from .moss import MossSettings
 
 
 router = APIRouter(prefix="/presets", tags=["presets"])
-PresetType = Literal["t2i_anima", "i2i_anima", "t2i_krea2", "i2i_krea2", "t2i_moss", "video"]
+PresetType = Literal["t2i_anima", "i2i_anima", "t2i_krea2", "i2i_krea2", "t2i_moss", "t2i_minimax_h3_image", "i2i_minimax_h3_image", "video"]
 PresetAspectRatio = Literal["custom", "2:3", "3:2", "1:1", "16:9", "9:16"]
 PresetVideoMode = Literal["i2v", "fl2v", "r2v"]
 

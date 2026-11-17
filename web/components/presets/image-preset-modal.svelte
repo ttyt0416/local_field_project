@@ -38,8 +38,9 @@
 	let { open = $bindable(false), preset, initialValues = {}, presetType, options, onSaved }: Props = $props();
 	let isI2I = $derived(presetType.startsWith('i2i_'));
 	let isMoss = $derived(presetType.endsWith('_moss'));
+	let isMinimax = $derived(presetType.endsWith('_minimax_h3_image'));
 	const supportsPromptEnhancement = true;
-	let dimensionStep = $derived(isMoss ? 16 : 8);
+	let dimensionStep = $derived(isMinimax ? 32 : isMoss ? 16 : 8);
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
 	const aspectRatioOptions: { value: AspectRatio; label: string }[] = [
 		{ value: 'custom', label: '커스텀' },
@@ -149,24 +150,24 @@
 		checkpoint = values.checkpoint ?? options.default_checkpoint;
 		loras = values.loras?.map(({ name, strength }) => ({ name, strength })) ?? [];
 		aspectRatio = values.aspect_ratio ?? 'custom';
-		width = values.width ?? 1024;
-		height = values.height ?? 1024;
-		denoise = values.denoise ?? 0.65;
-		cfg = values.cfg ?? options.default_cfg ?? 4;
-		steps = values.steps ?? options.default_steps ?? 30;
-		samplerName = values.sampler_name ?? options.default_sampler;
-		scheduler = values.scheduler ?? options.default_scheduler;
+		width = values.width ?? (isMinimax ? 2048 : 1024);
+		height = values.height ?? (isMinimax ? 2048 : 1024);
+		denoise = isMinimax ? 1 : values.denoise ?? 0.65;
+		cfg = isMinimax ? 1 : values.cfg ?? options.default_cfg ?? 4;
+		steps = isMinimax ? 6 : values.steps ?? options.default_steps ?? 30;
+		samplerName = isMinimax ? options.default_sampler : values.sampler_name ?? options.default_sampler;
+		scheduler = isMinimax ? options.default_scheduler : values.scheduler ?? options.default_scheduler;
 		seed = values.seed ?? '';
 		randomSeed = values.random_seed ?? !values.seed;
 		selectedFields = {
 			positive_prompt_prefix: fields.has('positive_prompt_prefix'),
 			prompt: fields.has('prompt'),
-			negative_prompt_prefix: fields.has('negative_prompt_prefix'),
-			negative_prompt: fields.has('negative_prompt'),
+			negative_prompt_prefix: !isMinimax && fields.has('negative_prompt_prefix'),
+			negative_prompt: !isMinimax && fields.has('negative_prompt'),
 			checkpoint: fields.has('checkpoint'),
 			loras: fields.has('loras'),
 			aspect_ratio: fields.has('aspect_ratio'),
-			denoise: isI2I && fields.has('denoise'),
+			denoise: isI2I && !isMinimax && fields.has('denoise'),
 			cfg: fields.has('cfg'),
 			steps: fields.has('steps'),
 			sampling: fields.has('sampler_name') || fields.has('scheduler') || fields.has('sampling'),
@@ -190,7 +191,7 @@
 
 	function selectedFieldCount() {
 		return fieldOptions
-			.filter(({ key }) => (key === 'denoise' ? isI2I : key === 'moss' ? isMoss : key === 'prompt_enhancement' ? supportsPromptEnhancement : true))
+			.filter(({ key }) => (!isMinimax || !['negative_prompt_prefix', 'negative_prompt', 'denoise'].includes(key)) && (key === 'denoise' ? isI2I : key === 'moss' ? isMoss : key === 'prompt_enhancement' ? supportsPromptEnhancement : true))
 			.filter(({ key }) => selectedFields[key]).length;
 	}
 
@@ -259,7 +260,7 @@
 			<div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">저장할 설정</span><span class="text-xs text-muted-foreground">{selectedFieldCount()}개 선택</span></div>
 			<div class="grid gap-2 sm:grid-cols-2">
 				{#each fieldOptions as field}
-					{#if field.key === 'denoise' ? isI2I : field.key === 'moss' ? isMoss : field.key === 'prompt_enhancement' ? supportsPromptEnhancement : true}
+					{#if (!isMinimax || !['negative_prompt_prefix', 'negative_prompt', 'denoise'].includes(field.key)) && (field.key === 'denoise' ? isI2I : field.key === 'moss' ? isMoss : field.key === 'prompt_enhancement' ? supportsPromptEnhancement : true)}
 						<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted"><input type="checkbox" checked={selectedFields[field.key]} onchange={(event) => (selectedFields[field.key] = (event.currentTarget as HTMLInputElement).checked)} class="size-4 accent-primary" /><span>{field.label}</span></label>
 					{/if}
 				{/each}
@@ -278,7 +279,7 @@
 		{#if selectedFields.aspect_ratio}<Select id="image-preset-aspect" label="이미지 비율" options={aspectRatioOptions} bind:value={aspectRatio} /><div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-width"><span class="text-sm font-medium">가로</span><input id="image-preset-width" type="number" min={dimensionStep} max="16384" step={dimensionStep} bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label><label class="block space-y-2" for="image-preset-height"><span class="text-sm font-medium">세로</span><input id="image-preset-height" type="number" min={dimensionStep} max="16384" step={dimensionStep} bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} /></label></div>{/if}
 		{#if isMoss && selectedFields.moss}<MossControls bind:value={moss} {width} {height} disabled={saving} />{/if}
 		{#if isI2I && selectedFields.denoise}<label class="block space-y-2" for="image-preset-denoise"><span class="text-sm font-medium">Denoise</span><input id="image-preset-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} class={numberInputClass} /></label>{/if}
-		{#if selectedFields.cfg || selectedFields.steps}<div class="grid gap-4 sm:grid-cols-2">{#if selectedFields.cfg}<label class="block space-y-2" for="image-preset-cfg"><span class="text-sm font-medium">CFG</span><input id="image-preset-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} class={numberInputClass} /></label>{/if}{#if selectedFields.steps}<label class="block space-y-2" for="image-preset-steps"><span class="text-sm font-medium">Steps</span><input id="image-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} class={numberInputClass} /></label>{/if}</div>{/if}
+		{#if selectedFields.cfg || selectedFields.steps}<div class="grid gap-4 sm:grid-cols-2">{#if selectedFields.cfg}<label class="block space-y-2" for="image-preset-cfg"><span class="text-sm font-medium">CFG</span><input id="image-preset-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={isMinimax} class={numberInputClass} /></label>{/if}{#if selectedFields.steps}<label class="block space-y-2" for="image-preset-steps"><span class="text-sm font-medium">Steps</span><input id="image-preset-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={isMinimax} class={numberInputClass} /></label>{/if}</div>{/if}
 		{#if selectedFields.sampling}<button type="button" onclick={() => (samplingOpen = true)} class="flex w-full items-center justify-between gap-4 rounded-lg border border-border px-3 py-3 text-left transition hover:bg-muted"><span class="text-sm font-medium">샘플러 / 스케줄러</span><span class="min-w-0 truncate text-xs text-muted-foreground">{`${samplerName} / ${scheduler}`}</span></button>{/if}
 		{#if selectedFields.seed}<div class="grid gap-4 sm:grid-cols-2"><label class="block space-y-2" for="image-preset-seed"><span class="text-sm font-medium">Seed</span><input id="image-preset-seed" type="number" min="0" max="9223372036854775807" step="1" bind:value={seed} disabled={randomSeed} class={numberInputClass} /></label><label class="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-border px-3 py-2.5 text-sm transition hover:bg-muted sm:mb-0.5" for="image-preset-random-seed"><input id="image-preset-random-seed" type="checkbox" bind:checked={randomSeed} class="size-4 accent-primary" /><span>무작위 시드</span></label></div>{/if}
 		{#if supportsPromptEnhancement && selectedFields.prompt_enhancement}<label class="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm"><input type="checkbox" bind:checked={promptEnhancementEnabled} class="size-4 accent-primary" /><span>프롬프트 개선 사용</span></label><label class="block space-y-2" for="image-preset-improved"><span class="text-sm font-medium">개선된 프롬프트</span><textarea id="image-preset-improved" bind:value={improvedPrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea></label>{/if}
