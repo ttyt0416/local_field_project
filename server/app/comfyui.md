@@ -93,3 +93,5 @@ MiniMax H3-Image는 minimax_h3_image family로 T2I·I2I를 제공한다. diffusi
 - minimax_h3_image_pruned_int8_convrot.safetensors: 20,979,314,802 bytes, SHA-256 83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622.
 - minimax_h3_image_vae_fp16.safetensors: 1,168,505,312 bytes, SHA-256 d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af.
 - 기존 공유 인코더 qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors: SHA-256 35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6. 공식 저장소 파일과 동일함을 검증하고 재사용한다.
+
+H3-Image 개선 본문에는 공통 Danbooru용 ASCII 문자 제한을 적용하지 않는다. `<Picture N>` 참조 표식과 사용자가 요청한 비영어 화면 문구를 구조화 응답에서도 그대로 표현할 수 있다. JSON·빈 응답·길이 검증은 공통 경로를 유지한다.

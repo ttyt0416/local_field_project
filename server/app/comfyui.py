@@ -1355,6 +1355,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
             user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
             max_tokens=1536,
             temperature=0.6,
+            pattern=r"^[\s\S]+$",
         )
         return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
     candidate_tags = search_danbooru_tags(prompt, limit=96)
