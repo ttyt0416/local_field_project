@@ -19,3 +19,5 @@ Readiness and the submitted loader graph use the same live folder search. The le
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+음악 Style·Lyrics도 공통 vLLM 반복 패널티를 사용한다. 비어 있지 않은 텍스트에는 선택 언어의 문자·숫자가 필요하고 선행 콜론은 허용하지 않는다. schema pattern과 서버 검증에 같은 규칙을 적용하며 Style의 미지정 빈 값과 Instrumental의 빈 lines는 유지한다.

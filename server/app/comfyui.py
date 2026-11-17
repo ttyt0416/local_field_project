@@ -1355,7 +1355,7 @@ def _enhance_prompt(prompt: str, model_family: ModelFamily = "anima") -> PromptE
             user_prompt=IMAGE_PROMPT_ENHANCEMENT_USER_PROMPT.format(prompt=prompt),
             max_tokens=1536,
             temperature=0.6,
-            pattern=r"^[\s\S]+$",
+            pattern=r"^(?:[A-Za-z0-9]|<Picture [1-9][0-9]*>)[\s\S]*$",
         )
         return PromptEnhancementResponse(improved_prompt=PromptEnhancementContent(contents=contents))
     candidate_tags = search_danbooru_tags(prompt, limit=96)
@@ -1394,7 +1394,7 @@ def _request_structured_content(
     user_prompt: str,
     max_tokens: int,
     temperature: float,
-    pattern: str = r"^[A-Za-z0-9 ,.'()_-]+$",
+    pattern: str = r"^[A-Za-z0-9][A-Za-z0-9 ,.'()_-]*$",
     max_characters: int = 5000,
 ) -> str:
     parsed = _request_structured_object(
@@ -1466,13 +1466,16 @@ def _request_structured_object(
                         f"{system_prompt}\n\n"
                         "Return only one JSON object with the following structure. "
                         "Instructions to return prose or tags apply to the contents string, not to the outer JSON object. "
-                        "Use concise, meaningful values in the requested language. Never substitute repeated punctuation for words.\n"
+                        "Use concise, meaningful values in the requested language. Start nonempty text values directly with the requested content, never a leading colon or separator. Never return punctuation alone or substitute repeated punctuation for words.\n"
                         f"Output schema: {json.dumps(_structured_schema_prompt(schema), ensure_ascii=False)}"
                     ),
                 },
                 {"role": "user", "content": user_content},
             ],
             "temperature": temperature,
+            "repetition_penalty": 1.1,
+            "frequency_penalty": 0.1,
+            "presence_penalty": 0.1,
             "max_tokens": max_tokens,
             "stream": False,
             **structured,

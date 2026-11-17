@@ -44,11 +44,13 @@ def field_pattern(field: str, labels: Sequence[str] | None = None, *, languages:
     if field != "retention_analysis":
         markers.append(_SPEAKER)
     if field == "audio":
-        markers.extend((rf'<d>\[(?:{dialogue_languages})\](?:{dialogue_char}|<(?:scenetrans|cutoff)>)+</d>', r'<(?:scenetrans|cutoff)>'))
+        markers.append(rf'<d>\[(?:{dialogue_languages})\](?:<scenetrans>)?{dialogue_char}+(?:<(?:scenetrans|cutoff)>)?</d>')
     if field == "text":
         markers.append('"' + quoted_char + '+"')
     atom = '(?:' + '|'.join((prose, *markers)) + ')'
-    body = atom + '+'
+    word_characters = characters.replace(_PUNCTUATION, '0-9').replace(r"\u3001-\u303F", '')
+    start = '(?:' + '|'.join(('[' + word_characters + ']', *markers)) + ')'
+    body = start + atom + '*'
     if field == "summary":
         task = '(?:' + '|'.join(map(re.escape, TASK_TYPES)) + ')'
         body = rf'\[{task}(?: \+ {task})*\] ' + body
@@ -97,9 +99,11 @@ def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), lan
     ]
     characters = _prose_characters(languages)
     visible_characters = characters.replace(r"\x20-\x21", r"\x21")
+    word_characters = characters.replace(_PUNCTUATION, '0-9').replace(r"\u3001-\u303F", '')
     rules.extend((
         'prose-char ::= [' + characters + r'] | "\\\\" | "\\n"',
         'prose-visible ::= [' + visible_characters + r'] | "\\\\"',
+        'prose-word ::= [' + word_characters + ']',
         'protocol ::= ' + ' | '.join(_terminal(value) for value in _PROTOCOL_LITERALS),
     ))
     if labels:
@@ -108,7 +112,7 @@ def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), lan
         'quoted-char ::= [' + characters + r'] | "\\\\"',
         'dialogue-char ::= prose-char | ' + _terminal('\\"'),
         'dialogue-language ::= ' + ' | '.join(_terminal(_LANGUAGE_NAMES[language]) for language in dict.fromkeys(languages)),
-        'dialogue ::= "<d>[" dialogue-language "]" (dialogue-char | cut-tag){1,2048} "</d>"',
+        'dialogue ::= "<d>[" dialogue-language "]" "<scenetrans>"? dialogue-char{1,2048} cut-tag? "</d>"',
         'visible-text ::= ' + _terminal('\\"') + ' quoted-char{1,1024} ' + _terminal('\\"'),
         'task ::= ' + ' | '.join(_terminal(task) for task in TASK_TYPES),
     ))
@@ -125,13 +129,14 @@ def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), lan
         if name != 'retention_analysis':
             alternatives.append('speaker')
         if name == 'audio':
-            alternatives.extend(('dialogue', 'cut-tag'))
+            alternatives.append('dialogue')
         if name == 'text':
             alternatives.append('visible-text')
         atom = '(' + ' | '.join(alternatives) + ')'
         prefix = '"[" task (" + " task){0,5} "] " ' if name == 'summary' else ''
         visible = "(" + " | ".join(["prose-visible", *alternatives[1:]]) + ")"
-        rules.append(name.replace("_", "-") + ' ::= "\\\"" ' + prefix + visible + " (" + atom + "{0," + str(field["maxLength"] - 2) + "} " + visible + ')? "\\\""')
+        start = "(" + " | ".join(["prose-word", *alternatives[1:]]) + ")"
+        rules.append(name.replace("_", "-") + ' ::= "\\\"" ' + prefix + start + " (" + atom + "{0," + str(field["maxLength"] - 2) + "} " + visible + ')? "\\\""')
 
     def member(name: str, value: str) -> str:
         return _terminal(json.dumps(name)) + ' ws ":" ws ' + value

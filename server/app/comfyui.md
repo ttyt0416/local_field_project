@@ -97,3 +97,5 @@ MiniMax H3-Image는 minimax_h3_image family로 T2I·I2I를 제공한다. diffusi
 H3-Image 개선 본문에는 공통 Danbooru용 ASCII 문자 제한을 적용하지 않는다. `<Picture N>` 참조 표식과 사용자가 요청한 비영어 화면 문구를 구조화 응답에서도 그대로 표현할 수 있다. JSON·빈 응답·길이 검증은 공통 경로를 유지한다.
 
 T2I·I2I의 width·height는 정수형만 유지하고 최소·최대·배수 검사를 적용하지 않는다. 모든 이미지 family의 workflow는 공통 단계에서 원본 크기를 네이티브 PrimitiveInt 출력으로 연결해 ComfyUI 입력 위젯의 크기 범위 검사에도 걸리지 않도록 한다. 실제 latent 구성과 출력 크기 처리는 각 네이티브 모델 노드가 수행한다.
+
+모든 이미지·동영상·음악 강화는 공통 구조화 요청 helper에서 repetition_penalty=1.1·frequency_penalty=0.1·presence_penalty=0.1을 일괄 적용한다. contents는 실제 영문·숫자 또는 H3 Picture 표식으로 시작하도록 schema와 응답 검증을 적용해 콜론 접두사와 문장부호 단독 결과를 허용하지 않는다. H3 본문의 비영어 화면 문구와 참조 표식은 계속 보존한다.

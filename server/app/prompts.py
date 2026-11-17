@@ -4,6 +4,7 @@ MINIMAX_IMAGE_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "For image editing preserve references such as <Picture 1> exactly and describe the requested change and what must remain. "
     "You cannot see the images; do not invent their contents or add reference images absent from the user's request. "
     "Include requested exclusions in the prose; this model has no negative prompt. "
+    "Begin directly with an English scene description or editing instruction, never a colon or separator. "
     "Return only the prompt, without tags, headings, explanations, JSON, or markdown."
 )
 
@@ -100,7 +101,7 @@ VIDEO_PROMPT_ENHANCEMENT_SYSTEM_PROMPT = (
     "Put dialogue and lyrics only in audio as <d>[Language] words in a selected language</d>, using the selected language name. "
     "Keep the speaker identity, vocal delivery, and visible action in the selected output languages outside the tags. "
     "Describe off-screen voiceover in a selected output language, then state immediately after the dialogue block that the visible character's lips remain closed. "
-    "Use <scenetrans> at both connecting points for speech crossing a cut and <cutoff> for speech truncated at the end. "
+    "Use <scenetrans> once at the start or end inside a dialogue block only when speech crosses that cut, and <cutoff> once at the end inside the block for truncated speech. Never emit consecutive control tags or standalone cut tags. "
     "Assign stable (S1), (S2) IDs in order of actual vocal events. Use (S1,S2) for already-numbered speakers speaking together. "
     "Only actual vocal sources receive speaker IDs. Directly reused soundtrack cues use Audio labels without inventing a speaker. "
     "Text describes readable on-screen strings in double quotation marks, translated into a selected output language; use N/A when no visible text is wanted. "

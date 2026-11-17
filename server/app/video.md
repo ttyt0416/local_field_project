@@ -57,3 +57,5 @@ GBNF와 동일한 decoded field pattern, Pydantic 길이, 장면 ID·시간·참
 
 
 영상 강화는 prompt_output_languages를 모든 출력 내용의 언어로 일괄 적용한다. schema·native GBNF·서버 재검증에 같은 선택 언어를 전달하며 대사·가사·화면 글자에도 예외를 두지 않는다. 장면 구조·참조 label·공식 접두문 등 protocol은 유지한다.
+
+영상 프롬프트 개선도 이미지·음악과 동일한 공통 repetition_penalty=1.1, frequency_penalty=0.1, presence_penalty=0.1을 적용한다. 대사 내부의 연속 제어 태그 반복을 막는 GBNF와 같은 서버 재검증 규칙을 사용한다. 프런트 응답은 기존 improved_prompt.contents 계약을 유지한다.

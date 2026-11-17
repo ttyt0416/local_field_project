@@ -1166,7 +1166,6 @@
 											</label>
 										{/each}
 									</div>
-									<p class="text-xs text-muted-foreground">설명·대사·가사·화면 글자 모두 선택한 언어로 작성합니다.</p>
 								</div>
 							{/if}
 							<div class="space-y-4">

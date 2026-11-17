@@ -337,7 +337,9 @@ def _music_field_pattern(languages: Sequence[str], *, allow_empty: bool = False)
     common = r"\x20-\x2F\x30-\x39\x3A-\x40\x5C\x5E-\x60\x7B-\x7E"
     visible_common = r"\x21-\x2F\x30-\x39\x3A-\x40\x5C\x5E-\x60\x7B-\x7E"
     visible = f"[{visible_common}{visible_chars}]"
-    body = f"{visible}(?:[{common}{language_chars}]*{visible})?"
+    prefix = r"\x21-\x2F\x3B-\x40\x5C\x5E-\x60\x7B-\x7E" + (r"\u3001-\u303F" if "ja" in languages else "")
+    word_chars = visible_chars.replace(r"\u3001-\u303F", "")
+    body = f"[{prefix}]*[0-9{word_chars}](?:[{common}{language_chars}]*{visible})?"
     return f"^(?:{body})?$" if allow_empty else f"^{body}$"
 
 
