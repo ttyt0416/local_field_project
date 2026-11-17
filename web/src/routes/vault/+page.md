@@ -6,11 +6,10 @@ Vault API는 Storage signed URL이 있는 이미지에는 external URL을, Local
 
 단일 image/video/3D 삭제와 선택 image 삭제가 성공하면 현재 filter와 page로 list API를 다시 호출해 items, completed count, total count, total pages를 server response로 갱신한다. 삭제 후 현재 page가 새 total pages를 벗어나면 마지막 유효 page를 다시 요청한다. Filter 전체 삭제는 page 1을 다시 요청한다.
 
-이미지 모델 메뉴는 공용 imageGenerationFamilyTabs를 사용해 Anima·Illustrious·MOSS·Qwen 2.1 Turbo를 표시한다. Krea2는 메뉴에서 제외하며 이전 생성 데이터는 유지한다.
+이미지 모델 메뉴는 공용 imageGenerationFamilyTabs를 사용해 Anima·MOSS를 표시한다. Krea2는 메뉴에서 제외하며 이전 생성 데이터는 유지한다.
 
 MOSS 분류는 T2I 전용이며 선택 시 I2I 방식 탭을 표시하지 않는다.
 
-Qwen 2.1 Turbo 분류는 I2I/R2I 전용이므로 T2I 방식 탭을 표시하지 않는다.
 
 3D 카드에 MESH와 RIGGING을 구분해 표시한다. RIGGING 카드에는 메시 생성용 프리셋·Seed 대신 SkinTokens 자동 리깅을 표시하며, 리깅 모델 로딩·뼈대 생성·스킨 가중치 단계를 표시한다. SkinTokens는 리깅 엔진명으로 카드에 고정 표시하는 문구이며 파일명이나 생성 결과에서 가져오는 값이 아니다.
 

@@ -7,16 +7,6 @@ import time
 from urllib.request import urlopen
 
 
-GIB = 1024 ** 3
-
-
-def available_memory() -> int:
-    for line in Path("/proc/meminfo").read_text().splitlines():
-        if line.startswith("MemAvailable:"):
-            return int(line.split()[1]) * 1024
-    raise RuntimeError("MemAvailable is missing from /proc/meminfo")
-
-
 def release_model_page_cache(model: Path) -> None:
     released = 0
     for checkpoint in sorted(model.glob("*.safetensors")):
@@ -39,8 +29,6 @@ def main() -> int:
         raise SystemExit("Model directory is required.")
     model = Path(sys.argv[1])
     release_model_page_cache(model)
-    minimum_start = int(os.environ.get("LLM_MIN_START_AVAILABLE_GIB", "70")) * GIB
-    minimum_running = int(os.environ.get("LLM_MIN_RUNNING_AVAILABLE_GIB", "12")) * GIB
     stopping = False
     child = None
 
@@ -58,12 +46,6 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    while not stopping:
-        available = available_memory()
-        if available >= minimum_start:
-            break
-        print(f"Waiting for shared RAM: {available / GIB:.1f} GiB available, {minimum_start / GIB:.0f} GiB required", flush=True)
-        time.sleep(15)
     if stopping:
         return 0
     child = subprocess.Popen(["vllm", "serve", *sys.argv[1:]], start_new_session=True)
@@ -71,15 +53,6 @@ def main() -> int:
     next_health_check = 0.0
     health_url = os.environ.get("LLM_HEALTH_URL", "http://127.0.0.1:30004/health")
     while child.poll() is None:
-        if not stopping and available_memory() < minimum_running:
-            print("Shared RAM safety reserve reached; stopping generation LLM", flush=True)
-            signal_child(signal.SIGTERM)
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                signal_child(signal.SIGKILL)
-                child.wait()
-            return 1
         if not stopping and not released_after_load and time.monotonic() >= next_health_check:
             next_health_check = time.monotonic() + 10
             if model_ready(health_url):

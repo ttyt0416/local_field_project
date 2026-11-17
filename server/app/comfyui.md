@@ -12,9 +12,9 @@ lora strength는 기본값 `1.0`이고 별도 최대·최소 범위를 적용하
 
 공통 Comfy progress state는 현재 실행 node ID도 보존한다. image/video caller는 기존 progress 계약을 그대로 사용하고, TRELLIS.2 router는 node ID를 background cleanup·structure·shape·texture·mesh stage로 매핑한다.
 
-`GET /generation/image/options?family=anima|illustrious|moss|qwen_image_2_1`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima/` split model과 `vae/Anima/`를 사용하고 Illustrious는 full checkpoint를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·Illustrious·MOSS를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima·MOSS prompt enhancement는 Danbooru tags와 자연어를, Illustrious는 검증된 tags만 사용한다. Anima·Illustrious I2I도 T2I와 같은 LLM 개선 API를 사용한다.
+`GET /generation/image/options?family=anima|moss`는 family별 설치 모델과 기본 설정을 반환한다. Anima는 `diffusion_models/Anima/` split model과 `vae/Anima/`를 사용한다. Krea2는 신규 생성과 모델 선택에서 제거했다. 이전 Krea2 생성 기록과 프리셋 데이터는 보존한다. T2I는 Anima·MOSS를 지원하며 negative prompt 기본값은 빈 문자열이다. prefix는 conditioning에서만 본문 앞에 합성하고 DB에는 별도로 보관한다. Anima·MOSS prompt enhancement는 Danbooru tags와 자연어를 사용한다. Anima I2I도 T2I와 같은 LLM 개선 API를 사용한다.
 
-`POST /generation/image/i2i`는 multipart payload와 소스 이미지 한 개를 받는다. local file은 submit 시에만 Storage·media_assets에 저장하고 기존 file ID는 ownership을 확인해 재사용한다. Anima·Illustrious는 `LoadImage → ImageScale → VAEEncode → KSampler`와 0~1 denoise를 유지한다.
+`POST /generation/image/i2i`는 multipart payload와 소스 이미지 한 개를 받는다. local file은 submit 시에만 Storage·media_assets에 저장하고 기존 file ID는 ownership을 확인해 재사용한다. Anima는 `LoadImage → ImageScale → VAEEncode → KSampler`와 0~1 denoise를 유지한다.
 
 
 
@@ -30,14 +30,11 @@ MOSS는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 �
 
 가중치 출처: https://huggingface.co/Comfy-Org/MOSS-Image 의 SFT BF16·INT8 텍스트 인코더·small VAE와 https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd 의 lora_latest.safetensors를 사용한다. Base 본체와 폐기된 DMD 전용 transformer 파일은 받지 않는다.
 
-Qwen Image 2.1 Turbo는 qwen_image_2_1 family로 I2I·다중 참조 생성을 제공한다. 본체는 `diffusion_models/Qwen/`에서 파일명과 관계없이 선택하며 생성 그래프에 선택 경로를 그대로 전달한다. 공식 BF16 Turbo 본체, qwen3vl_8b_int8_convrot 인코더(type qwen_image), 전용 Qwen 2.1 VAE를 사용한다. TextEncodeQwenImage21에 원본을 image_1, 추가 참조를 image_2~image_10 순으로 전달한다. 원본은 선택한 출력 크기로 맞추고 추가 참조는 비율을 유지해 약 1MP·32배수로 줄인다. resolution 0으로 인코더 latent와 출력 캔버스를 일치시킨다. QwenImage21Cache auto/default와 공식 ManualSigmas [1,.978453,.95418,.926626,.89508,.845148,.704534,.414568,0], Euler·CFG 1·8 steps·Denoise 1을 사용하며 다른 조합은 업로드 전에 거부한다. 일반 KSampler 스케줄러로 대체하지 않는다. 프롬프트 개선은 공통 LLM API에서 자연어 수정 지시를 만들고 생성 그래프는 선택된 결과를 사용한다.
-
-출처: https://huggingface.co/Comfy-Org/Qwen-Image-2.1 / https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo / https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_2_1_turbo_image_edit.json . 모델 배포 revision은 a8342359c61979b06a8dafb1a47991fe1f30e994이다.
-
-Qwen은 다른 이미지 모델과 같이 프롬프트 개선을 기본 끈다. 사용자가 켜고 공통 enhance-prompt API로 자연어 지시를 생성·편집하면 improved_prompt를 TextEncodeQwenImage21에 직접 전달한다. ComfyUI TextGenerate·참조 배치·조건부 스위치와 별도 PromptEnhancer 가중치를 사용하지 않는다. 원본·추가 참조는 이미지 인코더에 기존대로 전달한다. 모든 family에서 활성화 시 개선된 본문이 필수이며 I2I 소스 업로드 전에 검증한다. 비활성화 시 원문을 사용하고 Prefix는 선택된 본문 앞에 한 번만 붙인다. 활성 상태·원문·개선 본문은 생성 기록·프리셋·재생성에 따로 보존한다. options의 prompt_enhancer_available은 공통 개선 기능 지원을 뜻하며 LLM 실시간 건강 검사는 아니다. 요청 유효성 오류는 직렬화 가능한 context 제외 형식으로 반환한다.
 
 
-Illustrious 체크포인트가 설치되지 않은 경우 옵션 API는 빈 checkpoints와 빈 default_checkpoint를 반환한다. 프리셋 조회·편집은 유지하고 실제 생성 요청은 기존 모델 검증에서 422로 차단한다. ComfyUI 연결 장애는 기존 오류로 처리한다.
+모든 family에서 활성화 시 개선된 본문이 필수이며 I2I 소스 업로드 전에 검증한다. 비활성화 시 원문을 사용하고 Prefix는 선택된 본문 앞에 한 번만 붙인다. 활성 상태·원문·개선 본문은 생성 기록·프리셋·재생성에 따로 보존한다. options의 prompt_enhancer_available은 공통 개선 기능 지원을 뜻하며 LLM 실시간 건강 검사는 아니다. 요청 유효성 오류는 직렬화 가능한 context 제외 형식으로 반환한다.
+
+
 
 
 MOSS LoRA는 `loras/MOSS/` 및 하위폴더에서 파일명과 관계없이 선택한다. 원본 Hugging Face 저장소 이름은 MOSS-Image-SFT-8-steps-dmd이며 로컬 분류 이름과 구분한다.
@@ -49,9 +46,7 @@ MOSS LoRA는 `loras/MOSS/` 및 하위폴더에서 파일명과 관계없이 선�
 | 용도 | 모델 폴더 (ComfyUI models 기준) |
 | --- | --- |
 | Anima | diffusion_models/Anima, loras/Anima, text_encoders/Anima, vae/Anima |
-| Illustrious | checkpoints/Illustrious, loras/Illustrious |
 | MOSS | diffusion_models/MOSS, loras/MOSS, text_encoders/MOSS, vae/MOSS |
-| Qwen | diffusion_models/Qwen, text_encoders/Qwen/Encoder, vae/Qwen |
 | MiniMax H3 | diffusion_models/MiniMaxH3, loras/MiniMax, text_encoders/MiniMaxH3, vae/MiniMaxH3/Video, vae/MiniMaxH3/Audio |
 | H3 보조 모델 | pdd_acc/MiniMaxH3/Ref2VA, pdd_acc/MiniMaxH3/FL2VA, latent_upscale_models/MiniMaxH3 |
 | YuE2 음악 | checkpoints/YuE2 |

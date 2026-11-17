@@ -7,10 +7,12 @@
 
 MOSS는 T2I 전용 t2i_moss 네임스페이스를 사용한다. moss 값은 공통 MossSettings로 검증해 레이아웃을 저장하며 i2i_moss 요청은 거부한다.
 
-Qwen 2.1 Turbo는 i2i_qwen_image_2_1 프리셋 네임스페이스를 사용한다. 실제 실행 시 8스텝·CFG 1·전용 스케줄을 검증한다.
 
-빈 negative_prompt도 선택한 설정으로 저장해 MOSS의 기본 빈 부정 프롬프트 저장·초기화가 가능하다. Qwen LLM 강화 true/false 값은 exclude_none 처리에서 보존한다.
+빈 negative_prompt도 선택한 설정으로 저장해 MOSS의 기본 빈 부정 프롬프트 저장·초기화가 가능하다. 프롬프트 개선 true/false 값은 exclude_none 처리에서 보존한다.
 
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+
+현재 이미지 생성 모델은 Anima·MOSS이며 I2I는 Anima를 사용한다.

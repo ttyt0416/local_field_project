@@ -2,7 +2,7 @@
 
 I2V·FL2V·R2V를 tab으로 선택한다. 각 input은 device storage 또는 stored content selection modal에서 선택한다. existing file은 `file_id`로 전송해 owner check 뒤 재사용하고 local file은 generation submit 때만 multipart로 전송한다.
 
-동영상 생성의 image source selector는 `저장된 콘텐츠 → 생성 → T2I (Anima)`를 initial state로 열고, `ANIMA`, `ILLUSTRIOUS`, `MOSS`, `QWEN 2.1 TURBO` family tab과 그 아래 `T2I`, `I2I` mode tab을 표시한다. selected category는 `/uploads`의 `generation_mode`와 `model_family` exact filter로 전송한다. video/audio reference는 image generation category filter 없이 기존 device selection을 유지한다.
+동영상 생성의 image source selector는 `저장된 콘텐츠 → 생성 → T2I (Anima)`를 initial state로 열고, `ANIMA`, `MOSS` family tab과 그 아래 `T2I`, `I2I` mode tab을 표시한다. selected category는 `/uploads`의 `generation_mode`와 `model_family` exact filter로 전송한다. video/audio reference는 image generation category filter 없이 기존 device selection을 유지한다.
 
 I2V·FL2V·R2V source card는 12rem preview만 제공한다. Ref image/video/audio는 conditioning input이며 original media dimensions를 읽거나 output size에 적용하지 않는다. output은 user가 선택한 `2:3`, `3:2`, `1:1`, `16:9`, `9:16` ratio와 Base MP input으로 결정되며 initial value는 `1:1`과 `0.1 MP`다. Base와 learned 3D latent Target MP는 모두 32 pixel width/height H3 patch grid preview를 표시한다. Base와 Target MP는 한 자리 반올림 뒤 server와 same grid calculation으로 integer preview를 표시하며, direct resolution input은 없다.
 
@@ -11,13 +11,11 @@ I2V·FL2V·R2V source card는 12rem preview만 제공한다. Ref image/video/aud
 스타일·전체 배경 input 하나와 duration에서 계산한 시간 구간별 scene input을 분리한다. 예를 들어 30초 영상은 `0~10초`, `10~20초`, `20~30초` 구간을 각각 입력하며, 각 구간은 최소 하나의 `장면 N` textarea를 가진다. 구간 header의 icon-only `+` button은 scene을 추가하고 각 scene의 icon-only delete button은 해당 scene을 삭제한다. 마지막 하나의 scene은 삭제할 수 없다. duration 변경은 scene list와 improved value를 array에 유지하고 현재 time range의 index만 화면에 표시한다. transient `0` duration도 state를 축소하지 않는다. 생성 request 직전에만 current time range 밖의 scene list와 improved value를 array에서 제거한다. 각 구간의 scenes는 순서대로 `[Scene N]` block 한 string으로 serialize하여 기존 `segment_prompt` and `segment_prompts` API contract로 전송하므로 prompt enhancement and direct generation 모두 scene 경계와 순서를 받는다. `전체 프롬프트 개선`과 각 구간의 `프롬프트 개선`은 overall style/background가 비어 있어도 current scenes가 모두 입력되어 있으면 활성화한다. 일반 동영상 생성은 기존처럼 overall prompt를 요구한다. `전체 프롬프트 개선`은 browser가 공통 context와 모든 현재 구간 scenes를 vLLM으로 하나씩 직렬 전송하고, 각 구간의 `프롬프트 개선` button은 해당 구간만 요청한다. 화면은 raw scenes 다음에 해당 구간의 개선 프롬프트를 표시하며, 전체 style/background 수정은 all improved values를 reset하고 scene 추가·수정·삭제는 그 구간 improved value만 reset한다. 각 block의 timeline clock은 global video time이 아니라 해당 segment의 `0초`부터 segment duration까지다. 예를 들어 11초 영상의 두 번째 block은 `0~1초`다. 10초 초과 sequence에서는 final frame 연결을 R2V 또는 I2V로 선택한다. R2V는 final frame을 Picture 1로 사용하고 selected image references는 Picture 2부터 유지하며 선택 image는 최대 8개다. I2V는 final frame을 next segment의 first frame으로 쓴다. 생성은 prompt 개선을 끈 경우 공통 context와 serialized scenes를, 켠 경우 사용자가 submit한 segment별 proposal을 사용한다. result status에는 active `구간 n/N`과 sequence aggregate progress를 표시한다.
 
 
-저장 이미지 소스에서 Qwen 2.1 Turbo 생성물을 선택할 수 있으며 해당 family는 I2I 분류만 표시한다.
 
-MOSS 생성물 소스 선택은 T2I 방식만 표시해 Qwen의 I2I/R2I 분류와 구분한다.
 
 전체 스타일·배경과 각 장면에 동영상 PromptLibrary를 연결한다. 저장 문장을 뒤에 추가할 때 setPrompt/updateScenePrompt를 통해 기존 개선 결과를 초기화해 변경된 원문과 맞지 않는 개선문이 남지 않도록 한다.
 
-프롬프트 개선은 선택한 기기·저장 이미지의 768픽셀 JPEG preview와 실제 참조 번호·역할을 전달한다. 저장 원본은 인증된 uploads source API로 읽고 모든 오류는 기존 개선 버튼의 try/catch와 toast로 표시한다. 영상·음성은 metadata만 전달한다. 후속 구간은 실제 continuation mode를 사용하고 생성 전 final frame은 preview 없이 Picture 1로 예약한다. 참조 선택·삭제 시 기존 개선문을 초기화한다. 설명 언어 선택은 원문 대사·가사·화면 글자의 언어를 바꾸지 않는다.
+프롬프트 개선은 선택한 기기·저장 이미지의 768픽셀 JPEG preview와 실제 참조 번호·역할을 전달한다. 저장 원본은 인증된 uploads source API로 읽고 모든 오류는 기존 개선 버튼의 try/catch와 toast로 표시한다. 영상·음성은 metadata만 전달한다. 후속 구간은 실제 continuation mode를 사용하고 생성 전 final frame은 preview 없이 Picture 1로 예약한다. 참조 선택·삭제 시 기존 개선문을 초기화한다. 선택한 출력 언어는 설명·대사·가사·화면 글자 전체에 일괄 적용하며 선택하지 않은 언어는 번역한다.
 
 이미지 미리보기를 구성하거나 vLLM 개선을 기다리는 동안 참조 선택·해제를 비활성화해 응답이 다른 입력 목록에 적용되지 않도록 한다.
 
@@ -30,7 +28,7 @@ MOSS 생성물 소스 선택은 T2I 방식만 표시해 Qwen의 I2I/R2I 분류�
 Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.
 
 
-영상 강화 설명문은 선택한 한국어·영어·일본어로 작성하며 대사·가사·화면 글자는 원문을 유지한다. 언어 복수 선택 UI를 제공하고 enhancement payload에 fps와 aspect_ratio를 포함한다. fps·길이·비율 변경 시 기존 개선 결과를 초기화한다. 미리보기·생성 동작과 오류 toast/audit는 유지한다.
+영상 강화의 설명·대사·가사·화면 글자는 모두 선택한 한국어·영어·일본어 집합으로 작성한다. 언어 복수 선택 UI를 제공하고 enhancement payload에 fps와 aspect_ratio를 포함한다. fps·길이·비율 변경 시 기존 개선 결과를 초기화한다. 미리보기·생성 동작과 오류 toast/audit는 유지한다.
 
 
-영상 프롬프트 개선의 한국어·영어·일본어 복수 선택을 복구했다. 최소 한 언어를 유지하고 개선·생성 중 선택을 잠근다. 선택 변경 시 이전 개선 결과를 초기화한다. 개선 API에 선택 언어와 실제 fps·aspect_ratio를 함께 전달한다. 대사·가사·화면 글자 원문 보존 안내를 유지한다.
+영상 프롬프트 개선의 한국어·영어·일본어 복수 선택을 복구했다. 최소 한 언어를 유지하고 개선·생성 중 선택을 잠근다. 선택 변경 시 이전 개선 결과를 초기화한다. 개선 API에 선택 언어와 실제 fps·aspect_ratio를 함께 전달한다. 언어 제한이 설명·대사·가사·화면 글자 모두에 적용된다는 안내를 표시한다.

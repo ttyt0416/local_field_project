@@ -213,7 +213,7 @@
 						denoise: 'Denoise',
 						cfg: 'CFG',
 						steps: 'Steps',
-						prompt_enhancement_enabled: preset.type === 'i2i_qwen_image_2_1' ? 'LLM 프롬프트 강화' : '프롬프트 개선 설정',
+						prompt_enhancement_enabled: '프롬프트 개선 설정',
 						improved_prompt: '프롬프트 개선 설정'
 					}
 				: { prompt: '프롬프트', mode: '생성 방식', size: '영상 크기', duration: '길이(초)', fps: 'FPS', seed: 'Seed', random_seed: 'Seed' };
@@ -264,7 +264,7 @@
 				<Tab items={presetMediaTabs} value={activePresetMedia} ariaLabel="프리셋 콘텐츠 종류" onselect={selectPresetMedia} />
 				{#if activePresetMedia === 'image'}
 					<Tab items={imageModelFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="IMAGE 모델 family" onselect={selectImageFamily} />
-					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (activeImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
+					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i'))} value={activeImagePreset.generationMode} ariaLabel="IMAGE 생성 방식" onselect={selectImageMode} />
 				{/if}
 			</section>
 

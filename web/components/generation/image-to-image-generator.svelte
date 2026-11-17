@@ -25,7 +25,7 @@
 	import { filterModelFolder, modelFolders, parentModelFolder } from '$lib/utils/model-folders';
 	import { imageGenerationModeTabs, imageGenerationFamilyTabs as imageModelFamilyTabs, imageModelFamilyLabels, imagePresetCategories, type ImageGenerationMode, type ImageModelFamily, type ImagePresetType, type Preset, type PresetValues } from '$lib/types/presets';
 
-	type ImageFamily = 'anima' | 'illustrious' | 'qwen_image_2_1';
+	type ImageFamily = 'anima';
 	type ImageFamilyTab = ImageFamily;
 	type ImageDimensions = { width: number; height: number };
 	type ImageOptions = {
@@ -69,7 +69,6 @@
 		page: number;
 		total_pages: number;
 	};
-	type ReferenceImage = { file?: File; file_id?: string; filename: string; url?: string | null };
 	type SelectionSource = 'device' | 'stored';
 	type StoredSort = 'latest' | 'oldest' | 'name';
 	type StoredSource = 'uploaded' | 'generated';
@@ -98,14 +97,14 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	{ value: 'generated', label: '생성' }
 ];
 	const modelFamilyTabs: { value: ImageFamilyTab; label: string }[] = imageModelFamilyTabs.filter(
-		(tab): tab is { value: ImageFamilyTab; label: string } => tab.value === 'anima' || tab.value === 'illustrious' || tab.value === 'qwen_image_2_1'
+		(tab): tab is { value: ImageFamilyTab; label: string } => tab.value === 'anima'
 	);
 
 	let { family, onselect }: { family: ImageFamily; onselect: (family: ImageFamily) => void } = $props();
 
 	let familyLabel = $derived(imageModelFamilyLabels[family]);
-	let isReferenceEdit = $derived(family === 'qwen_image_2_1');
-	let imageDimensionStep = $derived(isReferenceEdit ? 32 : 8);
+	const imageDimensionStep = 8;
+	const routeTitle = 'I2I';
 	let presetType = $derived<ImagePresetType>(`i2i_${family}`);
 	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
 	let storedImagePreset = $derived(imagePresetCategories.find((category) => category.value === storedImagePresetType) ?? imagePresetCategories[0]);
@@ -155,15 +154,15 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	let loraModalOpen = $state(false);
 	let checkpointFolder = $state('');
 	let loraFolder = $state('');
-	let embeddingFolder = $state('');
+
 	let checkpointFolders = $derived(modelFolders(options.checkpoints));
 	let loraFolders = $derived(modelFolders(options.loras));
-	let embeddingFolders = $derived(modelFolders(options.embeddings));
+
 	let visibleCheckpoints = $derived(filterModelFolder(options.checkpoints, checkpointFolder));
 	let visibleLoras = $derived(filterModelFolder(options.loras, loraFolder));
-	let visibleEmbeddings = $derived(filterModelFolder(options.embeddings, embeddingFolder));
-	let embeddingModalOpen = $state(false);
-	let embeddingTarget = $state<'positive' | 'negative'>('positive');
+
+
+
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let width = $state(1024);
@@ -174,9 +173,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	let sourceImageUrl = $state('');
 	let sourceInput = $state<HTMLInputElement>();
 	let sourceSelectionOpen = $state(false);
-	let selectionTarget = $state<'source' | 'reference'>('source');
-	let referenceImages = $state<ReferenceImage[]>([]);
-	let routeTitle = $derived(family === 'qwen_image_2_1' && referenceImages.length ? 'R2I' : 'I2I');
 	let selectionSource = $state<SelectionSource>('device');
 	let storedAssetSource = $state<StoredSource>('uploaded');
 	let storedAssets = $state<StoredImageAsset[]>([]);
@@ -248,7 +244,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		loraModalOpen = false;
 		checkpointFolder = '';
 		loraFolder = '';
-		embeddingFolder = '';
 		samplingModalOpen = false;
 		options = { ...emptyOptions };
 		checkpoint = '';
@@ -268,7 +263,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			scheduler = loaded.default_scheduler;
 			cfg = loaded.default_cfg;
 			steps = loaded.default_steps;
-			denoise = isReferenceEdit ? 1 : 0.65;
+			denoise = 0.65;
 			if (regenerationParameters) {
 				applyGenerationParameters(regenerationParameters);
 				regenerationParameters = null;
@@ -293,8 +288,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		negativePrompt = parameters.negative_prompt;
 		checkpoint = options.checkpoints.includes(parameters.checkpoint) ? parameters.checkpoint : options.default_checkpoint;
 		loras = parameters.loras.filter(({ name }) => options.loras.includes(name)).map(({ name, strength }) => ({ name, strength }));
-		cfg = family === 'qwen_image_2_1' ? 1 : parameters.cfg;
-		steps = family === 'qwen_image_2_1' ? 8 : parameters.steps;
+		cfg = parameters.cfg;
+		steps = parameters.steps;
 		samplerName = options.samplers.includes(parameters.sampler_name) ? parameters.sampler_name : options.default_sampler;
 		scheduler = options.schedulers.includes(parameters.scheduler) ? parameters.scheduler : options.default_scheduler;
 		width = parameters.width;
@@ -302,7 +297,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		seed = parameters.seed;
 		randomSeed = !parameters.seed.trim();
 		denoise = parameters.denoise ?? 0.65;
-		referenceImages = isReferenceEdit ? (parameters.reference_images ?? []).map((image) => ({ ...image })) : [];
 		sourceFileId = parameters.source_file_id ?? '';
 		sourceImageUrl = parameters.source_image_url ?? '';
 		sourceStoredAsset = null;
@@ -316,14 +310,14 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			...(improvedPrompt.trim() ? { improved_prompt: improvedPrompt.trim() } : {}),
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
-			negative_prompt_prefix: family === 'qwen_image_2_1' ? '' : negativePromptPrefix.trim(),
-			negative_prompt: family === 'qwen_image_2_1' ? '' : negativePrompt.trim(),
+			negative_prompt_prefix: negativePromptPrefix.trim(),
+			negative_prompt: negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength })),
 			aspect_ratio: 'custom',
 			width: Number(width),
 			height: Number(height),
-			denoise: isReferenceEdit ? 1 : Number(denoise),
+			denoise: Number(denoise),
 			cfg: Number(cfg),
 			steps: Number(steps),
 			sampler_name: samplerName,
@@ -368,8 +362,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		if (values.width !== undefined) width = values.width;
 		if (values.height !== undefined) height = values.height;
 		if (values.denoise !== undefined) denoise = values.denoise;
-		if (values.cfg !== undefined) cfg = family === 'qwen_image_2_1' ? 1 : values.cfg;
-		if (values.steps !== undefined) steps = family === 'qwen_image_2_1' ? 8 : values.steps;
+		if (values.cfg !== undefined) cfg = values.cfg;
+		if (values.steps !== undefined) steps = values.steps;
 		if (values.sampler_name !== undefined && options.samplers.includes(values.sampler_name)) samplerName = values.sampler_name;
 		if (values.scheduler !== undefined && options.schedulers.includes(values.scheduler)) scheduler = values.scheduler;
 		if (values.random_seed !== undefined) randomSeed = values.random_seed;
@@ -394,9 +388,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		return false;
 	}
 
-	function openSourceSelection(target: 'source' | 'reference' = 'source') {
-		if (generating || (target === 'reference' && referenceImages.length >= 9)) return;
-		selectionTarget = target;
+	function openSourceSelection() {
+		if (generating) return;
 		selectionSource = 'stored';
 		storedAssetSource = 'generated';
 		storedImagePresetType = 't2i_anima';
@@ -479,12 +472,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 	}
 
 	function selectStoredImage(asset: StoredImageAsset) {
-        if (selectionTarget === 'reference') {
-            if (referenceImages.length >= 9) return;
-            referenceImages = [...referenceImages, { file_id: asset.file_id, filename: asset.filename, url: asset.url }];
-            sourceSelectionOpen = false;
-            return;
-        }
 		sourceMetadataRequestId += 1;
 		sourceError = '';
 		sourceFile = null;
@@ -502,21 +489,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		if (!(event.currentTarget instanceof HTMLInputElement) || generating) return;
 		const files = event.currentTarget.files;
 		if (!files || files.length === 0) return;
-        if (selectionTarget === 'reference') {
-            const selected = Array.from(files);
-            if (referenceImages.length + selected.length > 9) {
-                sourceError = '추가 참조 이미지는 최대 9장입니다.';
-                return;
-            }
-            if (selected.some((file) => !file.type.startsWith('image/') || file.size <= 0 || file.size > 50 * 1024 * 1024)) {
-                sourceError = '각 참조 이미지는 50MB 이하의 비어 있지 않은 이미지여야 합니다.';
-                return;
-            }
-            referenceImages = [...referenceImages, ...selected.map((file) => ({ file, filename: file.name }))];
-            event.currentTarget.value = '';
-            sourceSelectionOpen = false;
-            return;
-        }
 		if (files.length !== 1) {
 			sourceError = '소스 이미지는 정확히 한 장만 선택해 주세요.';
 			return;
@@ -541,13 +513,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		void inspectSourceImage(file);
 	}
 
-    function moveReference(index: number, direction: number) {
-        const next = index + direction;
-        if (generating || next < 0 || next >= referenceImages.length) return;
-        const images = [...referenceImages];
-        [images[index], images[next]] = [images[next], images[index]];
-        referenceImages = images;
-    }
 
 	async function inspectSourceImage(source: File | string, expectedFileId = '') {
 		const requestId = ++sourceMetadataRequestId;
@@ -635,27 +600,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
 	}
 
-	function openEmbeddingPicker(target: 'positive' | 'negative') {
-		embeddingTarget = target;
-		embeddingModalOpen = true;
-	}
 
-	function insertEmbedding(name: string) {
-		const token = `embedding:${name.replace(/\.(safetensors|pt|bin)$/i, '')}`;
-		const current = embeddingTarget === 'positive' ? prompt : negativePrompt;
-		if (current.includes(token)) {
-			embeddingModalOpen = false;
-			return;
-		}
-		const next = current.trim() ? `${current.trim()}, ${token}` : token;
-		if (next.length > 5000) {
-			generationError = 'Embedding을 추가하면 프롬프트 길이 제한을 초과합니다.';
-			return;
-		}
-		if (embeddingTarget === 'positive') { prompt = next; improvedPrompt = ''; }
-		else negativePrompt = next;
-		embeddingModalOpen = false;
-	}
+
+
 
 	async function enhancePrompt() {
 		if (enhancingPrompt || generating) return;
@@ -730,27 +677,16 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 		const requestFamily = family;
 		const form = new FormData();
-        const inputFiles: File[] = [];
-        function imageSource(image: ReferenceImage) {
-            if (image.file) {
-                const file_index = inputFiles.length;
-                inputFiles.push(image.file);
-                return { file_index };
-            }
-            return { file_id: image.file_id };
-        }
-        const source = sourceFile ? imageSource({ file: sourceFile, filename: sourceFile.name }) : { file_id: sourceFileId };
-        const references = isReferenceEdit ? referenceImages.map(imageSource) : [];
+		const source = sourceFile ? { file_index: 0 } : { file_id: sourceFileId };
 		form.append('payload' , JSON.stringify({
 			model_family: requestFamily,
 			prompt_enhancement_enabled: promptEnhancementEnabled,
 			improved_prompt: promptEnhancementEnabled ? improvedPrompt.trim() : null,
 			source,
-			references,
 			positive_prompt_prefix: positivePromptPrefix.trim(),
 			prompt: prompt.trim(),
-			negative_prompt_prefix: family === 'qwen_image_2_1' ? '' : negativePromptPrefix.trim(),
-			negative_prompt: family === 'qwen_image_2_1' ? '' : negativePrompt.trim(),
+			negative_prompt_prefix: negativePromptPrefix.trim(),
+			negative_prompt: negativePrompt.trim(),
 			checkpoint,
 			loras: loras.map(({ name, strength }) => ({ name, strength: Number(strength) })),
 			cfg: Number(cfg),
@@ -760,9 +696,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			width: Number(width),
 			height: Number(height),
 			seed: randomSeed ? null : seed.trim(),
-			denoise: isReferenceEdit ? 1 : Number(denoise)
+			denoise: Number(denoise)
 		}));
-		for (const file of inputFiles) form.append('files', file, file.name);
+		if (sourceFile) form.append('files', sourceFile, sourceFile.name);
 
 		generating = true;
 		uploading = true;
@@ -978,24 +914,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 							{/if}
 						</div>
 
-                        {#if family === 'qwen_image_2_1'}<p class="rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground">공식 8스텝 Turbo · CFG 1 · Euler. 단일 이미지 수정과 최대 10장 참조 생성을 지원합니다.</p>{/if}
-                        {#if isReferenceEdit}
-                            <div class="space-y-3">
-                                <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">추가 참조 이미지 ({referenceImages.length}/9)</span><OutlinedButton type="button" disabled={generating || referenceImages.length >= 9} onclick={() => openSourceSelection('reference')}>참조 추가</OutlinedButton></div>
-                                <p class="text-xs text-muted-foreground">{family === 'qwen_image_2_1' ? '한 장은 I2I 수정, 참조를 추가하면 R2I 합성입니다. 원본은 <image1>, 추가 참조는 <image2>부터 지시하세요. 출력 구도와 크기는 첫 이미지가 기준입니다.' : '원본은 <ref_image_0>, 추가 참조는 <ref_image_1>부터 지시할 수 있습니다.'}</p>
-                                {#each referenceImages as reference, index}
-                                    <div class="flex flex-wrap items-center gap-3 rounded-xl border border-border p-3">
-                                        <div class="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-muted">
-                                            {#if reference.file}<ImageMedia source={reference.file} sourceType="local" alt={`참조 ${index + 1}`} class="h-full" />{:else if reference.url}<ImageMedia source={reference.url} sourceType={imageSourceType(reference.url)} alt={`참조 ${index + 1}`} class="h-full" />{/if}
-                                        </div>
-                                        <div class="min-w-0 flex-1"><p class="text-xs font-semibold">{family === 'qwen_image_2_1' ? `<image${index + 2}>` : `<ref_image_${index + 1}>`}</p><p class="truncate text-xs text-muted-foreground" title={reference.filename}>{reference.filename}</p></div>
-                                        <IconOutlinedButton type="button" ariaLabel={`참조 ${index + 1} 앞으로 이동`} disabled={generating || index === 0} onclick={() => moveReference(index, -1)}><ChevronLeft size={16} /></IconOutlinedButton>
-                                        <IconOutlinedButton type="button" ariaLabel={`참조 ${index + 1} 뒤로 이동`} disabled={generating || index === referenceImages.length - 1} onclick={() => moveReference(index, 1)}><ChevronRight size={16} /></IconOutlinedButton>
-                                        <IconOutlinedButton type="button" ariaLabel={`참조 ${index + 1} 삭제`} disabled={generating} onclick={() => (referenceImages = referenceImages.filter((_, current) => current !== index))}><X size={16} /></IconOutlinedButton>
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
+
+
 
 						<div class="space-y-2">
 							<label class="block space-y-2" for="i2i-positive-prompt-prefix">
@@ -1003,8 +923,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 								<textarea id="i2i-positive-prompt-prefix" bind:value={positivePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
 							</label>
 							<div class="flex items-center justify-between gap-3">
-								<label for="i2i-prompt" class="text-sm font-medium">{isReferenceEdit ? '수정 지시' : '긍정 프롬프트'}</label>
-								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
+								<label for="i2i-prompt" class="text-sm font-medium">긍정 프롬프트</label>
+
 							</div>
 							<textarea id="i2i-prompt" bind:value={prompt} oninput={() => (improvedPrompt = '')} rows="5" maxlength="5000" required disabled={generating || enhancingPrompt} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
 							<PromptLibrary kind="image" value={prompt} disabled={generating || enhancingPrompt} onchange={(value) => { prompt = value; improvedPrompt = ''; }} />
@@ -1017,7 +937,7 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 									<Sparkles size={14} strokeWidth={1.9} /><span>{enhancingPrompt ? '개선 중' : '프롬프트 개선'}</span>
 								</OutlinedButton>
 							</div>
-							{#if family === 'qwen_image_2_1'}<p class="text-xs leading-5 text-muted-foreground">수정 지시를 자연어로 다듬습니다. 원본·참조 이미지는 생성 단계에서 반영됩니다.</p>{/if}
+
 							{#if promptEnhancementEnabled}
 								<label class="block space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3" for="i2i-improved-prompt">
 									<span class="text-sm font-medium">개선된 프롬프트</span>
@@ -1027,18 +947,18 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 						</div>
 
 						<div class="space-y-2">
-							{#if !isReferenceEdit}
+
 							<label class="block space-y-2" for="i2i-negative-prompt-prefix">
 								<span class="text-sm font-medium">부정 프롬프트 Prefix</span>
 								<textarea id="i2i-negative-prompt-prefix" bind:value={negativePromptPrefix} rows="2" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
 							</label>
 							<div class="flex items-center justify-between gap-3">
 								<label for="i2i-negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
-								{#if family === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
+
 							</div>
 							<textarea id="i2i-negative-prompt" bind:value={negativePrompt} rows="3" maxlength="5000" disabled={generating} class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
 							<PromptLibrary kind="image" value={negativePrompt} disabled={generating} onchange={(value) => (negativePrompt = value)} />
-							{/if}
+
 						</div>
 
 						<div class="space-y-2">
@@ -1072,9 +992,9 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 							{/if}
 						</div>
 
-						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={generating || optionsLoading || !samplerName || !scheduler || family === 'qwen_image_2_1'} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
+						<button type="button" onclick={() => (samplingModalOpen = true)} disabled={generating || optionsLoading || !samplerName || !scheduler} class="flex min-h-11 w-full items-center justify-between gap-4 rounded-lg border border-input bg-background px-3 py-2 text-left transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50">
 							<span class="text-sm font-medium">샘플러 / 스케줄러</span>
-							<span class="min-w-0 truncate text-xs text-muted-foreground">{family === 'qwen_image_2_1' ? 'Euler / 공식 8스텝' : `${samplerName || '선택 필요'} / ${scheduler || '선택 필요'}`}</span>
+							<span class="min-w-0 truncate text-xs text-muted-foreground">{`${samplerName || '선택 필요'} / ${scheduler || '선택 필요'}`}</span>
 						</button>
 
 						<div class="flex items-center justify-between gap-3">
@@ -1086,17 +1006,17 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" min={imageDimensionStep} max="16384" step={imageDimensionStep} bind:value={height} disabled={generating} class={numberInputClass} /></label>
 						</div>
 
-						{#if !isReferenceEdit}
+
 						<label class="block space-y-2" for="i2i-denoise">
 							<span class="text-sm font-medium">Denoise</span>
 							<input id="i2i-denoise" type="number" min="0" max="1" step="0.05" bind:value={denoise} disabled={generating} class={numberInputClass} />
 							<span class="block text-xs text-muted-foreground">0.0은 원본을 강하게 유지하고, 1.0은 프롬프트에 따라 크게 변경합니다.</span>
 						</label>
-						{/if}
+
 
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="i2i-cfg"><span class="text-sm font-medium">CFG</span><input id="i2i-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={generating || isReferenceEdit} class={numberInputClass} /></label>
-							<label class="block space-y-2" for="i2i-steps"><span class="text-sm font-medium">Steps</span><input id="i2i-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={generating || family === 'qwen_image_2_1'} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-cfg"><span class="text-sm font-medium">CFG</span><input id="i2i-cfg" type="number" min="0" max="20" step="0.1" bind:value={cfg} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-steps"><span class="text-sm font-medium">Steps</span><input id="i2i-steps" type="number" min="1" max="100" step="1" bind:value={steps} disabled={generating} class={numberInputClass} /></label>
 						</div>
 
 						<div class="grid gap-4 sm:grid-cols-2">
@@ -1161,35 +1081,20 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 	</Modal>
 
-	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="전체 또는 하위 folder에서 Embedding token을 선택하세요.">
-		<div class="space-y-3">
-			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="Embedding folder filter">
-				<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === ''} onclick={() => (embeddingFolder = '')}>전체</OutlinedButton>
-				{#if embeddingFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (embeddingFolder = parentModelFolder(embeddingFolder))}>바로 위 폴더</OutlinedButton>{/if}
-				{#each embeddingFolders as folder}
-					<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === folder} onclick={() => (embeddingFolder = folder)}>{folder}</OutlinedButton>
-				{/each}
-			</div>
-			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-				{#each visibleEmbeddings as value}
-					<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
-				{/each}
-			</div>
-		</div>
-	</Modal>
 
-	<Modal bind:open={sourceSelectionOpen} title={selectionTarget === 'reference' ? '참조 이미지 추가' : '소스 이미지 선택'} description={selectionTarget === 'reference' ? '원본과 함께 참고할 이미지를 선택해 주세요.' : '기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.'}>
+
+	<Modal bind:open={sourceSelectionOpen} title="소스 이미지 선택" description="기기 저장소 또는 저장된 콘텐츠에서 이미지 한 장을 선택해 주세요.">
 		<div class="space-y-5">
 			<Tab items={selectionSourceTabs} bind:value={selectionSource} ariaLabel="소스 이미지 선택 위치" onselect={selectSelectionSource} />
 			{#if selectionSource === 'device'}
-				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" multiple={selectionTarget === 'reference'} class={fileInputClass} onchange={handleSourceFile} /></label>
+				<label class="block space-y-2" for="i2i-device-file"><span class="text-sm font-medium">파일 선택</span><input id="i2i-device-file" bind:this={sourceInput} type="file" accept="image/*" class={fileInputClass} onchange={handleSourceFile} /></label>
 			{:else}
 				<div class="space-y-4">
 					<Tab items={storedSourceTabs} bind:value={storedAssetSource} ariaLabel="저장된 이미지 종류" onselect={selectStoredAssetSource} />
 					{#if storedAssetSource === 'generated'}
 						<div class="space-y-2" aria-label="생성 이미지 분류">
 							<Tab items={imageModelFamilyTabs} value={storedImagePreset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectStoredImageFamily} />
-							<Tab items={imageGenerationModeTabs.filter((tab) => (storedImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (storedImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
+							<Tab items={imageGenerationModeTabs.filter((tab) => (storedImagePreset.modelFamily !== 'moss' || tab.value === 't2i'))} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
 						</div>
 					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

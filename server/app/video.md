@@ -18,9 +18,9 @@ I2V·FL2V·R2V workflow는 `diffusion_models/MiniMaxH3/`에서 선택한 UNET을
 
 I2V와 FL2V는 shots와 두 sound field를, R2V는 추가로 subject_definitions·summary·retention_analysis를 strict JSON으로 받는다. shot은 start_ms·style·timeline·camera·audio·text를 유지한다. 필드 제한은 style 768, timeline 3072, camera 384, audio 4096, text 2048, sound field 각각 768, R2V 정의·보존 각각 3072, summary 1024자다.
 
-설명문은 사용자가 선택한 한국어·영어·일본어 집합으로 작성한다. 대사·가사는 audio의 `<d>[Language] 원문</d>`, 화면 글자는 text의 큰따옴표 내부에 원문 언어·철자를 유지한다. `video_prompt_grammar.py`가 실제 native GBNF를 생성하여 JSON 구조, 장면 수·ID, 정수 범위, 선택 언어의 설명문과 별도 원문 영역을 제한한다. 설명문 영역의 `\uXXXX` JSON 이스케이프 우회를 허용하지 않는다. 입력에서 인용한 원문은 grammar의 literal로 보존하고 반환 후 누락·변경도 검증한다. 문자 grammar가 의미상 언어까지 판정하지는 않는다. prompt_output_languages를 schema·GBNF·서버 재검증에 동일하게 적용한다.
+모든 출력 내용은 사용자가 선택한 한국어·영어·일본어 집합으로 작성한다. 한 번의 LLM 요청에 선택 언어 문자 범위를 동적으로 합쳐 적용하며 설명·대사·가사·화면 글자에 같은 제한을 사용한다. 대사·가사는 audio의 `<d>[Language] ...</d>`, 화면 글자는 text의 큰따옴표 내부에 작성하며 선택하지 않은 언어는 번역한다. `video_prompt_grammar.py`가 native GBNF로 JSON 구조, 장면 수·ID, 정수 범위와 모든 내용의 선택 언어를 제한한다. `\uXXXX` JSON 이스케이프 우회와 원문 literal 예외를 허용하지 않는다. 문자 grammar가 의미상 언어까지 판정하지는 않는다. prompt_output_languages를 schema·GBNF·서버 재검증에 동일하게 적용한다.
 
-실제 Picture·Video·Audio label만 사용하며 새 Subject label은 R2V 정의에서 만들고 재사용한다. R2V summary는 공식 작업 유형 대괄호로 시작하고 retention_analysis에는 화자 ID를 넣지 않는다. 화자 복합 ID, 정확한 voiceover 문구, 입을 닫는 지시, 장면 전환·중단 태그는 공식 프롬프트 지침을 따른다.
+실제 Picture·Video·Audio label만 사용하며 새 Subject label은 R2V 정의에서 만들고 재사용한다. R2V summary는 공식 작업 유형 대괄호로 시작하고 retention_analysis에는 화자 ID를 넣지 않는다. 화자 복합 ID, 입을 닫는 지시, 장면 전환·중단 태그는 유지하며 voiceover 설명도 선택 언어로 작성한다.
 개선 요청은 optional `scenes` 배열로 현재 시간 구간의 장면을 순서대로 받는다. 각 항목은 공백일 수 없고 최대 360개, 본문 합계 5000자까지 허용한다. 배열이 있으면 serialized 문장의 내부 heading을 다시 세지 않으며, 기존 client의 배열 없는 요청은 줄 시작의 `[Scene N]`, `[Shot N]`, `장면 N:`, `샷 N:` 경계를 해석한다. 별도 장면이 없으면 기존 자동 샷 수 범위를 유지한다. 명시한 장면이 N개이면 strict schema의 shots minItems·maxItems를 모두 N으로 설정하고 각 shot에 원본 장면의 `scene_id`를 요구한다. 초당 한 샷 상한을 적용하지 않으므로 짧은 후속 구간도 여러 장면을 보존할 수 있다.
 
 서버는 반환 개수가 N인지, scene_id가 정확히 1부터 N까지 입력 순서대로 있는지 검증한다. 모든 샷은 0ms부터 시작하고 이후 시작 시각이 중복 없이 증가하며 현재 구간 끝 이전이어야 한다. 잘못된 결과는 503 오류로 전달하고 반환된 구조화 객체를 기존 provider_response 오류 기록에 보존한다. 의미가 같은 문장인지까지 자동 판별하거나 실패한 결과를 조용히 재배열·분할하지 않는다. scene_id는 최종 개선문에 출력하지 않는다.
@@ -56,4 +56,4 @@ GBNF와 동일한 decoded field pattern, Pydantic 길이, 장면 ID·시간·참
 서빙 backend는 LLGuidance 기반 guidance로 명시 고정한다. auto 또는 XGrammar로 자동 선택하지 않는다.
 
 
-영상 강화는 prompt_output_languages를 실제 설명 언어로 적용한다. schema·native GBNF·서버 재검증에 같은 선택 언어를 전달하고 원문 대사·가사·화면 글자는 선택 언어 밖이어도 유지한다. 장면 구조·참조 label·공식 접두문 등 protocol은 유지한다.
+영상 강화는 prompt_output_languages를 모든 출력 내용의 언어로 일괄 적용한다. schema·native GBNF·서버 재검증에 같은 선택 언어를 전달하며 대사·가사·화면 글자에도 예외를 두지 않는다. 장면 구조·참조 label·공식 접두문 등 protocol은 유지한다.

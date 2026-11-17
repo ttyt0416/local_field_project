@@ -134,7 +134,7 @@
 				{#if source === 'generated'}
 					<div class="space-y-2" aria-label="생성 이미지 분류">
 						<Tab items={imageModelFamilyTabs} value={preset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectFamily} />
-						<Tab items={imageGenerationModeTabs.filter((item) => (preset.modelFamily !== 'moss' || item.value === 't2i') && (preset.modelFamily !== 'qwen_image_2_1' || item.value === 'i2i'))} value={preset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectMode} />
+						<Tab items={imageGenerationModeTabs.filter((item) => (preset.modelFamily !== 'moss' || item.value === 't2i'))} value={preset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectMode} />
 					</div>
 				{/if}
 				<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

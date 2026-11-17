@@ -36,7 +36,7 @@
 		positive_prompt_prefix: string;
 		negative_prompt_prefix: string;
 		checkpoint: string;
-		model_family: 'anima' | 'illustrious' | 'krea2' | 'moss' | 'qwen_image_2_1';
+		model_family: 'anima' | 'krea2' | 'moss';
 		generation_mode: 't2i' | 'i2i';
 		moss: Partial<MossSettings>;
 		reference_images: { file_id: string; filename: string; url: string | null }[];
@@ -371,7 +371,7 @@
 							{/if}
 						</div>
 						<div><dt class="text-muted-foreground">CFG / Steps</dt><dd class="mt-1 font-medium">{generation.cfg} / {generation.steps}</dd></div>
-						{#if generation.model_family === 'qwen_image_2_1'}<div><dt class="text-muted-foreground">LLM 프롬프트 강화</dt><dd class="mt-1 font-medium">{generation.prompt_enhancement_enabled ? '사용' : '사용 안 함'}</dd></div>{/if}
+
 						<div><dt class="text-muted-foreground">샘플러 / 스케줄러</dt><dd class="mt-1 break-all font-medium">{generation.sampler_name} / {generation.scheduler}</dd></div>
 						<div><dt class="text-muted-foreground">이미지 크기</dt><dd class="mt-1 font-medium">{generation.width} × {generation.height}</dd></div>
 						{#if generation.generation_mode === 'i2i'}<div><dt class="text-muted-foreground">Denoise</dt><dd class="mt-1 font-medium">{generation.denoise}</dd></div>{/if}

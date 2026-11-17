@@ -26,7 +26,7 @@
 
 	import MossControls from '../media/moss-controls.svelte';
 	import { mossSettings, type MossSettings } from '$lib/types/moss';
-	type ModelFamily = 'anima' | 'illustrious' | 'moss';
+	type ModelFamily = 'anima' | 'moss';
 	type ModelFamilyTab = ModelFamily;
 	type ImageOptions = {
 		model_family: ModelFamily;
@@ -83,7 +83,7 @@
 	};
 	type Preset = {
 		id: string;
-		type: 't2i_anima' | 't2i_illustrious' | 't2i_moss';
+		type: 't2i_anima' | 't2i_moss';
 		name: string;
 		values: PresetValues;
 		is_default: boolean;
@@ -98,12 +98,11 @@
 
 	let { modelFamily, onselect }: { modelFamily: ModelFamily; onselect: (family: ModelFamily) => void } = $props();
 	let presetType = $derived<Preset['type']>(`t2i_${modelFamily}`);
-	let familyLabel = $derived(modelFamily === 'moss' ? 'MOSS' : modelFamily === 'illustrious' ? 'Illustrious' : 'Anima');
+	let familyLabel = $derived(modelFamily === 'moss' ? 'MOSS' : 'Anima');
 	let dimensionStep = $derived(modelFamily === 'moss' ? 16 : 8);
 	const pageTitle = 'T2I';
 	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
 		{ value: 'anima', label: 'ANIMA' },
-		{ value: 'illustrious', label: 'ILLUSTRIOUS' },
 		{ value: 'moss', label: 'MOSS' }
 	];
 	const numberInputClass = 'h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20';
@@ -214,15 +213,15 @@
 	let loraModalOpen = $state(false);
 	let checkpointFolder = $state('');
 	let loraFolder = $state('');
-	let embeddingFolder = $state('');
+
 	let checkpointFolders = $derived(modelFolders(options.checkpoints));
 	let loraFolders = $derived(modelFolders(options.loras));
-	let embeddingFolders = $derived(modelFolders(options.embeddings));
+
 	let visibleCheckpoints = $derived(filterModelFolder(options.checkpoints, checkpointFolder));
 	let visibleLoras = $derived(filterModelFolder(options.loras, loraFolder));
-	let visibleEmbeddings = $derived(filterModelFolder(options.embeddings, embeddingFolder));
-	let embeddingModalOpen = $state(false);
-	let embeddingTarget = $state<'positive' | 'negative'>('positive');
+
+
+
 	let seed = $state('');
 	let randomSeed = $state(true);
 	let aspectRatio = $state<AspectRatio>('custom');
@@ -251,27 +250,9 @@
 		loras = selected ? loras.filter((lora) => lora.name !== name) : [...loras, { name, strength: 1.0 }];
 	}
 
-	function openEmbeddingPicker(target: 'positive' | 'negative') {
-		embeddingTarget = target;
-		embeddingModalOpen = true;
-	}
 
-	function insertEmbedding(name: string) {
-		const token = `embedding:${name.replace(/\.(safetensors|pt|bin)$/i, '')}`;
-		const current = embeddingTarget === 'positive' ? prompt : negativePrompt;
-		if (current.includes(token)) {
-			embeddingModalOpen = false;
-			return;
-		}
-		const next = current.trim() ? `${current.trim()}, ${token}` : token;
-		if (next.length > 5000) {
-			generationError = 'Embedding을 추가하면 프롬프트 길이 제한을 초과합니다.';
-			return;
-		}
-		if (embeddingTarget === 'positive') { prompt = next; improvedPrompt = ''; }
-		else negativePrompt = next;
-		embeddingModalOpen = false;
-	}
+
+
 
 	function selectedPresetFieldCount() {
 		return presetFieldOptions.filter(({ key }) => (key === 'moss' ? modelFamily === 'moss' : true) && selectedPresetFields[key]).length;
@@ -792,7 +773,7 @@
 							<div class="flex items-center justify-between gap-3">
 								<label for="prompt" class="text-sm font-medium">긍정 프롬프트</label>
 								<div class="flex items-center gap-2">
-									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('positive')}>Embedding</OutlinedButton>{/if}
+
 									<label for="prompt-enhancement-enabled" class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted">
 										<input id="prompt-enhancement-enabled" type="checkbox" bind:checked={promptEnhancementEnabled} disabled={generating || enhancingPrompt} class="peer sr-only" />
 										<span>프롬프트 개선</span>
@@ -830,7 +811,7 @@
 								</label>
 								<div class="flex items-center justify-between gap-3">
 									<label for="negative-prompt" class="text-sm font-medium">부정 프롬프트</label>
-									{#if modelFamily === 'illustrious' && options.embeddings.length > 0}<OutlinedButton type="button" class="min-h-9 px-3 text-xs" disabled={generating} onclick={() => openEmbeddingPicker('negative')}>Embedding</OutlinedButton>{/if}
+
 								</div>
 								<textarea id="negative-prompt" bind:value={negativePrompt} rows="3" class="w-full resize-y rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 text-foreground outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"></textarea>
 								<PromptLibrary kind="image" value={negativePrompt} disabled={generating || enhancingPrompt} onchange={(value) => (negativePrompt = value)} />
@@ -966,22 +947,7 @@
 		{#snippet footer()}<PrimaryButton onclick={() => (loraModalOpen = false)}>선택 완료</PrimaryButton>{/snippet}
 	</Modal>
 
-	<Modal bind:open={embeddingModalOpen} title={`${embeddingTarget === 'positive' ? '긍정' : '부정'} 프롬프트 Embedding`} description="전체 또는 하위 folder에서 Embedding token을 선택하세요.">
-		<div class="space-y-3">
-			<div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1" aria-label="Embedding folder filter">
-				<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === ''} onclick={() => (embeddingFolder = '')}>전체</OutlinedButton>
-				{#if embeddingFolder}<OutlinedButton class="min-h-9 px-3 text-xs" onclick={() => (embeddingFolder = parentModelFolder(embeddingFolder))}>바로 위 폴더</OutlinedButton>{/if}
-				{#each embeddingFolders as folder}
-					<OutlinedButton class="min-h-9 px-3 text-xs" active={embeddingFolder === folder} onclick={() => (embeddingFolder = folder)}>{folder}</OutlinedButton>
-				{/each}
-			</div>
-			<div class="grid max-h-[50dvh] grid-cols-2 gap-2 overflow-y-auto pr-1">
-				{#each visibleEmbeddings as value}
-					<button type="button" onclick={() => insertEmbedding(value)} class="min-h-14 break-all rounded-lg border border-border px-3 py-2 text-left text-xs transition hover:bg-muted">{value}</button>
-				{/each}
-			</div>
-		</div>
-	</Modal>
+
 
 	<SamplingSelectionModal
 		bind:open={samplingModalOpen}

@@ -1,6 +1,6 @@
 # 미디어 Storage 메타데이터
 
-`image_generations.storage_file_id`와 `video_generations.storage_file_id`, `music_generations.storage_file_id`, `three_d_generations.storage_file_id`는 실제 바이트가 아니라 독립 Storage 서비스의 파일 식별자만 보관한다. `size_bytes`는 저장 결과의 실제 파일 용량을 별도로 보관한다. `image_generations` row는 원문 `prompt`와 nullable `improved_prompt`, `model_family`, `generation_mode`, nullable `source_file_id`·`source_filename`, `denoise`, positive·negative prefix와 각각의 raw prompt body를 저장해 Anima·Illustrious·Krea2 T2I/I2I lifecycle을 같은 방식으로 관리한다. Krea2 I2I request는 dedicated style-reference workflow가 제공될 때까지 reject되므로 현재 생성 row는 Krea2 T2I에서만 만들어진다. 3D row는 source image `source_file_id`와 결과 GLB `storage_file_id`를 분리하고, 결과 MIME은 `model/gltf-binary`로 고정한다.
+`image_generations.storage_file_id`와 `video_generations.storage_file_id`, `music_generations.storage_file_id`, `three_d_generations.storage_file_id`는 실제 바이트가 아니라 독립 Storage 서비스의 파일 식별자만 보관한다. `size_bytes`는 저장 결과의 실제 파일 용량을 별도로 보관한다. `image_generations` row는 원문 `prompt`와 nullable `improved_prompt`, `model_family`, `generation_mode`, nullable `source_file_id`·`source_filename`, `denoise`, positive·negative prefix와 각각의 raw prompt body를 저장해 Anima·Krea2 T2I/I2I lifecycle을 같은 방식으로 관리한다. Krea2 I2I request는 dedicated style-reference workflow가 제공될 때까지 reject되므로 현재 생성 row는 Krea2 T2I에서만 만들어진다. 3D row는 source image `source_file_id`와 결과 GLB `storage_file_id`를 분리하고, 결과 MIME은 `model/gltf-binary`로 고정한다.
 
 `media_assets`는 생성 요청 시 새로 저장되었거나 기존 Storage에서 재사용된 이미지·동영상·오디오 입력을 공용로 추적한다. `list_reusable_media`의 기본 조회는 생성 결과 파일을 제외한 업로드 콘텐츠만 반환하며, 동영상 선택 모달이 `include_generated=true`를 요청할 때만 생성 이미지·영상 generation 레코드도 합친다. `storage_file_id`는 재사용을 위한 unique key이며, 생성 결과를 input으로 재사용해도 generation 출력 파일은 업로드 목록에 중복 표시하지 않는다. `source_type`은 직접 저장된 사용 콘텐츠, 이미지 생성 결과, 영상 생성 결과를 구분하는 표시값이며 향후 i2i 등 다른 생성 방식도 같은 계약을 재사용한다.
 
@@ -22,7 +22,7 @@ image_generations.reference_images JSONB는 추가 참조 이미지의 file_id·
 
 image_generations의 moss JSONB 열은 MOSS 생성 방식·레이아웃·참조 설정을 저장한다. 기본값은 빈 객체이고 기존 기록을 유지한다. 생성 insert/read와 편집본 복사에서 설정을 보존한다.
 
-이미지 생성 기록에 prompt_enhancement_enabled BOOLEAN 기본 FALSE를 추가하고 생성·상세·편집 복사에서 유지한다. Qwen의 i2i_qwen_image_2_1 분류를 위해 presets.type을 VARCHAR(32)로 확장하며 기존 16자 열에 대한 멱등 마이그레이션을 포함한다. 운영 반영 전 검증은 동일 스키마 임시 테이블과 롤백을 사용한다.
+이미지 생성 기록에 prompt_enhancement_enabled BOOLEAN 기본 FALSE를 추가하고 생성·상세·편집 복사에서 유지한다. presets.type은 VARCHAR(32)를 사용한다.
 
 3D row는 `generation_mode=mesh|rigging`, `rigging_options` JSONB와 `error_message`를 추가로 저장한다. 기존 row는 `mesh`로 유지한다. 리깅 source_file_id는 원본 GLB이고 storage_file_id는 리깅 결과 GLB다. 리깅은 품질 프리셋·Seed·배경 제거를 사용하지 않으며 기존 필수 컬럼에는 standard·0·false를 기록한다.
 

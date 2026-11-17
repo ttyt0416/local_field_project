@@ -8,8 +8,6 @@ services:
     ipc: host
     environment:
       LLM_HEALTH_URL: http://127.0.0.1:30004/health
-      LLM_MIN_START_AVAILABLE_GIB: "70"
-      LLM_MIN_RUNNING_AVAILABLE_GIB: "12"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       HF_HOME: /cache/huggingface
@@ -38,7 +36,7 @@ services:
       - --max-num-batched-tokens
       - "2048"
       - --gpu-memory-utilization
-      - "0.35"
+      - "0.2"
       - --kv-cache-memory-bytes
       - "4294967296"
       - --enforce-eager

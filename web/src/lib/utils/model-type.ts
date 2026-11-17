@@ -18,7 +18,7 @@ function inferName(value: string): ModelType | null {
 	if (/(^|_)(vae|ae)(_|$)/.test(name)) return 'vae';
 	if (/(^|_)(text_?encoders?\d*|t5\w*|umt5\w*|clip_[lg]|qwen\d*\w*vl)(_|$)/.test(name)) return 'text_encoder';
 	if (/(^|_)(embeddings?|textual_?inversion)(_|$)/.test(name)) return 'embedding';
-	if (/(^|_)(checkpoints?|illustrious|sdxl|sd_?1_?5)(_|$)/.test(name)) return 'checkpoint';
-	if (/(^|_)(diffusion_?models?|unet|transformer|anima|flux\w*|wan\d*|hunyuan\w*|qwen_?image|moss|minimax)(_|$)/.test(name)) return 'diffusion_model';
+	if (/(^|_)(checkpoints?|sdxl|sd_?1_?5)(_|$)/.test(name)) return 'checkpoint';
+	if (/(^|_)(diffusion_?models?|unet|transformer|anima|flux\w*|wan\d*|hunyuan\w*|moss|minimax)(_|$)/.test(name)) return 'diffusion_model';
 	return null;
 }

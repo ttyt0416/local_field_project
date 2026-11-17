@@ -21,9 +21,8 @@ Bulk 삭제는 삭제 가능한 Storage 파일을 먼저 모두 지운 뒤 DB ro
 
 MOSS 생성 기록을 family 필터에서 조회한다. 상세 응답의 moss 필드는 레이아웃과 참조 모드·강도·구도 유지 설정을 재생성 화면에 전달한다.
 
-Qwen 2.1 Turbo family(qwen_image_2_1)의 목록·상세·참조 이미지 조회를 지원한다.
 
-이미지 상세에 prompt_enhancement_enabled를 반환하며 기존 improved_prompt가 있는 기록도 강화 활성으로 읽는다. Qwen 생성 시 LLM 강화 상태를 재생성에 복원한다.
+이미지 상세에 prompt_enhancement_enabled를 반환하며 기존 improved_prompt가 있는 기록도 강화 활성으로 읽는다. 프롬프트 개선 상태를 재생성에 복원한다.
 
 3D summary/detail은 generation_mode, rigging_options, source_model_url을 포함한다. 리깅 source GLB는 source_image_url에 넣지 않는다. 리깅 결과와 업로드 원본을 삭제할 때 다른 generation의 참조를 확인하고, MESH 결과를 리깅 원본으로 사용 중이면 원본 Storage 파일을 보존한다. 진행 중인 리깅 삭제는 취소 후 현재 row를 다시 읽어 완료와 취소의 경합도 처리한다.
 
@@ -34,3 +33,6 @@ Qwen 2.1 Turbo family(qwen_image_2_1)의 목록·상세·참조 이미지 조회
 ## 공용 사용
 
 Local Field 계정 인증과 사용자별 소유자 인자를 제거하고 콘텐츠·작업을 공용으로 처리한다. 외부 서비스의 API 토큰과 기존 오류 기록은 유지한다.
+
+
+현재 이미지 생성 모델은 Anima·MOSS이며 I2I는 Anima를 사용한다.

@@ -540,7 +540,7 @@
 			{#if mediaTab === 'images'}
 				<section class="space-y-2" aria-label="이미지 생성 분류">
 					<Tab items={imageGenerationFamilyTabs} value={activeImagePreset.modelFamily} ariaLabel="이미지 모델 family" onselect={selectImageFamily} />
-					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (activeImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
+					<Tab items={imageGenerationModeTabs.filter((tab) => (activeImagePreset.modelFamily !== 'moss' || tab.value === 't2i'))} value={activeImagePreset.generationMode} ariaLabel="이미지 생성 방식" onselect={selectImageMode} />
 				</section>
 			{/if}
 		</div>

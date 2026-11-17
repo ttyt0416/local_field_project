@@ -1,16 +1,14 @@
 import type { MossSettings } from './moss';
 
 export type ImageGenerationMode = 't2i' | 'i2i';
-export type ImageModelFamily = 'anima' | 'illustrious' | 'krea2' | 'moss' | 'qwen_image_2_1';
-export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_illustrious' | 'i2i_illustrious' | 't2i_krea2' | 'i2i_krea2' | 't2i_moss' | 'i2i_qwen_image_2_1';
+export type ImageModelFamily = 'anima' | 'krea2' | 'moss';
+export type ImagePresetType = 't2i_anima' | 'i2i_anima' | 't2i_krea2' | 'i2i_krea2' | 't2i_moss';
 export const imageModelFamilyTabs: { value: ImageModelFamily; label: string }[] = [
 	{ value: 'anima', label: 'ANIMA' },
-	{ value: 'illustrious', label: 'ILLUSTRIOUS' },
 	{ value: 'moss', label: 'MOSS' },
-	{ value: 'qwen_image_2_1', label: 'QWEN 2.1 TURBO' },
 ];
 export const imageGenerationFamilyTabs = imageModelFamilyTabs;
-export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', illustrious: 'Illustrious', krea2: 'Krea2', moss: 'MOSS', qwen_image_2_1: 'Qwen 2.1 Turbo' };
+export const imageModelFamilyLabels: Record<ImageModelFamily, string> = { anima: 'Anima', krea2: 'Krea2', moss: 'MOSS' };
 export const imageGenerationModeTabs: { value: ImageGenerationMode; label: string }[] = [
 	{ value: 't2i', label: 'T2I' },
 	{ value: 'i2i', label: 'I2I' }
@@ -18,9 +16,6 @@ export const imageGenerationModeTabs: { value: ImageGenerationMode; label: strin
 export const imagePresetCategories: { value: ImagePresetType; label: string; generationMode: ImageGenerationMode; modelFamily: ImageModelFamily }[] = [
 	{ value: 't2i_anima', label: 'T2I (Anima)', generationMode: 't2i', modelFamily: 'anima' },
 	{ value: 'i2i_anima', label: 'I2I (Anima)', generationMode: 'i2i', modelFamily: 'anima' },
-	{ value: 't2i_illustrious', label: 'T2I (Illustrious)', generationMode: 't2i', modelFamily: 'illustrious' },
-	{ value: 'i2i_illustrious', label: 'I2I (Illustrious)', generationMode: 'i2i', modelFamily: 'illustrious' },
-	{ value: 'i2i_qwen_image_2_1', label: 'I2I / R2I (Qwen 2.1 Turbo)', generationMode: 'i2i', modelFamily: 'qwen_image_2_1' },
 	{ value: 't2i_moss', label: 'T2I (MOSS)', generationMode: 't2i', modelFamily: 'moss' },
 	{ value: 't2i_krea2', label: 'T2I (Krea2)', generationMode: 't2i', modelFamily: 'krea2' },
 	{ value: 'i2i_krea2', label: 'I2I (Krea2)', generationMode: 'i2i', modelFamily: 'krea2' },

@@ -1166,7 +1166,7 @@
 											</label>
 										{/each}
 									</div>
-									<p class="text-xs text-muted-foreground">설명은 선택한 언어로 작성하며, 대사·가사·화면 글자는 원문을 유지합니다.</p>
+									<p class="text-xs text-muted-foreground">설명·대사·가사·화면 글자 모두 선택한 언어로 작성합니다.</p>
 								</div>
 							{/if}
 							<div class="space-y-4">
@@ -1450,7 +1450,7 @@
 					{#if storedAssetSource === 'generated' && selectionKind === 'image'}
 						<div class="space-y-2" aria-label="생성 이미지 분류">
 							<Tab items={imageModelFamilyTabs} value={storedImagePreset.modelFamily} ariaLabel="생성 이미지 모델 family" onselect={selectStoredImageFamily} />
-							<Tab items={imageGenerationModeTabs.filter((tab) => (storedImagePreset.modelFamily !== 'moss' || tab.value === 't2i') && (storedImagePreset.modelFamily !== 'qwen_image_2_1' || tab.value === 'i2i'))} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
+							<Tab items={imageGenerationModeTabs.filter((tab) => (storedImagePreset.modelFamily !== 'moss' || tab.value === 't2i'))} value={storedImagePreset.generationMode} ariaLabel="생성 이미지 방식" onselect={selectStoredImageMode} />
 						</div>
 					{/if}
 					<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

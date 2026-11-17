@@ -11,11 +11,9 @@ favorite 버튼은 제목 영역이 아니라 이미지 우측 하단에 배치�
 
 MOSS 기록의 moss 설정을 프리셋 저장과 재생성에 전달한다. 기존 이미지 참조 목록·소유권·원본 재사용 흐름을 유지한다.
 
-Qwen 2.1 Turbo 결과는 qwen_image_2_1 family로 표시하고 원본·참조 순서와 파라미터를 복원해 I2I/R2I를 재실행할 수 있다.
 
 이미지 기록의 prompt_enhancement_enabled를 프리셋과 재생성으로 전달한다.
 
-Qwen 생성 상세에 LLM 프롬프트 강화 사용 여부를 표시한다.
 
 공통 vLLM 개선 결과인 improved_prompt를 재생성 상태와 프리셋 초기값에 포함한다. 모든 이미지 family에서 원문과 개선 결과를 분리해 보존한다.
 
@@ -24,3 +22,6 @@ Qwen 생성 상세에 LLM 프롬프트 강화 사용 여부를 표시한다.
 Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.
 
 재생성 이동 주소에는 `family` 쿼리를 붙이지 않는다. T2I·I2I 생성 페이지가 `imageGenerationStore`에 저장된 `model_family`를 읽어 해당 모델을 선택한 뒤 나머지 생성 설정을 복원한다.
+
+
+현재 이미지 생성 모델은 Anima·MOSS이며 I2I는 Anima를 사용한다.

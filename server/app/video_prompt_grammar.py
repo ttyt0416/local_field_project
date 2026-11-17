@@ -12,19 +12,17 @@ FIELD_LIMITS = {
     "overall_soundscape": 768, "non_diegetic_music": 768,
     "subject_definitions": 3072, "summary": 1024, "retention_analysis": 3072,
 }
+_LANGUAGE_NAMES = {"en": "English", "ko": "Korean", "ja": "Japanese"}
 _LANGUAGE_CHARS = {
     "en": r"A-Za-z",
     "ko": r"\u1100-\u11FF\u3131-\u318E\uAC00-\uD7A3",
     "ja": r"\u3001-\u303F\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9D",
 }
 _PUNCTUATION = r"\x20-\x21\x23-\x3B\x3D\x3F-\x40\x5B\x5D-\x60\x7B-\x7E"
-_PROTOCOL_LITERALS = ("N/A", "fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference", "fully_copy", "partially_copy", "reference", "says in an off-screen voiceover")
+_PROTOCOL_LITERALS = ("N/A", "fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference", "fully_copy", "partially_copy", "reference")
 
 
 _SPEAKER = r'\(S[1-9][0-9]*(?:,S[1-9][0-9]*)*\)'
-_DIALOGUE = r'<d>\[[A-Za-z][A-Za-z -]{0,39}\][^<>]+(?:<(?:scenetrans|cutoff)>[^<>]*)*</d>'
-_QUOTED = r'"[^"\n]+"'
-_SOURCE_QUOTES = re.compile(r'<d>\[[^\]]+\](.*?)</d>|"([^"\n]+)"|“([^”\n]+)”|「([^」\n]+)」|『([^』\n]+)』|(?<!\w)\x27([^\x27\n]+)\x27(?!\w)', re.DOTALL)
 
 
 def _prose_characters(languages: Sequence[str]) -> str:
@@ -33,11 +31,12 @@ def _prose_characters(languages: Sequence[str]) -> str:
     return _PUNCTUATION + ''.join(_LANGUAGE_CHARS[language] for language in dict.fromkeys(languages))
 
 
-def source_literals(source: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(re.sub(r'</?(?:scenetrans|cutoff)>', '', next(value for value in match.groups() if value is not None)) for match in _SOURCE_QUOTES.finditer(source)))
-
-
 def field_pattern(field: str, labels: Sequence[str] | None = None, *, languages: Sequence[str] = ("en",)) -> str:
+    characters = _prose_characters(languages)
+    prose = '[' + characters + r'\x5C\n]'
+    dialogue_char = '[' + characters + r'\x22\x5C\n]'
+    quoted_char = '[' + characters + r'\x5C]'
+    dialogue_languages = '|'.join(_LANGUAGE_NAMES[language] for language in dict.fromkeys(languages))
     assets = r'<(?:Picture|Video|Audio) [1-9][0-9]*>' if labels is None else '|'.join(map(re.escape, labels))
     markers = [r'<Subject [1-9][0-9]*>', *map(re.escape, _PROTOCOL_LITERALS)]
     if assets:
@@ -45,10 +44,9 @@ def field_pattern(field: str, labels: Sequence[str] | None = None, *, languages:
     if field != "retention_analysis":
         markers.append(_SPEAKER)
     if field == "audio":
-        markers.extend((_DIALOGUE, r'<(?:scenetrans|cutoff)>'))
+        markers.extend((rf'<d>\[(?:{dialogue_languages})\](?:{dialogue_char}|<(?:scenetrans|cutoff)>)+</d>', r'<(?:scenetrans|cutoff)>'))
     if field == "text":
-        markers.append(_QUOTED)
-    prose = '[' + _prose_characters(languages) + r'\x5C\n]'
+        markers.append('"' + quoted_char + '+"')
     atom = '(?:' + '|'.join((prose, *markers)) + ')'
     body = atom + '+'
     if field == "summary":
@@ -59,10 +57,6 @@ def field_pattern(field: str, labels: Sequence[str] | None = None, *, languages:
 
 def _terminal(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
-
-
-def _json_content(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)[1:-1]
 
 
 def _number_range(low: int, high: int) -> str:
@@ -94,10 +88,9 @@ def _number_range(low: int, high: int) -> str:
     return '(' + ' | '.join(choices) + ')'
 
 
-def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), literals: Sequence[str] = (), languages: Sequence[str] = ("en",)) -> str:
+def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), languages: Sequence[str] = ("en",)) -> str:
     rules = [
         'ws ::= [ \\t\\n\\r]{0,4}',
-        r'unicode-char ::= [^"\\\x00-\x1F<>] | "\\\\" | "\\\""',
         'speaker ::= "(S" [1-9] [0-9]{0,2} (",S" [1-9] [0-9]{0,2}){0,15} ")"',
         'subject ::= "<Subject " [1-9] [0-9]{0,2} ">"',
         'cut-tag ::= "<scenetrans>" | "<cutoff>"',
@@ -111,16 +104,12 @@ def video_prompt_gbnf(schema: dict[str, Any], *, labels: Sequence[str] = (), lit
     ))
     if labels:
         rules.append('asset ::= ' + ' | '.join(_terminal(label) for label in dict.fromkeys(labels)))
-    if literals:
-        rules.append('original ::= ' + ' | '.join(_terminal(_json_content(value)) for value in literals))
-        dialogue_body = 'original'
-        quoted_body = 'original'
-    else:
-        dialogue_body = '(unicode-char | cut-tag){1,2048}'
-        quoted_body = 'unicode-char{1,1024}'
     rules.extend((
-        'dialogue ::= "<d>[" [A-Za-z] [A-Za-z -]{0,39} "]" " "? cut-tag? ' + dialogue_body + ' cut-tag? "</d>"',
-        'visible-text ::= ' + _terminal('\\"') + ' ' + quoted_body + ' ' + _terminal('\\"'),
+        'quoted-char ::= [' + characters + r'] | "\\\\"',
+        'dialogue-char ::= prose-char | ' + _terminal('\\"'),
+        'dialogue-language ::= ' + ' | '.join(_terminal(_LANGUAGE_NAMES[language]) for language in dict.fromkeys(languages)),
+        'dialogue ::= "<d>[" dialogue-language "]" (dialogue-char | cut-tag){1,2048} "</d>"',
+        'visible-text ::= ' + _terminal('\\"') + ' quoted-char{1,1024} ' + _terminal('\\"'),
         'task ::= ' + ' | '.join(_terminal(task) for task in TASK_TYPES),
     ))
     properties = schema['properties']

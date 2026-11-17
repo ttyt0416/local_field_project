@@ -1,7 +1,7 @@
 import type { MossSettings } from '$lib/types/moss';
 
 export type ImageGenerationParameters = {
-	model_family?: 'anima' | 'illustrious' | 'krea2' | 'moss' | 'qwen_image_2_1';
+	model_family?: 'anima' | 'krea2' | 'moss';
 	moss?: Partial<MossSettings>;
 	prompt_enhancement_enabled?: boolean;
 	improved_prompt?: string;
