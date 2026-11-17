@@ -100,7 +100,6 @@
 	let presetType = $derived<Preset['type']>(`t2i_${modelFamily}`);
 	let isMinimax = $derived(modelFamily === 'minimax_h3_image');
 	let familyLabel = $derived(isMinimax ? 'MiniMax H3-Image' : modelFamily === 'moss' ? 'MOSS' : 'Anima');
-	let dimensionStep = $derived(isMinimax ? 32 : modelFamily === 'moss' ? 16 : 8);
 	const pageTitle = 'T2I';
 	const modelFamilyTabs: { value: ModelFamilyTab; label: string; disabled?: boolean }[] = [
 		{ value: 'anima', label: 'ANIMA' },
@@ -244,8 +243,8 @@
 			height = size.height;
 			return;
 		}
-		width = Math.round(preset.width / dimensionStep) * dimensionStep;
-		height = Math.round(preset.height / dimensionStep) * dimensionStep;
+		width = preset.width;
+		height = preset.height;
 	});
 
 	function toggleLora(name: string) {
@@ -548,10 +547,6 @@
 		}
 		if (!randomSeed && !seed.trim()) {
 			generationError = '시드를 입력하거나 무작위 시드를 선택해 주세요.';
-			return;
-		}
-		if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16 || width > 16384 || height > 16384 || width % dimensionStep !== 0 || height % dimensionStep !== 0) {
-			generationError = `이미지 가로·세로 크기는 16~16384 범위의 ${dimensionStep}의 배수여야 합니다.`;
 			return;
 		}
 
@@ -872,11 +867,11 @@
 						<div class="grid gap-4 sm:grid-cols-2">
 							<label class="block space-y-2" for="width">
 								<span class="text-sm font-medium">가로</span>
-								<input id="width" type="number" min="16" max="16384" step={dimensionStep} bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
+								<input id="width" type="number" bind:value={width} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 							<label class="block space-y-2" for="height">
 								<span class="text-sm font-medium">세로</span>
-								<input id="height" type="number" min="16" max="16384" step={dimensionStep} bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
+								<input id="height" type="number" bind:value={height} oninput={() => (aspectRatio = 'custom')} class={numberInputClass} />
 							</label>
 						</div>
 

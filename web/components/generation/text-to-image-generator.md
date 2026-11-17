@@ -11,11 +11,11 @@
 checkpoint와 LoRA selector는 ComfyUI relative model filename의 folder hierarchy를 button으로 표시한다. `전체`는 family scope 내 전체 model을, folder button은 해당 folder 및 하위 model만 표시한다. 하위 folder 선택 시 `전체` 바로 다음의 `바로 위 폴더` button으로 한 level씩 되돌아간다. 선택 값은 backend가 family-scoped option 목록 안에 있는지 다시 검증한다.
 
 
-width와 height는 기존 64~2048 product cap 없이 Comfy native 16~16384 range의 8 pixel multiple을 사용한다.
+width와 height는 최소·최대·배수 검사 없이 입력한 정수를 전달한다. 비율 선택도 모델별 배수 반올림 없이 프리셋의 원래 크기를 적용한다.
 
 ## MOSS
 
-MOSS 탭은 공통 MossControls로 사물·인물·텍스트 레이아웃을 편집한다. 박스는 드래그·크기 조절·수치 편집할 수 있다. MOSS 설정을 요청·프리셋·재생성에 전달하며 출력 크기는 16 배수다. 프롬프트 개선은 Anima와 동일하게 검증된 Danbooru 태그와 자연어를 사용하며 선택된 결과를 레이아웃의 장면 설명에 전달한다. MOSS 컨트롤은 레이아웃 버튼과 영역 편집만 제공하며 별도 설정 제목과 DMD 적용 버튼은 표시하지 않는다.
+MOSS 탭은 공통 MossControls로 사물·인물·텍스트 레이아웃을 편집한다. 박스는 드래그·크기 조절·수치 편집할 수 있다. MOSS 설정을 요청·프리셋·재생성에 전달하며 출력 크기에 별도 배수 검사를 적용하지 않는다. 프롬프트 개선은 Anima와 동일하게 검증된 Danbooru 태그와 자연어를 사용하며 선택된 결과를 레이아웃의 장면 설명에 전달한다. MOSS 컨트롤은 레이아웃 버튼과 영역 편집만 제공하며 별도 설정 제목과 DMD 적용 버튼은 표시하지 않는다.
 
 MOSS 레이아웃을 별도 프리셋 저장 항목으로 제공한다. 선택 해제 시 레이아웃을 덮어쓰지 않으며 레이아웃만 선택해 저장할 수 있다. MOSS에도 프롬프트 개선 사용 여부와 개선된 본문을 저장·복원한다.
 
@@ -31,4 +31,4 @@ T2I·I2I가 공유하는 enhanceImagePrompt 유틸로 개선을 요청한다. �
 
 Local Field 로그인 상태·인증 리디렉션 없이 공용 기능을 사용한다. 계정 토큰을 API 요청에 전달하지 않는다.
 
-MiniMax H3-Image 탭은 2048×2048, 32배수 크기, CFG 1·6스텝·Euler·Simple을 기본으로 사용한다. 부정 입력을 숨기고 프리셋·재생성에서도 동일한 설정을 복원한다.
+MiniMax H3-Image 탭은 2048×2048, CFG 1·6스텝·Euler·Simple을 기본으로 사용한다. 부정 입력을 숨기고 프리셋·재생성에서도 동일한 설정을 복원한다.

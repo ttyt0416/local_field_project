@@ -4,7 +4,7 @@
 
 T2I·I2I 모두 프롬프트 개선 사용 여부와 개선된 본문을 저장·편집한다. 일반 I2I에는 Denoise를 표시한다. Seed는 저장·수정 필수값이 아니다. 무작위를 선택하면 `random_seed=true`를 저장하고, 무작위가 아니면서 값이 비어 있으면 seed 관련 key를 저장하지 않는다. 공용 `Modal`의 `80dvh` 최대 높이와 내부 scroll을 사용한다.
 
-width와 height는 기존 64~2048 product cap 없이 Comfy native 16~16384 range와 8 pixel step을 사용한다.
+width와 height에는 최소·최대·배수 제한을 두지 않는다. 비율 선택도 원래 크기를 반올림 없이 적용한다.
 
 
 ## MOSS
@@ -14,4 +14,4 @@ width와 height는 기존 64~2048 product cap 없이 Comfy native 16~16384 range
 
 MOSS 편집은 레이아웃 버튼과 영역 편집만 제공한다. 별도 MOSS 설정 제목과 DMD 바로가기 버튼은 제거했다. 긴 체크포인트명은 버튼 안에서 말줄임한다.
 
-MiniMax H3-Image의 T2I·I2I 프리셋은 32배수 크기와 공식 샘플링 설정을 사용한다. 부정 입력·Denoise 저장 항목은 표시하지 않고 CFG 1·6스텝을 유지한다.
+MiniMax H3-Image의 T2I·I2I 프리셋은 크기 제한 없이 공식 샘플링 설정을 사용한다. 부정 입력·Denoise 저장 항목은 표시하지 않고 CFG 1·6스텝을 유지한다.

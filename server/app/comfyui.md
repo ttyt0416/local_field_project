@@ -24,7 +24,7 @@ Structured LLM response가 `finish_reason=length`로 끝나면 server는 raw out
 
 ## MOSS
 
-MOSS는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함한다. `text_encoders/MOSS/`의 인코더(type `moss_image`)와 `vae/MOSS/`의 VAE를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 선택된 원문 또는 LLM 개선 프롬프트를 중앙 기준 JSON으로 변환하며 박스·표시할 텍스트는 그대로 보존한다. 출력 크기는 16 배수이다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
+MOSS는 T2I 전용이며 `diffusion_models/MOSS/` 아래의 체크포인트를 파일명과 관계없이 인식한다. 중첩 하위폴더를 포함한다. `text_encoders/MOSS/`의 인코더(type `moss_image`)와 `vae/MOSS/`의 VAE를 사용한다. 기본값은 Euler·SGM Uniform, 50 steps, CFG 3, shift 5이다. EmptyFlux2LatentImage에서 생성하며 i2i 요청·소스 이미지·참조 입력은 거부한다. 외부 참조 패처는 워크플로와 모델 옵션에 연결하지 않는다. 레이아웃은 선택된 원문 또는 LLM 개선 프롬프트를 중앙 기준 JSON으로 변환하며 박스·표시할 텍스트는 그대로 보존한다. 가로·세로는 범위·배수 검사 없이 전달한다. DMD 버튼은 SFT에 최신 DMD LoRA 0.7, 8 steps, CFG 1을 선택한다.
 
 참조 패처 출처는 https://github.com/silveroxides/ComfyUI-UtilsCollection 이며 설치 revision은 `52524719f934c7cc09382e2560f27f6967636255`이다. 누락된 의존성 `unifiedefficientloader==0.5.4`를 ComfyUI 환경에 추가했다.
 
@@ -87,7 +87,7 @@ ComfyUI 완료 확인 후 결과 다운로드·스토리지 업로드·DB 갱신
 
 연결 실패 안내도 vLLM 생성 서버 명칭을 사용한다.
 
-MiniMax H3-Image는 minimax_h3_image family로 T2I·I2I를 제공한다. diffusion_models/MiniMaxH3Image와 vae/MiniMaxH3Image를 사용하며 text_encoders/MiniMaxH3의 기존 Qwen3-VL NVFP4 인코더를 공유한다. MiniMaxH3ImageConditioning을 사용하는 ComfyUI 0.45.0 이상이 필요하다. Euler·Simple·6 steps·CFG 1·Denoise 1, 32배수 캔버스를 사용하고 기본 크기는 2048×2048이다. 부정 지시는 긍정 프롬프트에 작성한다. I2I는 소스와 추가 참조 15장까지 순서대로 Picture 1~16에 연결하고 기존 reference_images 열·Storage 참조 검사로 보존한다. 프롬프트 개선은 공통 vLLM에서 자연어만 반환하며 별도 PE 가중치를 설치하지 않는다.
+MiniMax H3-Image는 minimax_h3_image family로 T2I·I2I를 제공한다. diffusion_models/MiniMaxH3Image와 vae/MiniMaxH3Image를 사용하며 text_encoders/MiniMaxH3의 기존 Qwen3-VL NVFP4 인코더를 공유한다. MiniMaxH3ImageConditioning을 사용하는 ComfyUI 0.45.0 이상이 필요하다. Euler·Simple·6 steps·CFG 1·Denoise 1을 사용하고 기본 크기는 2048×2048이다. 부정 지시는 긍정 프롬프트에 작성한다. I2I는 소스와 추가 참조 15장까지 순서대로 Picture 1~16에 연결하고 기존 reference_images 열·Storage 참조 검사로 보존한다. 프롬프트 개선은 공통 vLLM에서 자연어만 반환하며 별도 PE 가중치를 설치하지 않는다.
 
 가중치 출처: https://huggingface.co/Comfy-Org/MiniMax-H3-Image revision 0bb149f51e3156ed4b90dd45d5620346bfe1df8f.
 - minimax_h3_image_pruned_int8_convrot.safetensors: 20,979,314,802 bytes, SHA-256 83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622.
@@ -95,3 +95,5 @@ MiniMax H3-Image는 minimax_h3_image family로 T2I·I2I를 제공한다. diffusi
 - 기존 공유 인코더 qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors: SHA-256 35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6. 공식 저장소 파일과 동일함을 검증하고 재사용한다.
 
 H3-Image 개선 본문에는 공통 Danbooru용 ASCII 문자 제한을 적용하지 않는다. `<Picture N>` 참조 표식과 사용자가 요청한 비영어 화면 문구를 구조화 응답에서도 그대로 표현할 수 있다. JSON·빈 응답·길이 검증은 공통 경로를 유지한다.
+
+T2I·I2I의 width·height는 정수형만 유지하고 최소·최대·배수 검사를 적용하지 않는다. 모든 이미지 family의 workflow는 공통 단계에서 원본 크기를 네이티브 PrimitiveInt 출력으로 연결해 ComfyUI 입력 위젯의 크기 범위 검사에도 걸리지 않도록 한다. 실제 latent 구성과 출력 크기 처리는 각 네이티브 모델 노드가 수행한다.

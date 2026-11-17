@@ -105,8 +105,8 @@ class ImageGenerationRequest(BaseModel):
     steps: int = Field(default=30, ge=1, le=100)
     sampler_name: str = Field(default=_DEFAULT_SAMPLER, min_length=1, max_length=64)
     scheduler: str = Field(default=_DEFAULT_SCHEDULER, min_length=1, max_length=64)
-    width: int = Field(default=1024, ge=16, le=16384, multiple_of=8)
-    height: int = Field(default=1024, ge=16, le=16384, multiple_of=8)
+    width: int = 1024
+    height: int = 1024
     seed: int | None = Field(default=None, ge=0, le=_MAX_SEED)
 
     @model_validator(mode="before")
@@ -1027,24 +1027,18 @@ def _validate_model_choice(payload: ImageGenerationRequest, options: ImageGenera
     if payload.moss and payload.model_family != "moss":
         raise HTTPException(status_code=422, detail="MOSS 설정은 MOSS 모델에서만 사용할 수 있습니다.")
     if payload.model_family == "moss":
-        if payload.width % 16 or payload.height % 16:
-            raise HTTPException(status_code=422, detail="MOSS 이미지 가로·세로 크기는 16의 배수여야 합니다.")
         if payload.moss:
             try:
                 moss_layout_prompt(_effective_positive_prompt(payload), payload.moss, payload.width, payload.height)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
     if payload.model_family == "minimax_h3_image":
-        if payload.width % 32 or payload.height % 32:
-            raise HTTPException(status_code=422, detail="MiniMax H3-Image 가로·세로 크기는 32의 배수여야 합니다.")
         if (payload.cfg, payload.steps, payload.sampler_name, payload.scheduler) != (1, 6, "euler", "simple"):
             raise HTTPException(status_code=422, detail="MiniMax H3-Image는 CFG 1·6스텝·Euler·Simple 설정을 사용합니다.")
         if payload.negative_prompt.strip() or payload.negative_prompt_prefix.strip():
             raise HTTPException(status_code=422, detail="MiniMax H3-Image의 제외 지시는 긍정 프롬프트에 작성해 주세요.")
         if isinstance(payload, ImageToImageGenerationRequest) and payload.denoise != 1:
             raise HTTPException(status_code=422, detail="MiniMax H3-Image 편집은 Denoise 1을 사용합니다.")
-    if payload.width % 8 or payload.height % 8:
-        raise HTTPException(status_code=422, detail="이미지 가로·세로 크기는 8의 배수여야 합니다.")
 
 
 def _combined_prompt(prefix: str, prompt: str, label: str) -> str:
@@ -1076,6 +1070,12 @@ def _build_prompt(
     input_references: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
     prompt, seed = _build_unresolved_prompt(payload, input_image=input_image, denoise=denoise, input_references=input_references)
+    for dimension, value in (("width", payload.width), ("height", payload.height)):
+        consumers = [node["inputs"] for node in prompt.values() if dimension in node["inputs"]]
+        node_id = f"image_{dimension}"
+        prompt[node_id] = {"class_type": "PrimitiveInt", "inputs": {"value": value}}
+        for inputs in consumers:
+            inputs[dimension] = [node_id, 0]
     if _model_folder_inputs(prompt):
         _resolve_model_inputs(prompt, _request_json("GET", "/object_info"))
     return prompt, seed

@@ -105,7 +105,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 
 	let familyLabel = $derived(imageModelFamilyLabels[family]);
 	let isMinimax = $derived(family === 'minimax_h3_image');
-	let imageDimensionStep = $derived(isMinimax ? 32 : 8);
 	const routeTitle = 'I2I';
 	let presetType = $derived<ImagePresetType>(`i2i_${family}`);
 	let storedImagePresetType = $state<ImagePresetType>('t2i_anima');
@@ -592,13 +591,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		}
 	}
 
-	function normalizedImageDimensions(dimensions: ImageDimensions) {
-		const normalize = (value: number) => {
-			return Math.max(imageDimensionStep, Math.min(16384, Math.round(value / imageDimensionStep) * imageDimensionStep));
-		};
-		return { width: normalize(dimensions.width), height: normalize(dimensions.height) };
-	}
-
 	async function applySourceSize() {
 		const selectedFile = sourceFile;
 		const selectedFileId = sourceFileId;
@@ -611,9 +603,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 			const dimensions = sourceDimensions ?? (await readImageDimensions(source));
 			if (sourceFile !== selectedFile || sourceFileId !== selectedFileId || sourceImageUrl !== selectedUrl) return;
 			sourceDimensions = dimensions;
-			const normalized = normalizedImageDimensions(dimensions);
-			width = normalized.width;
-			height = normalized.height;
+			width = dimensions.width;
+			height = dimensions.height;
 		} catch {
 			sourceError = '선택한 이미지의 크기를 적용하지 못했습니다.';
 		} finally {
@@ -679,7 +670,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		if (!checkpoint || !options.checkpoints.includes(checkpoint)) return '체크포인트를 선택해 주세요.';
 		if (new Set(loras.map(({ name }) => name)).size !== loras.length) return 'LoRA 선택을 확인해 주세요.';
 		if (loras.some(({ name, strength }) => !name.trim() || !options.loras.includes(name) || !Number.isFinite(Number(strength)))) return 'LoRA와 Strength 값을 확인해 주세요.';
-		if (!isValidDimension(width) || !isValidDimension(height)) return `이미지 가로·세로는 ${imageDimensionStep}~16384 범위의 ${imageDimensionStep}의 배수여야 합니다.`;
 		if (!Number.isFinite(Number(denoise)) || Number(denoise) < 0 || Number(denoise) > 1) return 'Denoise는 0.0에서 1.0 사이로 입력해 주세요.';
 		if (!Number.isFinite(Number(cfg)) || Number(cfg) < 0 || Number(cfg) > 20) return 'CFG는 0에서 20 사이로 입력해 주세요.';
 		if (!Number.isInteger(Number(steps)) || Number(steps) < 1 || Number(steps) > 100) return 'Steps는 1에서 100 사이의 정수로 입력해 주세요.';
@@ -687,11 +677,6 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 		if (!scheduler || !options.schedulers.includes(scheduler)) return '스케줄러를 선택해 주세요.';
 		if (!randomSeed && !isValidSeed(seed)) return 'Seed는 0부터 9223372036854775807 사이의 정수 문자열로 입력해 주세요.';
 		return '';
-	}
-
-	function isValidDimension(value: number) {
-		const parsed = Number(value);
-		return Number.isInteger(parsed) && parsed >= imageDimensionStep && parsed <= 16384 && parsed % imageDimensionStep === 0;
 	}
 
 	function isValidSeed(value: string) {
@@ -1065,8 +1050,8 @@ const storedSourceTabs: { value: StoredSource; label: string }[] = [
 							<IconOutlinedButton ariaLabel="가로와 세로 바꾸기" disabled={generating} onclick={swapDimensions}><ArrowLeftRight size={16} strokeWidth={1.9} /></IconOutlinedButton>
 						</div>
 						<div class="grid gap-4 sm:grid-cols-2">
-							<label class="block space-y-2" for="i2i-width"><span class="text-sm font-medium">가로</span><input id="i2i-width" type="number" min={imageDimensionStep} max="16384" step={imageDimensionStep} bind:value={width} disabled={generating} class={numberInputClass} /></label>
-							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" min={imageDimensionStep} max="16384" step={imageDimensionStep} bind:value={height} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-width"><span class="text-sm font-medium">가로</span><input id="i2i-width" type="number" bind:value={width} disabled={generating} class={numberInputClass} /></label>
+							<label class="block space-y-2" for="i2i-height"><span class="text-sm font-medium">세로</span><input id="i2i-height" type="number" bind:value={height} disabled={generating} class={numberInputClass} /></label>
 						</div>
 
 

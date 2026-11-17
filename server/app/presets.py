@@ -40,8 +40,8 @@ class PresetValues(BaseModel):
     megapixels: float | None = Field(default=None, gt=0)
     upscale_mode: Literal["learned_3d"] | None = None
     target_megapixels: float | None = Field(default=None, gt=0)
-    width: int | None = Field(default=None, ge=1)
-    height: int | None = Field(default=None, ge=1)
+    width: int | None = None
+    height: int | None = None
     denoise: float | None = Field(default=None, ge=0, le=1)
     cfg: float | None = Field(default=None, ge=0, le=20)
     steps: int | None = Field(default=None, ge=1, le=100)
